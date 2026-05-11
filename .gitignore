@@ -43,3 +43,9 @@ supabase/.temp/
 
 # editor / agent state
 .claude
+
+# ruflo local state
+ruvector.db
+ruvector.db-*
+.ruflo/
+.claude-flow/
