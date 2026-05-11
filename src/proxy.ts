@@ -3,7 +3,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
 const PROTECTED_PREFIXES = ["/dashboard", "/queue", "/plans", "/settings", "/workspaces", "/onboarding"];
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   let res = NextResponse.next({ request: req });
 
   const supabase = createServerClient(

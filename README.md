@@ -6,7 +6,23 @@ See [`PLAN.md`](./PLAN.md) for the full architecture, data model, and build sequ
 
 ## Status
 
-V0 in progress. Schema drafted in `supabase/migrations/001_init.sql`. Next.js scaffold not yet generated — see PLAN.md "Build sequence (V0)" for what's next.
+V0 + V1 scaffold landed. Next.js 16 app builds; cron handlers, plan generator, approval queue, dashboard, event ingestion, hybrid trust-mode, KPI-weighted regeneration all wired. Needs real env values (Supabase project, Anthropic API key, X credentials) before it can run end-to-end.
+
+## Running locally
+
+```bash
+cp .env.local.example .env.local   # fill in real values
+supabase db push                   # applies migrations 001 + 002
+npm run dev
+```
+
+## Cron secrets
+
+Vercel Cron hits `/api/cron/post-scheduled` every 5 min and `/api/cron/pull-metrics` hourly. Both require `Authorization: Bearer $CRON_SECRET`. See `vercel.json`.
+
+## Webhook ingestion
+
+Each workspace has a signing secret at `/settings/events`. External systems POST JSON to `/api/webhooks/<workspace_id>` with `X-MM-Signature: sha256=<hex>` computed over the raw body using that secret.
 
 ## Stack
 
