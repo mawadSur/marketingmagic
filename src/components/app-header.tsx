@@ -10,6 +10,7 @@ const nav = [
   { href: "/queue", label: "Queue" },
   { href: "/settings/brief", label: "Brief" },
   { href: "/settings/channels", label: "Channels" },
+  { href: "/settings/events", label: "Events" },
 ];
 
 export function AppHeader({ active, workspaces }: { active: Workspace; workspaces: Workspace[] }) {
