@@ -30,27 +30,32 @@ export default async function ChannelsPage() {
         {accounts && accounts.length > 0 ? (
           <ul className="divide-y">
             {accounts.map((a) => (
-              <li key={a.id} className="flex items-center justify-between px-4 py-3 text-sm">
-                <div className="flex items-center gap-3">
-                  <span className="rounded-md border px-2 py-0.5 text-xs uppercase tracking-wide">
-                    {a.channel}
-                  </span>
-                  <span className="font-medium">@{a.handle}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {a.trust_mode
-                      ? `auto-post (${a.successful_post_count}/${a.trust_threshold})`
-                      : "manual approval"}
-                  </span>
-                </div>
-                <span
-                  className={
-                    a.status === "connected"
-                      ? "text-xs text-emerald-600"
-                      : "text-xs text-destructive"
-                  }
+              <li key={a.id} className="px-4 py-3 text-sm">
+                <Link
+                  href={`/settings/channels/${a.id}`}
+                  className="flex items-center justify-between hover:opacity-90"
                 >
-                  {a.status}
-                </span>
+                  <div className="flex items-center gap-3">
+                    <span className="rounded-md border px-2 py-0.5 text-xs uppercase tracking-wide">
+                      {a.channel}
+                    </span>
+                    <span className="font-medium">@{a.handle}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {a.trust_mode
+                        ? `auto-post (${a.successful_post_count}/${a.trust_threshold})`
+                        : "manual approval"}
+                    </span>
+                  </div>
+                  <span
+                    className={
+                      a.status === "connected"
+                        ? "text-xs text-emerald-600"
+                        : "text-xs text-destructive"
+                    }
+                  >
+                    {a.status}
+                  </span>
+                </Link>
               </li>
             ))}
           </ul>

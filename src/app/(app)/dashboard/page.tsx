@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { getCalendar, getKpiSummary, getThemeLeaderboard } from "@/lib/dashboard/queries";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { TrustNudge } from "@/components/trust-nudge";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,8 @@ export default async function DashboardPage() {
           Generate plan
         </Link>
       </header>
+
+      <TrustNudge workspaceId={ws.id} />
 
       <section className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <KpiCard label="Posts shipped (7d)" value={kpis.posts_shipped_7d.toString()} />

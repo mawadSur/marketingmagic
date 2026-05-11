@@ -90,6 +90,7 @@ export async function generatePlanAction(
     return { error: planErr?.message ?? "Failed to save plan.", planId: null };
   }
 
+  const trusted = accountRes.data.trust_mode === true;
   const postsPayload = result.plan.posts.map((p) => ({
     workspace_id: ws.id,
     plan_id: planRow.id,
@@ -98,10 +99,11 @@ export async function generatePlanAction(
     text: p.text,
     theme: p.theme,
     scheduled_at: p.suggested_scheduled_at,
-    status: "pending_approval" as const,
+    status: (trusted ? "scheduled" : "pending_approval") as "scheduled" | "pending_approval",
     generation_metadata: {
       rationale: p.rationale,
       cache_read_input_tokens: result.usage.cache_read_input_tokens ?? 0,
+      auto_scheduled: trusted,
     },
   }));
 
