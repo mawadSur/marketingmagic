@@ -35,6 +35,7 @@ export interface Database {
           webhook_secret?: string | null;
         };
         Update: Partial<{ slug: string; name: string; webhook_secret: string | null }>;
+        Relationships: [];
       };
       memberships: {
         Row: {
@@ -45,6 +46,7 @@ export interface Database {
         };
         Insert: { workspace_id: string; user_id: string; role: "owner" | "editor" | "viewer" };
         Update: Partial<{ role: "owner" | "editor" | "viewer" }>;
+        Relationships: [];
       };
       brand_briefs: {
         Row: {
@@ -77,6 +79,7 @@ export interface Database {
           reference_links: string[];
           reference_posts: string[];
         }>;
+        Relationships: [];
       };
       social_accounts: {
         Row: {
@@ -111,6 +114,7 @@ export interface Database {
           successful_post_count: number;
           status: AccountStatus;
         }>;
+        Relationships: [];
       };
       posting_plans: {
         Row: {
@@ -144,6 +148,7 @@ export interface Database {
           status: PlanStatus;
           parent_plan_id: string | null;
         }>;
+        Relationships: [];
       };
       posts: {
         Row: {
@@ -193,6 +198,7 @@ export interface Database {
           approved_at: string | null;
           revoked_at: string | null;
         }>;
+        Relationships: [];
       };
       approvals: {
         Row: {
@@ -204,7 +210,8 @@ export interface Database {
           created_at: string;
         };
         Insert: { id?: string; post_id: string; user_id: string; action: ApprovalAction; diff?: string | null };
-        Update: never;
+        Update: Record<string, never>;
+        Relationships: [];
       };
       post_metrics: {
         Row: {
@@ -231,7 +238,8 @@ export interface Database {
           engagement_rate?: number | null;
           raw?: Json | null;
         };
-        Update: never;
+        Update: Record<string, never>;
+        Relationships: [];
       };
       social_posts_ledger: {
         Row: {
@@ -251,7 +259,8 @@ export interface Database {
           external_id?: string | null;
           payload?: Json | null;
         };
-        Update: never;
+        Update: Record<string, never>;
+        Relationships: [];
       };
       events: {
         Row: {
@@ -271,6 +280,7 @@ export interface Database {
           source?: string | null;
         };
         Update: Partial<{ processed_at: string | null }>;
+        Relationships: [];
       };
       event_rules: {
         Row: {
@@ -300,6 +310,7 @@ export interface Database {
           theme: string | null;
           enabled: boolean;
         }>;
+        Relationships: [];
       };
     };
     Views: {
@@ -316,6 +327,7 @@ export interface Database {
           created_at: string;
           updated_at: string;
         };
+        Relationships: [];
       };
     };
     Functions: {
