@@ -1,5 +1,19 @@
 export type Json = string | number | boolean | null | { [k: string]: Json | undefined } | Json[];
 
+export type Channel = "x" | "instagram" | "facebook" | "threads" | "bluesky" | "linkedin";
+export type PostStatus =
+  | "draft"
+  | "pending_approval"
+  | "approved"
+  | "scheduled"
+  | "posted"
+  | "failed"
+  | "rejected"
+  | "archived";
+export type ApprovalAction = "approved" | "rejected" | "edited" | "unapproved";
+export type PlanStatus = "draft" | "active" | "archived";
+export type AccountStatus = "connected" | "expired" | "revoked";
+
 export interface Database {
   public: {
     Tables: {
@@ -20,11 +34,7 @@ export interface Database {
           owner_id: string;
           webhook_secret?: string | null;
         };
-        Update: Partial<{
-          slug: string;
-          name: string;
-          webhook_secret: string | null;
-        }>;
+        Update: Partial<{ slug: string; name: string; webhook_secret: string | null }>;
       };
       memberships: {
         Row: {
@@ -33,11 +43,7 @@ export interface Database {
           role: "owner" | "editor" | "viewer";
           created_at: string;
         };
-        Insert: {
-          workspace_id: string;
-          user_id: string;
-          role: "owner" | "editor" | "viewer";
-        };
+        Insert: { workspace_id: string; user_id: string; role: "owner" | "editor" | "viewer" };
         Update: Partial<{ role: "owner" | "editor" | "viewer" }>;
       };
       brand_briefs: {
@@ -76,53 +82,67 @@ export interface Database {
         Row: {
           id: string;
           workspace_id: string;
-          channel: "x" | "instagram" | "facebook" | "threads" | "bluesky" | "linkedin";
+          channel: Channel;
           handle: string;
           credentials: Json;
           trust_mode: boolean;
+          trust_threshold: number;
           successful_post_count: number;
+          status: AccountStatus;
           created_at: string;
           updated_at: string;
         };
         Insert: {
           id?: string;
           workspace_id: string;
-          channel: "x" | "instagram" | "facebook" | "threads" | "bluesky" | "linkedin";
+          channel: Channel;
           handle: string;
           credentials: Json;
           trust_mode?: boolean;
+          trust_threshold?: number;
           successful_post_count?: number;
+          status?: AccountStatus;
         };
         Update: Partial<{
           handle: string;
           credentials: Json;
           trust_mode: boolean;
+          trust_threshold: number;
           successful_post_count: number;
+          status: AccountStatus;
         }>;
       };
       posting_plans: {
         Row: {
           id: string;
           workspace_id: string;
+          name: string;
+          start_at: string;
+          end_at: string;
+          status: PlanStatus;
           parent_plan_id: string | null;
-          starts_on: string;
-          ends_on: string;
-          status: "draft" | "active" | "archived";
-          rationale: string | null;
+          generation_prompt: string | null;
+          generation_response: Json | null;
           created_at: string;
+          updated_at: string;
         };
         Insert: {
           id?: string;
           workspace_id: string;
+          name: string;
+          start_at: string;
+          end_at: string;
+          status?: PlanStatus;
           parent_plan_id?: string | null;
-          starts_on: string;
-          ends_on: string;
-          status?: "draft" | "active" | "archived";
-          rationale?: string | null;
+          generation_prompt?: string | null;
+          generation_response?: Json | null;
         };
         Update: Partial<{
-          status: "draft" | "active" | "archived";
-          rationale: string | null;
+          name: string;
+          start_at: string;
+          end_at: string;
+          status: PlanStatus;
+          parent_plan_id: string | null;
         }>;
       };
       posts: {
@@ -131,22 +151,19 @@ export interface Database {
           workspace_id: string;
           plan_id: string | null;
           social_account_id: string;
-          channel: "x" | "instagram" | "facebook" | "threads" | "bluesky" | "linkedin";
+          channel: Channel;
           text: string;
+          media: Json;
           theme: string | null;
-          status:
-            | "draft"
-            | "pending_approval"
-            | "approved"
-            | "scheduled"
-            | "posted"
-            | "rejected"
-            | "failed";
           scheduled_at: string | null;
-          sent_at: string | null;
+          status: PostStatus;
           external_id: string | null;
-          rationale: string | null;
-          error: string | null;
+          posted_at: string | null;
+          failure_reason: string | null;
+          source_event_id: string | null;
+          generation_metadata: Json | null;
+          approved_at: string | null;
+          revoked_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -155,75 +172,38 @@ export interface Database {
           workspace_id: string;
           plan_id?: string | null;
           social_account_id: string;
-          channel: "x" | "instagram" | "facebook" | "threads" | "bluesky" | "linkedin";
+          channel: Channel;
           text: string;
+          media?: Json;
           theme?: string | null;
-          status?:
-            | "draft"
-            | "pending_approval"
-            | "approved"
-            | "scheduled"
-            | "posted"
-            | "rejected"
-            | "failed";
           scheduled_at?: string | null;
-          rationale?: string | null;
+          status?: PostStatus;
+          source_event_id?: string | null;
+          generation_metadata?: Json | null;
         };
         Update: Partial<{
           text: string;
+          media: Json;
           theme: string | null;
-          status:
-            | "draft"
-            | "pending_approval"
-            | "approved"
-            | "scheduled"
-            | "posted"
-            | "rejected"
-            | "failed";
           scheduled_at: string | null;
-          sent_at: string | null;
+          status: PostStatus;
           external_id: string | null;
-          rationale: string | null;
-          error: string | null;
+          posted_at: string | null;
+          failure_reason: string | null;
+          approved_at: string | null;
+          revoked_at: string | null;
         }>;
       };
       approvals: {
         Row: {
           id: string;
           post_id: string;
-          actor_id: string;
-          action: "approve" | "edit" | "reject" | "revoke";
-          notes: string | null;
-          before_text: string | null;
-          after_text: string | null;
+          user_id: string;
+          action: ApprovalAction;
+          diff: string | null;
           created_at: string;
         };
-        Insert: {
-          id?: string;
-          post_id: string;
-          actor_id: string;
-          action: "approve" | "edit" | "reject" | "revoke";
-          notes?: string | null;
-          before_text?: string | null;
-          after_text?: string | null;
-        };
-        Update: never;
-      };
-      social_posts: {
-        Row: {
-          id: string;
-          post_id: string;
-          channel: string;
-          external_id: string;
-          posted_at: string;
-        };
-        Insert: {
-          id?: string;
-          post_id: string;
-          channel: string;
-          external_id: string;
-          posted_at?: string;
-        };
+        Insert: { id?: string; post_id: string; user_id: string; action: ApprovalAction; diff?: string | null };
         Update: never;
       };
       post_metrics: {
@@ -231,21 +211,45 @@ export interface Database {
           id: string;
           post_id: string;
           fetched_at: string;
-          impressions: number;
-          likes: number;
-          reposts: number;
-          replies: number;
-          clicks: number;
+          impressions: number | null;
+          likes: number | null;
+          reposts: number | null;
+          replies: number | null;
+          clicks: number | null;
+          engagement_rate: number | null;
+          raw: Json | null;
         };
         Insert: {
           id?: string;
           post_id: string;
           fetched_at?: string;
-          impressions?: number;
-          likes?: number;
-          reposts?: number;
-          replies?: number;
-          clicks?: number;
+          impressions?: number | null;
+          likes?: number | null;
+          reposts?: number | null;
+          replies?: number | null;
+          clicks?: number | null;
+          engagement_rate?: number | null;
+          raw?: Json | null;
+        };
+        Update: never;
+      };
+      social_posts_ledger: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          channel: string;
+          event_key: string;
+          external_id: string | null;
+          payload: Json | null;
+          posted_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          channel: string;
+          event_key: string;
+          external_id?: string | null;
+          payload?: Json | null;
         };
         Update: never;
       };
@@ -255,46 +259,65 @@ export interface Database {
           workspace_id: string;
           event_type: string;
           payload: Json;
-          received_at: string;
-        };
-        Insert: {
-          id?: string;
-          workspace_id: string;
-          event_type: string;
-          payload: Json;
-        };
-        Update: never;
-      };
-      event_rules: {
-        Row: {
-          id: string;
-          workspace_id: string;
-          event_type: string;
-          channels: string[];
-          template: string;
-          theme: string | null;
-          enabled: boolean;
+          source: string | null;
+          processed_at: string | null;
           created_at: string;
         };
         Insert: {
           id?: string;
           workspace_id: string;
           event_type: string;
-          channels: string[];
+          payload: Json;
+          source?: string | null;
+        };
+        Update: Partial<{ processed_at: string | null }>;
+      };
+      event_rules: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          event_type: string;
           template: string;
+          channels: string[];
+          theme: string | null;
+          enabled: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          event_type: string;
+          template: string;
+          channels: string[];
           theme?: string | null;
           enabled?: boolean;
         };
         Update: Partial<{
           event_type: string;
-          channels: string[];
           template: string;
+          channels: string[];
           theme: string | null;
           enabled: boolean;
         }>;
       };
     };
-    Views: Record<string, never>;
+    Views: {
+      social_accounts_safe: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          channel: Channel;
+          handle: string;
+          trust_mode: boolean;
+          trust_threshold: number;
+          successful_post_count: number;
+          status: AccountStatus;
+          created_at: string;
+          updated_at: string;
+        };
+      };
+    };
     Functions: {
       is_workspace_member: { Args: { ws_id: string }; Returns: boolean };
     };
