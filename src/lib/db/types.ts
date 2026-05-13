@@ -24,6 +24,10 @@ export interface Database {
           name: string;
           owner_id: string;
           webhook_secret: string | null;
+          plan: "hobby" | "pro" | "agency";
+          stripe_customer_id: string | null;
+          stripe_subscription_id: string | null;
+          subscription_status: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -33,8 +37,40 @@ export interface Database {
           name: string;
           owner_id: string;
           webhook_secret?: string | null;
+          plan?: "hobby" | "pro" | "agency";
+          stripe_customer_id?: string | null;
+          stripe_subscription_id?: string | null;
+          subscription_status?: string | null;
         };
-        Update: Partial<{ slug: string; name: string; webhook_secret: string | null }>;
+        Update: Partial<{
+          slug: string;
+          name: string;
+          webhook_secret: string | null;
+          plan: "hobby" | "pro" | "agency";
+          stripe_customer_id: string | null;
+          stripe_subscription_id: string | null;
+          subscription_status: string | null;
+        }>;
+        Relationships: [];
+      };
+      usage_counters: {
+        Row: {
+          workspace_id: string;
+          month: string;
+          posts_generated: number;
+          images_generated: number;
+          updated_at: string;
+        };
+        Insert: {
+          workspace_id: string;
+          month: string;
+          posts_generated?: number;
+          images_generated?: number;
+        };
+        Update: Partial<{
+          posts_generated: number;
+          images_generated: number;
+        }>;
         Relationships: [];
       };
       memberships: {

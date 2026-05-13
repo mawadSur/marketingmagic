@@ -16,6 +16,7 @@ const nav = [
   { href: "/settings/brief", label: "Brief" },
   { href: "/settings/channels", label: "Channels" },
   { href: "/settings/events", label: "Events" },
+  { href: "/settings/billing", label: "Billing" },
 ];
 
 function isActive(pathname: string, href: string): boolean {

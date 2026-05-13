@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { siteUrl } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { linkedinExchangeCode, linkedinVerify, type LinkedInCredentials } from "@/lib/social/linkedin";
+import { assertWithinChannelQuota, QuotaExceededError } from "@/lib/billing/limits";
 
 // LinkedIn OAuth callback. State is `<workspaceId>:<nonce>` — nonce is
 // stored in a short-lived cookie set when starting the flow.
@@ -37,6 +38,23 @@ export async function GET(req: NextRequest) {
       expiresAt: new Date(Date.now() + token.expires_in * 1000).toISOString(),
       memberUrn: profile.urn,
     };
+
+    // Plan-gating: hobby caps channels at 1; reconnect of an existing
+    // (channel, handle) is grandfathered through.
+    try {
+      await assertWithinChannelQuota(workspaceId, { channel: "linkedin", handle: profile.name });
+    } catch (err) {
+      if (err instanceof QuotaExceededError) {
+        return NextResponse.redirect(
+          new URL(
+            `/settings/billing?error=${encodeURIComponent(err.message)}`,
+            base,
+          ),
+        );
+      }
+      throw err;
+    }
+
     const svc = supabaseService();
     const { error: dbErr } = await svc.from("social_accounts").upsert(
       {

@@ -6,6 +6,7 @@ import {
   instagramVerify,
   type InstagramCredentials,
 } from "@/lib/social/instagram";
+import { assertWithinChannelQuota, QuotaExceededError } from "@/lib/billing/limits";
 
 export async function GET(req: NextRequest) {
   const base = siteUrl();
@@ -31,6 +32,20 @@ export async function GET(req: NextRequest) {
       expiresAt: token.expiresAt,
       igUserId: token.igUserId,
     };
+
+    // Plan-gating: hobby caps channels at 1; reconnect of the same handle
+    // is grandfathered through.
+    try {
+      await assertWithinChannelQuota(workspaceId, { channel: "instagram", handle: profile.username });
+    } catch (err) {
+      if (err instanceof QuotaExceededError) {
+        return NextResponse.redirect(
+          new URL(`/settings/billing?error=${encodeURIComponent(err.message)}`, base),
+        );
+      }
+      throw err;
+    }
+
     const svc = supabaseService();
     const { error: dbErr } = await svc.from("social_accounts").upsert(
       {
