@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,6 +12,7 @@ import {
   generatePostImageAction,
   rejectPostAction,
   revokePostAction,
+  uploadPostImageAction,
 } from "./actions";
 
 export interface QueueMediaItem {
@@ -49,6 +50,7 @@ export function QueueRow({ post }: { post: PostRow }) {
   const [imagePrompt, setImagePrompt] = useState(seedPrompt);
   const [imageBusy, imageStart] = useTransition();
   const [imageError, setImageError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   function run(action: () => Promise<{ error: string | null }>) {
     start(async () => {
@@ -82,6 +84,25 @@ export function QueueRow({ post }: { post: PostRow }) {
         return;
       }
       setImageError(null);
+      router.refresh();
+    });
+  }
+
+  function onFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    // Reset the input so picking the same file again still fires onChange.
+    e.target.value = "";
+    setImageError(null);
+    imageStart(async () => {
+      const fd = new FormData();
+      fd.append("postId", post.id);
+      fd.append("file", file);
+      const result = await uploadPostImageAction(fd);
+      if (result.error) {
+        setImageError(result.error);
+        return;
+      }
       router.refresh();
     });
   }
@@ -148,8 +169,23 @@ export function QueueRow({ post }: { post: PostRow }) {
               disabled={imageBusy || imagePrompt.trim().length < 3}
               onClick={() => runImage(imagePrompt)}
             >
-              {imageBusy ? "Generating…" : hasImage ? "Regenerate" : "Generate image"}
+              {imageBusy ? "Working…" : hasImage ? "Regenerate" : "Generate image"}
             </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={imageBusy}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Upload image
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              hidden
+              onChange={onFileSelected}
+            />
             {hasImage ? (
               <Button
                 size="sm"
@@ -160,6 +196,7 @@ export function QueueRow({ post }: { post: PostRow }) {
                 Clear
               </Button>
             ) : null}
+            <span className="text-xs text-muted-foreground">JPG / PNG / WebP, ≤5MB</span>
             {imageError ? (
               <span className="text-xs text-destructive">{imageError}</span>
             ) : null}

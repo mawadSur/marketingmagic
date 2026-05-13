@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { supabaseServer } from "@/lib/supabase/server";
-import { serverEnv } from "@/lib/env";
+import { siteUrl } from "@/lib/env";
 
 export type SignupActionState = { error: string | null; info: string | null };
 
@@ -24,12 +24,11 @@ export async function signupAction(
     return { error: parsed.error.issues[0]?.message ?? "Invalid input.", info: null };
   }
 
-  const env = serverEnv();
   const supabase = await supabaseServer();
   const { data, error } = await supabase.auth.signUp({
     email: parsed.data.email,
     password: parsed.data.password,
-    options: { emailRedirectTo: `${env.NEXT_PUBLIC_SITE_URL}/auth/callback` },
+    options: { emailRedirectTo: `${siteUrl()}/auth/callback` },
   });
   if (error) {
     return { error: error.message, info: null };

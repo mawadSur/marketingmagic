@@ -1,18 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { serverEnv } from "@/lib/env";
+import { siteUrl } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { linkedinExchangeCode, linkedinVerify, type LinkedInCredentials } from "@/lib/social/linkedin";
 
 // LinkedIn OAuth callback. State is `<workspaceId>:<nonce>` — nonce is
 // stored in a short-lived cookie set when starting the flow.
 export async function GET(req: NextRequest) {
-  const env = serverEnv();
+  const base = siteUrl();
   const code = req.nextUrl.searchParams.get("code");
   const state = req.nextUrl.searchParams.get("state");
   const error = req.nextUrl.searchParams.get("error");
   if (error) {
     return NextResponse.redirect(
-      new URL(`/settings/channels?error=${encodeURIComponent(error)}`, env.NEXT_PUBLIC_SITE_URL),
+      new URL(`/settings/channels?error=${encodeURIComponent(error)}`, base),
     );
   }
   if (!code || !state) {
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "nonce mismatch" }, { status: 400 });
   }
 
-  const redirectUri = `${env.NEXT_PUBLIC_SITE_URL}/api/oauth/linkedin/callback`;
+  const redirectUri = `${base}/api/oauth/linkedin/callback`;
   try {
     const token = await linkedinExchangeCode({ code, redirectUri });
     const profile = await linkedinVerify(token.access_token);
@@ -50,17 +50,17 @@ export async function GET(req: NextRequest) {
     );
     if (dbErr) {
       return NextResponse.redirect(
-        new URL(`/settings/channels?error=${encodeURIComponent(dbErr.message)}`, env.NEXT_PUBLIC_SITE_URL),
+        new URL(`/settings/channels?error=${encodeURIComponent(dbErr.message)}`, base),
       );
     }
-    const res = NextResponse.redirect(new URL("/settings/channels?connected=linkedin", env.NEXT_PUBLIC_SITE_URL));
+    const res = NextResponse.redirect(new URL("/settings/channels?connected=linkedin", base));
     res.cookies.delete("li_oauth_nonce");
     return res;
   } catch (err) {
     return NextResponse.redirect(
       new URL(
         `/settings/channels?error=${encodeURIComponent(err instanceof Error ? err.message : "oauth_failed")}`,
-        env.NEXT_PUBLIC_SITE_URL,
+        base,
       ),
     );
   }
