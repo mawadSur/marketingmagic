@@ -1,4 +1,5 @@
 import type { Database } from "@/lib/db/types";
+import { CHANNELS, type ChannelId } from "@/lib/channels/registry";
 
 type Brief = Database["public"]["Tables"]["brand_briefs"]["Row"];
 
@@ -10,16 +11,23 @@ export interface ThemeSignal {
 
 export interface PlanGenInputs {
   brief: Brief;
-  channelMix: Array<{ channel: "x"; handle: string; posts_per_week: number }>;
+  channelMix: Array<{ channel: ChannelId; handle: string; posts_per_week: number }>;
   weeks: number;
   startDate: Date;
   winners?: ThemeSignal[];
   losers?: ThemeSignal[];
 }
 
-const CHANNEL_CONSTRAINTS = {
-  x: "Max 280 characters. Plain prose, no hashtags unless they're load-bearing, no emojis unless the voice demands them.",
-} as const;
+function windowSummary(channel: ChannelId): string {
+  const spec = CHANNELS[channel];
+  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const parts = spec.recommendedWindows.map((w) => {
+    const dayName = days[w.weekday - 1];
+    const ranges = w.ranges.map(([a, b]) => `${a}-${b}`).join(", ");
+    return `${dayName} ${ranges}`;
+  });
+  return parts.join(" · ");
+}
 
 export function planSystemPrompt(inputs: PlanGenInputs): string {
   const { brief } = inputs;
@@ -48,13 +56,24 @@ export function planSystemPrompt(inputs: PlanGenInputs): string {
       ? `### Reference posts (voice exemplars — match this register)\n${brief.reference_posts.map((p) => `- ${p}`).join("\n")}\n`
       : "",
     "## Channel constraints",
-    ...inputs.channelMix.map((c) => `- ${c.channel} (@${c.handle}): ${CHANNEL_CONSTRAINTS[c.channel]}`),
+    ...inputs.channelMix.map(
+      (c) => `- ${CHANNELS[c.channel].label} (@${c.handle}): ${CHANNELS[c.channel].promptConstraint}`,
+    ),
+    "",
+    "## Recommended posting windows (local time; bias suggested_scheduled_at toward these)",
+    ...inputs.channelMix.map((c) => `- ${CHANNELS[c.channel].label}: ${windowSummary(c.channel)}`),
     "",
     "## Rules",
     "- Each post must stand on its own. Assume the reader has no prior context.",
     "- Vary themes across the week. Don't repeat the same angle two posts in a row.",
     "- Concrete > abstract. Numbers, screenshots-of-the-soul beats, specific names.",
     "- No filler. If a post wouldn't justify a reader's 3 seconds, cut it.",
+    "- Match the post body to its channel's constraint above. Don't write 280-char copy for a LinkedIn slot or 2000-char copy for X.",
+    "- For posts where a visual would amplify the message, include an `image_prompt`:",
+    "  a single sentence describing a single image that pairs with the post.",
+    "  Keep it concrete and visual (subject, setting, mood, style). No text overlays",
+    "  unless the post is specifically about a quoted phrase. Omit `image_prompt`",
+    "  entirely for posts where an image would feel forced.",
     "- Output strict JSON matching the schema. No prose outside the JSON.",
   ]
     .filter(Boolean)
@@ -94,16 +113,20 @@ export function planUserPrompt(inputs: PlanGenInputs): string {
           .join("\n")
       : "";
 
+  const channelEnumLiteral = Array.from(new Set(inputs.channelMix.map((c) => c.channel)))
+    .map((c) => `"${c}"`)
+    .join(" | ");
+
   return [
     `Generate a ${inputs.weeks}-week posting plan starting ${start}.`,
     "",
     "Cadence:",
     ...inputs.channelMix.map(
-      (c) => `- ${c.channel} (@${c.handle}): ${c.posts_per_week} posts/week`,
+      (c) => `- ${CHANNELS[c.channel].label} (@${c.handle}): ${c.posts_per_week} posts/week`,
     ),
     `Total posts to produce: ${totalPosts}.`,
     "",
-    "Spread `suggested_scheduled_at` across the window — pick reasonable times during the recipient's likely waking hours in UTC (you may bias toward 14:00-22:00 UTC).",
+    "Spread `suggested_scheduled_at` across the window — bias toward the recommended posting windows listed in the system prompt. Use UTC ISO timestamps.",
     "Theme tags are free-form labels like \"build-progress\", \"winner-announcement\", \"voice-thought-piece\", \"behind-the-scenes\". Reuse the SAME tag for posts of the same category so we can measure engagement per theme.",
     kpiNote,
     "",
@@ -113,11 +136,12 @@ export function planUserPrompt(inputs: PlanGenInputs): string {
     '  "overview": "string (one-paragraph summary of the angle and rhythm)",',
     '  "posts": [',
     "    {",
-    '      "channel": "x",',
+    `      "channel": ${channelEnumLiteral},`,
     '      "text": "string",',
     '      "theme": "string",',
     '      "suggested_scheduled_at": "ISO 8601 UTC datetime",',
-    '      "rationale": "string (why this post, why this slot)"',
+    '      "rationale": "string (why this post, why this slot)",',
+    '      "image_prompt": "string | omit (single sentence describing the paired image)"',
     "    }",
     "  ]",
     "}",

@@ -3,6 +3,7 @@ import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { getCalendar, getKpiSummary, getThemeLeaderboard } from "@/lib/dashboard/queries";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrustNudge } from "@/components/trust-nudge";
+import { isInRecommendedWindow } from "@/lib/channels/best-times";
 
 export const dynamic = "force-dynamic";
 
@@ -78,6 +79,14 @@ export default async function DashboardPage() {
                     <p className="text-xs text-muted-foreground">
                       {(p.scheduled_at ?? p.posted_at)?.slice(0, 16).replace("T", " ")}
                       {p.theme ? ` · #${p.theme}` : ""}
+                      {p.scheduled_at && isInRecommendedWindow(p.channel, p.scheduled_at) ? (
+                        <span
+                          className="ml-2 rounded-sm bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+                          title={`Within recommended posting window for ${p.channel}`}
+                        >
+                          best time
+                        </span>
+                      ) : null}
                     </p>
                   </div>
                   <span className="shrink-0 rounded-md border px-2 py-0.5 text-[10px] uppercase">

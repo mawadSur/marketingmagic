@@ -104,6 +104,7 @@ export async function generatePlanAction(
       rationale: p.rationale,
       cache_read_input_tokens: result.usage.cache_read_input_tokens ?? 0,
       auto_scheduled: trusted,
+      image_prompt: p.image_prompt ?? null,
     },
   }));
 
