@@ -5,6 +5,7 @@ import { z } from "zod";
 import { supabaseService } from "@/lib/supabase/service";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { blueskyVerify, type BlueskyCredentials } from "@/lib/social/bluesky";
+import { assertWithinChannelQuota, QuotaExceededError } from "@/lib/billing/limits";
 
 export type ConnectBlueskyState = { error: string | null; success: string | null };
 
@@ -40,6 +41,17 @@ export async function connectBlueskyAction(
       error: err instanceof Error ? err.message : "Bluesky verification failed.",
       success: null,
     };
+  }
+
+  // Plan-gating: hobby tier caps channels at 1. Reconnect of the same
+  // handle is allowed regardless of the cap.
+  try {
+    await assertWithinChannelQuota(ws.id, { channel: "bluesky", handle: creds.handle });
+  } catch (err) {
+    if (err instanceof QuotaExceededError) {
+      return { error: err.message, success: null };
+    }
+    throw err;
   }
 
   const svc = supabaseService();
