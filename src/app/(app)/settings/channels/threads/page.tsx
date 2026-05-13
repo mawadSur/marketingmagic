@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import crypto from "node:crypto";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
-import { serverEnv } from "@/lib/env";
+import { serverEnv, siteUrl } from "@/lib/env";
 import { threadsAuthorizeUrl } from "@/lib/social/threads";
 import { Button } from "@/components/ui/button";
 
@@ -17,7 +17,7 @@ async function startConnect() {
   const ws = await getActiveWorkspaceOrRedirect();
   const nonce = crypto.randomBytes(16).toString("hex");
   const state = `${ws.id}:${nonce}`;
-  const redirectUri = `${env.NEXT_PUBLIC_SITE_URL}/api/oauth/threads/callback`;
+  const redirectUri = `${siteUrl()}/api/oauth/threads/callback`;
   const url = threadsAuthorizeUrl({ redirectUri, state });
   const jar = await cookies();
   jar.set("th_oauth_nonce", nonce, {

@@ -3,7 +3,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseService } from "@/lib/supabase/service";
 import { EventRulesEditor } from "./event-rules-editor";
 import { WebhookCard } from "./webhook-card";
-import { serverEnv } from "@/lib/env";
+import { siteUrl } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
@@ -23,8 +23,7 @@ export default async function EventsPage() {
       .order("created_at", { ascending: true }),
   ]);
 
-  const base = serverEnv().NEXT_PUBLIC_SITE_URL.replace(/\/$/, "");
-  const url = `${base}/api/webhooks/${ws.id}`;
+  const url = `${siteUrl()}/api/webhooks/${ws.id}`;
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">

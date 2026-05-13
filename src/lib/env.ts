@@ -7,7 +7,10 @@ const serverSchema = z.object({
   ANTHROPIC_API_KEY: z.string().min(1),
   CRON_SECRET: z.string().min(16),
   WEBHOOK_DEV_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().min(8).optional()),
-  NEXT_PUBLIC_SITE_URL: z.string().url(),
+  // Optional explicit site URL. When unset we fall back to VERCEL_URL (auto-
+  // injected on Vercel) or localhost. Read through siteUrl() everywhere —
+  // never touch this field directly so the fallback chain is honoured.
+  NEXT_PUBLIC_SITE_URL: z.preprocess(v => (v === "" ? undefined : v), z.string().url().optional()),
   X_CLIENT_ID: z.string().optional(),
   X_CLIENT_SECRET: z.string().optional(),
   // Image generation (fal.ai). Optional so the app boots without it; image
@@ -56,4 +59,18 @@ export function publicEnv(): PublicEnv {
   }
   cachedPublic = parsed.data;
   return cachedPublic;
+}
+
+// Resolve the effective public site URL. Preferred sources in order:
+//   1. NEXT_PUBLIC_SITE_URL — operator-set; needed for custom domains and
+//      OAuth redirect URIs that must match a registered value.
+//   2. VERCEL_URL — auto-injected on every Vercel deployment, no scheme.
+//   3. localhost — final fallback so dev/builds without any URL still work.
+// Always returns a value with a protocol and no trailing slash.
+export function siteUrl(): string {
+  const explicit = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (explicit) return explicit.replace(/\/$/, "");
+  const vercel = process.env.VERCEL_URL?.trim();
+  if (vercel) return `https://${vercel.replace(/\/$/, "")}`;
+  return "http://localhost:3000";
 }

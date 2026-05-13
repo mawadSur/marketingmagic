@@ -220,6 +220,77 @@ export async function generatePostImageAction(
   return { error: null, publicUrl: pub.publicUrl };
 }
 
+// Manual upload — user picks an image file from their device. Same storage
+// layout as generated images so the cron + dispatcher don't care where the
+// bytes came from. Replaces any existing image on the post.
+const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024; // 5MB — fits X v1.1 single-shot.
+
+export async function uploadPostImageAction(formData: FormData): Promise<GenerateImageResult> {
+  const postId = (formData.get("postId") as string | null) ?? "";
+  if (!uuid.safeParse(postId).success) return { error: "Bad post id.", publicUrl: null };
+
+  const file = formData.get("file");
+  if (!(file instanceof File)) {
+    return { error: "No file in upload.", publicUrl: null };
+  }
+  if (file.size === 0) {
+    return { error: "File is empty.", publicUrl: null };
+  }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return { error: "File too large (max 5MB).", publicUrl: null };
+  }
+  if (!ALLOWED_MIME.has(file.type)) {
+    return { error: "Only JPEG, PNG, or WebP.", publicUrl: null };
+  }
+
+  const { error, post } = await loadPostForWorkspace(postId);
+  if (error || !post) return { error, publicUrl: null };
+  if (post.status !== "pending_approval") {
+    return { error: `Cannot upload image from ${post.status}.`, publicUrl: null };
+  }
+
+  const ext = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+  const filename = `${Date.now()}.${ext}`;
+  const storagePath = `${post.workspace_id}/${postId}/${filename}`;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+
+  const svc = supabaseService();
+  const { error: upErr } = await svc.storage
+    .from("post-media")
+    .upload(storagePath, bytes, { contentType: file.type, upsert: false });
+  if (upErr) return { error: `Storage upload failed: ${upErr.message}`, publicUrl: null };
+
+  // Replace any prior image on this post.
+  const oldMedia = Array.isArray(post.media) ? (post.media as unknown as { storage_path?: string }[]) : [];
+  for (const old of oldMedia) {
+    if (old?.storage_path) {
+      await svc.storage.from("post-media").remove([old.storage_path]);
+    }
+  }
+
+  const mediaEntry = {
+    kind: "image" as const,
+    storage_path: storagePath,
+    content_type: file.type,
+    prompt: `User upload: ${file.name}`.slice(0, 200),
+    meta: { source: "upload", filename: file.name, size: file.size },
+  };
+
+  const { error: updateErr } = await svc
+    .from("posts")
+    .update({ media: [mediaEntry] as never })
+    .eq("id", postId);
+  if (updateErr) {
+    await svc.storage.from("post-media").remove([storagePath]);
+    return { error: updateErr.message, publicUrl: null };
+  }
+
+  const { data: pub } = svc.storage.from("post-media").getPublicUrl(storagePath);
+  revalidatePath("/queue");
+  return { error: null, publicUrl: pub.publicUrl };
+}
+
 export async function clearPostImageAction(postId: string): Promise<ActionResult> {
   if (!uuid.safeParse(postId).success) return { error: "Bad post id." };
   const { error, post } = await loadPostForWorkspace(postId);

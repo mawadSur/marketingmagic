@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { serverEnv } from "@/lib/env";
+import { siteUrl } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import {
   instagramExchangeCode,
@@ -8,12 +8,12 @@ import {
 } from "@/lib/social/instagram";
 
 export async function GET(req: NextRequest) {
-  const env = serverEnv();
+  const base = siteUrl();
   const code = req.nextUrl.searchParams.get("code");
   const state = req.nextUrl.searchParams.get("state");
   const error = req.nextUrl.searchParams.get("error");
   if (error) {
-    return NextResponse.redirect(new URL(`/settings/channels?error=${encodeURIComponent(error)}`, env.NEXT_PUBLIC_SITE_URL));
+    return NextResponse.redirect(new URL(`/settings/channels?error=${encodeURIComponent(error)}`, base));
   }
   if (!code || !state) return NextResponse.json({ error: "missing code/state" }, { status: 400 });
   const [workspaceId, nonce] = state.split(":");
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "nonce mismatch" }, { status: 400 });
   }
 
-  const redirectUri = `${env.NEXT_PUBLIC_SITE_URL}/api/oauth/instagram/callback`;
+  const redirectUri = `${base}/api/oauth/instagram/callback`;
   try {
     const token = await instagramExchangeCode({ code, redirectUri });
     const profile = await instagramVerify(token.accessToken, token.igUserId);
@@ -43,16 +43,16 @@ export async function GET(req: NextRequest) {
       { onConflict: "workspace_id,channel,handle" },
     );
     if (dbErr) {
-      return NextResponse.redirect(new URL(`/settings/channels?error=${encodeURIComponent(dbErr.message)}`, env.NEXT_PUBLIC_SITE_URL));
+      return NextResponse.redirect(new URL(`/settings/channels?error=${encodeURIComponent(dbErr.message)}`, base));
     }
-    const res = NextResponse.redirect(new URL("/settings/channels?connected=instagram", env.NEXT_PUBLIC_SITE_URL));
+    const res = NextResponse.redirect(new URL("/settings/channels?connected=instagram", base));
     res.cookies.delete("ig_oauth_nonce");
     return res;
   } catch (err) {
     return NextResponse.redirect(
       new URL(
         `/settings/channels?error=${encodeURIComponent(err instanceof Error ? err.message : "oauth_failed")}`,
-        env.NEXT_PUBLIC_SITE_URL,
+        base,
       ),
     );
   }
