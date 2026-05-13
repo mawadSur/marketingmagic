@@ -27,12 +27,20 @@ export default async function DashboardPage() {
             Last 7 days of activity. Metrics refresh hourly — give it a beat after shipping.
           </p>
         </div>
-        <Link
-          href="/plans/new"
-          className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity duration-200 hover:opacity-90"
-        >
-          Generate plan
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link
+            href="/onboarding/wizard?step=1"
+            className="text-xs text-muted-foreground underline-offset-4 transition-colors duration-200 hover:text-foreground hover:underline"
+          >
+            Take the tour
+          </Link>
+          <Link
+            href="/plans/new"
+            className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity duration-200 hover:opacity-90"
+          >
+            Generate plan
+          </Link>
+        </div>
       </header>
 
       <TrustNudge workspaceId={ws.id} />
