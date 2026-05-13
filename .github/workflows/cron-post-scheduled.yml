@@ -1,0 +1,36 @@
+name: cron / post-scheduled
+
+# Vercel Hobby allows only daily crons, so we run the every-5-minute job
+# from GitHub Actions and just hit the public route. The route is auth-gated
+# by Bearer CRON_SECRET; idempotency is enforced server-side via the
+# social_posts_ledger table.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: cron-post-scheduled
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger post-scheduled
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$SITE_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "Missing SITE_URL or CRON_SECRET repo secret." >&2
+            exit 1
+          fi
+          curl --fail-with-body \
+               --silent --show-error \
+               --max-time 60 \
+               -H "Authorization: Bearer $CRON_SECRET" \
+               -X POST \
+               "$SITE_URL/api/cron/post-scheduled"
