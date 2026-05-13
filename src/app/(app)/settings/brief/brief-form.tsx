@@ -69,36 +69,48 @@ export function BriefForm({ initial: brief }: { initial: Brief | null }) {
   }
 
   return (
-    <form action={formAction} className="space-y-5">
+    <form action={formAction} className="space-y-6">
       {/* AI fill block */}
-      <div className="space-y-2 rounded-md border bg-muted/30 p-4">
-        <Label htmlFor="website_url">Website (fill with AI)</Label>
-        <div className="flex gap-2">
+      <div className="space-y-2 rounded-lg border bg-muted/40 p-4">
+        <div className="flex items-center gap-2">
+          <span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-foreground text-[10px] font-bold text-background">
+            AI
+          </span>
+          <Label htmlFor="website_url" className="text-sm">Fill from your website</Label>
+        </div>
+        <div className="flex flex-col gap-2 sm:flex-row">
           <Input
             id="website_url"
             type="url"
             placeholder="https://yourproduct.com"
             value={websiteUrl}
             onChange={(e) => setWebsiteUrl(e.target.value)}
+            className="transition-colors duration-200"
           />
           <Button
             type="button"
             variant="outline"
             disabled={aiPending || websiteUrl.trim().length < 8}
             onClick={fillWithAi}
+            className="sm:shrink-0"
           >
             {aiPending ? "Reading…" : "Fill with AI"}
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          Claude reads the page and seeds the empty fields below. Already-filled fields are left alone.
+          Claude reads the page and seeds any empty fields below. Already-filled fields are left alone.
         </p>
-        {aiError ? <p className="text-sm text-destructive">{aiError}</p> : null}
-        {aiNote ? <p className="text-sm text-emerald-600">{aiNote}</p> : null}
+        {aiError ? <p className="text-xs text-destructive">{aiError}</p> : null}
+        {aiNote ? (
+          <p className="text-xs text-emerald-600 dark:text-emerald-400">{aiNote}</p>
+        ) : null}
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="product_description">Product description</Label>
+      <Field
+        id="product_description"
+        label="Product description"
+        helper="What is it, who uses it, and what's the wedge?"
+      >
         <Textarea
           id="product_description"
           name="product_description"
@@ -108,9 +120,13 @@ export function BriefForm({ initial: brief }: { initial: Brief | null }) {
           onChange={(e) => set("product_description", e.target.value)}
           placeholder="What is the product? Who uses it? What's the wedge?"
         />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="voice">Voice</Label>
+      </Field>
+
+      <Field
+        id="voice"
+        label="Voice"
+        helper="Specific traits, not adjectives. Claude will mirror this."
+      >
         <Textarea
           id="voice"
           name="voice"
@@ -120,9 +136,13 @@ export function BriefForm({ initial: brief }: { initial: Brief | null }) {
           onChange={(e) => set("voice", e.target.value)}
           placeholder="Specific, plain, not over-engineered. Avoids hype-words. Adjectives only when load-bearing."
         />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="target_audience">Target audience</Label>
+      </Field>
+
+      <Field
+        id="target_audience"
+        label="Target audience"
+        helper="Be concrete — job titles, contexts, what they care about."
+      >
         <Textarea
           id="target_audience"
           name="target_audience"
@@ -132,9 +152,13 @@ export function BriefForm({ initial: brief }: { initial: Brief | null }) {
           onChange={(e) => set("target_audience", e.target.value)}
           placeholder="Indie hackers, technical solo founders, builders shipping side projects."
         />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="do_not_say">Do not say (one per line)</Label>
+      </Field>
+
+      <Field
+        id="do_not_say"
+        label="Do not say"
+        helper="One forbidden phrase per line. Claude will steer around them."
+      >
         <Textarea
           id="do_not_say"
           name="do_not_say"
@@ -143,9 +167,13 @@ export function BriefForm({ initial: brief }: { initial: Brief | null }) {
           onChange={(e) => set("do_not_say", e.target.value)}
           placeholder={"synergy\nrevolutionize\ngame-changer"}
         />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="reference_links">Reference links (one per line)</Label>
+      </Field>
+
+      <Field
+        id="reference_links"
+        label="Reference links"
+        helper="One URL per line — homepage, manifestos, anything that captures the why."
+      >
         <Textarea
           id="reference_links"
           name="reference_links"
@@ -154,9 +182,13 @@ export function BriefForm({ initial: brief }: { initial: Brief | null }) {
           onChange={(e) => set("reference_links", e.target.value)}
           placeholder={"https://yourproduct.com\nhttps://yourblog.com/why-we-built-this"}
         />
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="reference_posts">Reference posts (one per line, voice exemplars)</Label>
+      </Field>
+
+      <Field
+        id="reference_posts"
+        label="Reference posts"
+        helper="One post per line — voice exemplars Claude will pattern-match against."
+      >
         <Textarea
           id="reference_posts"
           name="reference_posts"
@@ -165,8 +197,9 @@ export function BriefForm({ initial: brief }: { initial: Brief | null }) {
           onChange={(e) => set("reference_posts", e.target.value)}
           placeholder={"shipped X this week\nturns out the bug was Y, not Z"}
         />
-      </div>
-      <div className="flex items-center gap-3">
+      </Field>
+
+      <div className="flex flex-wrap items-center gap-3 border-t pt-4">
         <Button type="submit" disabled={pending}>
           {pending ? "Saving…" : brief ? "Update brief" : "Save brief"}
         </Button>
@@ -175,9 +208,29 @@ export function BriefForm({ initial: brief }: { initial: Brief | null }) {
             Saved {new Date(state.savedAt).toLocaleTimeString()}
           </span>
         ) : null}
-        {state.error ? <span className="text-sm text-destructive">{state.error}</span> : null}
+        {state.error ? <span className="text-xs text-destructive">{state.error}</span> : null}
       </div>
       <input type="hidden" name="brief_id" value={brief?.id ?? ""} />
     </form>
+  );
+}
+
+function Field({
+  id,
+  label,
+  helper,
+  children,
+}: {
+  id: string;
+  label: string;
+  helper?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      {children}
+      {helper ? <p className="text-xs text-muted-foreground">{helper}</p> : null}
+    </div>
   );
 }

@@ -14,11 +14,12 @@ export default async function BriefPage() {
     .maybeSingle();
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="mx-auto max-w-2xl space-y-8">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Brand brief</h1>
+        <p className="label-eyebrow">Settings</p>
+        <h1 className="text-3xl font-semibold tracking-tight">Brand brief</h1>
         <p className="text-sm text-muted-foreground">
-          The brief is the input every plan and event-driven post is generated from. Keep it sharp.
+          The brief feeds every generated post. Keep it sharp — vague briefs produce vague posts.
         </p>
       </header>
       <BriefForm initial={brief ?? null} />
