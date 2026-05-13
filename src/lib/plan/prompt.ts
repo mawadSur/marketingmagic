@@ -113,9 +113,7 @@ export function planUserPrompt(inputs: PlanGenInputs): string {
           .join("\n")
       : "";
 
-  const channelEnumLiteral = Array.from(new Set(inputs.channelMix.map((c) => c.channel)))
-    .map((c) => `"${c}"`)
-    .join(" | ");
+  const channelsAllowed = Array.from(new Set(inputs.channelMix.map((c) => c.channel))).join(", ");
 
   return [
     `Generate a ${inputs.weeks}-week posting plan starting ${start}.`,
@@ -125,26 +123,13 @@ export function planUserPrompt(inputs: PlanGenInputs): string {
       (c) => `- ${CHANNELS[c.channel].label} (@${c.handle}): ${c.posts_per_week} posts/week`,
     ),
     `Total posts to produce: ${totalPosts}.`,
+    `Use only these channel values for each post: ${channelsAllowed}.`,
     "",
     "Spread `suggested_scheduled_at` across the window — bias toward the recommended posting windows listed in the system prompt. Use UTC ISO timestamps.",
-    "Theme tags are free-form labels like \"build-progress\", \"winner-announcement\", \"voice-thought-piece\", \"behind-the-scenes\". Reuse the SAME tag for posts of the same category so we can measure engagement per theme.",
+    "Theme tags are free-form labels like build-progress, winner-announcement, voice-thought-piece, behind-the-scenes. Reuse the SAME tag for posts of the same category so we can measure engagement per theme.",
     kpiNote,
     "",
-    "Return ONLY JSON in this exact shape:",
-    "{",
-    '  "plan_name": "string",',
-    '  "overview": "string (one-paragraph summary of the angle and rhythm)",',
-    '  "posts": [',
-    "    {",
-    `      "channel": ${channelEnumLiteral},`,
-    '      "text": "string",',
-    '      "theme": "string",',
-    '      "suggested_scheduled_at": "ISO 8601 UTC datetime",',
-    '      "rationale": "string (why this post, why this slot)",',
-    '      "image_prompt": "string | omit (single sentence describing the paired image)"',
-    "    }",
-    "  ]",
-    "}",
+    "Call the submit_plan tool with the full plan. Do not respond with prose.",
   ]
     .filter(Boolean)
     .join("\n");
