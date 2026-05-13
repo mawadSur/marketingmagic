@@ -5,6 +5,7 @@ import { z } from "zod";
 import { supabaseService } from "@/lib/supabase/service";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { xVerify, type XCredentials } from "@/lib/social/x";
+import { assertWithinChannelQuota, QuotaExceededError } from "@/lib/billing/limits";
 
 export type ConnectXState = { error: string | null; success: string | null };
 
@@ -37,6 +38,17 @@ export async function connectXAction(
     username = verified.username;
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Verification failed.", success: null };
+  }
+
+  // Plan-gating: hobby tier caps channels at 1. A user re-upserting an
+  // already-connected handle is treated as a reconnect and allowed through.
+  try {
+    await assertWithinChannelQuota(ws.id, { channel: "x", handle: username });
+  } catch (err) {
+    if (err instanceof QuotaExceededError) {
+      return { error: err.message, success: null };
+    }
+    throw err;
   }
 
   // Service-role write — RLS members can insert but the credentials column should

@@ -9,6 +9,8 @@ import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { generatePlan } from "@/lib/plan/generate";
 import { collectThemeSignals } from "@/lib/plan/signals";
 import { channelSpec, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
+import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits";
+import { incrementPostsGenerated } from "@/lib/billing/usage";
 
 export type GeneratePlanState = { error: string | null; planId: string | null };
 
@@ -92,6 +94,20 @@ export async function generatePlanAction(
   // Signals share across all channels for now — V2 keeps theme signals
   // channel-agnostic. Per-channel signal split is a future refinement.
   const { winners, losers, parent_plan_id } = await collectThemeSignals(ws.id);
+
+  // Estimate posts BEFORE calling Claude so we don't burn tokens for a
+  // workspace that's over quota. We charge for what we actually generated
+  // below, so the estimate is an upper bound — the AI sometimes drops
+  // posts for unsupported channels.
+  const estimatedPosts = channelMix.reduce((sum, c) => sum + c.posts_per_week * parsed.data.weeks, 0);
+  try {
+    await assertWithinPostQuota(ws.id, estimatedPosts);
+  } catch (err) {
+    if (err instanceof QuotaExceededError) {
+      return { error: err.message, planId: null };
+    }
+    throw err;
+  }
 
   let result;
   try {
@@ -179,6 +195,15 @@ export async function generatePlanAction(
   if (postsErr) {
     await svc.from("posting_plans").delete().eq("id", planRow.id);
     return { error: postsErr.message, planId: null };
+  }
+
+  // Charge billing usage for the actual number of posts inserted (we may
+  // have dropped some for unsupported channels). Best-effort — a counter
+  // failure here shouldn't block the user from seeing their plan.
+  try {
+    await incrementPostsGenerated(ws.id, postsPayload.length);
+  } catch (err) {
+    console.warn("Failed to increment posts usage counter:", err);
   }
 
   revalidatePath("/plans");

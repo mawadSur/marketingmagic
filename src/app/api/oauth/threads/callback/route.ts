@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { siteUrl } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { threadsExchangeCode, threadsVerify, type ThreadsCredentials } from "@/lib/social/threads";
+import { assertWithinChannelQuota, QuotaExceededError } from "@/lib/billing/limits";
 
 export async function GET(req: NextRequest) {
   const base = siteUrl();
@@ -29,6 +30,20 @@ export async function GET(req: NextRequest) {
       expiresAt: token.expiresAt,
       userId: token.userId,
     };
+
+    // Plan-gating: hobby caps channels at 1; reconnect of the same handle
+    // is grandfathered through.
+    try {
+      await assertWithinChannelQuota(workspaceId, { channel: "threads", handle: profile.username });
+    } catch (err) {
+      if (err instanceof QuotaExceededError) {
+        return NextResponse.redirect(
+          new URL(`/settings/billing?error=${encodeURIComponent(err.message)}`, base),
+        );
+      }
+      throw err;
+    }
+
     const svc = supabaseService();
     const { error: dbErr } = await svc.from("social_accounts").upsert(
       {
