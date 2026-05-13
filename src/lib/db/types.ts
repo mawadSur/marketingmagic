@@ -312,6 +312,43 @@ export interface Database {
         }>;
         Relationships: [];
       };
+      ai_reviews: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          window_days: number;
+          summary: string;
+          themes_worked: string[];
+          themes_struggled: string[];
+          timing_suggestions: string[];
+          next_actions: string[];
+          raw: Json | null;
+          generated_at: string;
+          expires_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          window_days: number;
+          summary: string;
+          themes_worked?: string[];
+          themes_struggled?: string[];
+          timing_suggestions?: string[];
+          next_actions?: string[];
+          raw?: Json | null;
+          expires_at: string;
+        };
+        Update: Partial<{
+          summary: string;
+          themes_worked: string[];
+          themes_struggled: string[];
+          timing_suggestions: string[];
+          next_actions: string[];
+          raw: Json | null;
+          expires_at: string;
+        }>;
+        Relationships: [];
+      };
     };
     Views: {
       social_accounts_safe: {

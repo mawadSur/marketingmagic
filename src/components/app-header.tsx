@@ -6,6 +6,7 @@ type Workspace = Database["public"]["Tables"]["workspaces"]["Row"];
 
 const nav = [
   { href: "/dashboard", label: "Dashboard" },
+  { href: "/analytics", label: "Analytics" },
   { href: "/plans", label: "Plans" },
   { href: "/queue", label: "Queue" },
   { href: "/settings/brief", label: "Brief" },

@@ -52,19 +52,63 @@ export async function xVerify(creds: XCredentials): Promise<{ id: string; userna
   return { id: body.data.id, username: body.data.username };
 }
 
-export async function xPost(creds: XCredentials, text: string): Promise<XPostResult> {
+export async function xPost(
+  creds: XCredentials,
+  text: string,
+  mediaIds?: string[],
+): Promise<XPostResult> {
   const url = `${BASE_URL}/2/tweets`;
   const auth = authorize(creds, url, "POST");
+  const body: { text: string; media?: { media_ids: string[] } } = { text };
+  if (mediaIds && mediaIds.length > 0) {
+    body.media = { media_ids: mediaIds };
+  }
   const res = await fetch(url, {
     method: "POST",
     headers: { ...auth, "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify(body),
   });
   const json = (await res.json()) as { data?: XPostResult; errors?: unknown };
   if (!res.ok || !json.data) {
     throw new Error(`X post failed (${res.status}): ${JSON.stringify(json)}`);
   }
   return json.data;
+}
+
+// Single-shot media upload via v1.1 (v2 still has no media-upload endpoint as
+// of 2025/2026). For files ≤5MB we can use the simple form-encoded path.
+// Anything larger would need INIT/APPEND/FINALIZE — out of scope for stills.
+const UPLOAD_URL = "https://upload.twitter.com/1.1/media/upload.json";
+
+export async function xUploadMedia(
+  creds: XCredentials,
+  bytes: Uint8Array,
+  contentType: string,
+): Promise<{ media_id_string: string }> {
+  if (bytes.byteLength > 5 * 1024 * 1024) {
+    throw new Error("Media >5MB requires chunked upload (not implemented).");
+  }
+  // OAuth 1.0a signs the URL; the body is multipart/form-data with a single
+  // `media` field. We don't include the body in the signature base string —
+  // standard for media upload.
+  const auth = authorize(creds, UPLOAD_URL, "POST");
+  const form = new FormData();
+  form.append("media", new Blob([bytes as BlobPart], { type: contentType }));
+
+  const res = await fetch(UPLOAD_URL, {
+    method: "POST",
+    headers: { ...auth },
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`X media upload failed (${res.status}): ${text.slice(0, 400)}`);
+  }
+  const json = (await res.json()) as { media_id_string?: string };
+  if (!json.media_id_string) {
+    throw new Error("X media upload returned no media_id_string.");
+  }
+  return { media_id_string: json.media_id_string };
 }
 
 // V1 — metrics pull. Tweet lookup with public + non-public metrics.

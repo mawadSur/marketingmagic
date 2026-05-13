@@ -39,7 +39,11 @@ export async function generatePlan(inputs: PlanGenInputs): Promise<PlanGenResult
   const json = extractJson(raw);
   const parsed = planSchema.safeParse(json);
   if (!parsed.success) {
-    throw new Error(`Plan validation failed: ${parsed.error.issues.map((i) => i.message).join("; ")}`);
+    throw new Error(
+      `Plan validation failed: ${parsed.error.issues
+        .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+        .join("; ")}`,
+    );
   }
 
   return {

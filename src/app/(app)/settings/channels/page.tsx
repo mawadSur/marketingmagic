@@ -66,13 +66,22 @@ export default async function ChannelsPage() {
         )}
       </section>
 
-      <div className="flex gap-3">
-        <Link
-          href="/settings/channels/x"
-          className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent"
-        >
-          Connect X
-        </Link>
+      <div className="flex flex-wrap gap-3">
+        {[
+          { slug: "x", label: "Connect X" },
+          { slug: "linkedin", label: "Connect LinkedIn" },
+          { slug: "threads", label: "Connect Threads" },
+          { slug: "instagram", label: "Connect Instagram" },
+          { slug: "bluesky", label: "Connect Bluesky" },
+        ].map((c) => (
+          <Link
+            key={c.slug}
+            href={`/settings/channels/${c.slug}`}
+            className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-accent"
+          >
+            {c.label}
+          </Link>
+        ))}
       </div>
     </div>
   );

@@ -1,11 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { serverEnv } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
-import { xMetrics, type XCredentials } from "@/lib/social/x";
+import { dispatchMetrics } from "@/lib/social/dispatch";
 
-// Hourly Vercel Cron — pulls fresh metrics for posts shipped in the last 7 days.
-// Engagement rate = (likes + reposts + replies) / max(impressions, 1) and is cached
-// in post_metrics.engagement_rate so the dashboard + plan signals can query cheaply.
+// Hourly Vercel Cron — pulls fresh metrics for posts shipped in the last 7
+// days, across every connected channel. Engagement rate is cached so the
+// dashboard + plan signals can query cheaply.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,7 +32,6 @@ async function handle(req: NextRequest) {
     .from("posts")
     .select("id, external_id, social_account_id, channel")
     .eq("status", "posted")
-    .eq("channel", "x")
     .gte("posted_at", since)
     .not("external_id", "is", null)
     .limit(BATCH);
@@ -55,17 +54,16 @@ async function handle(req: NextRequest) {
     }
 
     try {
-      const creds = account.credentials as unknown as XCredentials;
-      const m = await xMetrics(creds, post.external_id);
-      const engaged = m.likes + m.reposts + m.replies;
+      const m = await dispatchMetrics(post.channel, account.credentials, post.external_id);
+      const engaged = m.likes + m.comments + m.shares;
       const engagement_rate = m.impressions > 0 ? engaged / m.impressions : null;
 
       const { error: insErr } = await svc.from("post_metrics").insert({
         post_id: post.id,
         impressions: m.impressions,
         likes: m.likes,
-        reposts: m.reposts,
-        replies: m.replies,
+        reposts: m.shares,
+        replies: m.comments,
         clicks: m.clicks,
         engagement_rate,
         raw: m as unknown as Record<string, number>,
@@ -77,7 +75,7 @@ async function handle(req: NextRequest) {
       results.push({ id: post.id, ok: false, reason: err instanceof Error ? err.message : "unknown" });
     }
 
-    // Polite pacing — X v2 free tier has tight read quotas.
+    // Polite pacing — most platforms have read quotas.
     await sleep(250);
   }
 

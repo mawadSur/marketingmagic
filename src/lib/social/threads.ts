@@ -1,0 +1,161 @@
+// Threads via Meta Graph API.
+//
+// Two-step post: create a media container, then publish it.
+// Auth: long-lived user access token with `threads_basic` + `threads_content_publish`.
+
+import { serverEnv } from "@/lib/env";
+
+export interface ThreadsCredentials {
+  accessToken: string;
+  expiresAt: string;
+  userId: string; // numeric IG/Threads user id
+}
+
+const GRAPH = "https://graph.threads.net/v1.0";
+
+export interface ThreadsPostResult {
+  id: string;
+}
+
+export interface ThreadsMetrics {
+  impressions: number;
+  likes: number;
+  replies: number;
+  reposts: number;
+  quotes: number;
+}
+
+// ─── OAuth ─────────────────────────────────────────────────────────────────
+
+export function threadsAuthorizeUrl(opts: { redirectUri: string; state: string }): string {
+  const env = serverEnv();
+  if (!env.META_APP_ID) {
+    throw new Error("META_APP_ID is not set.");
+  }
+  const params = new URLSearchParams({
+    client_id: env.META_APP_ID,
+    redirect_uri: opts.redirectUri,
+    scope: "threads_basic,threads_content_publish,threads_manage_insights",
+    response_type: "code",
+    state: opts.state,
+  });
+  return `https://threads.net/oauth/authorize?${params}`;
+}
+
+export async function threadsExchangeCode(opts: {
+  code: string;
+  redirectUri: string;
+}): Promise<{ accessToken: string; userId: string; expiresAt: string }> {
+  const env = serverEnv();
+  if (!env.META_APP_ID || !env.META_APP_SECRET) {
+    throw new Error("META OAuth keys are not set.");
+  }
+  // Short-lived token first.
+  const shortRes = await fetch("https://graph.threads.net/oauth/access_token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: env.META_APP_ID,
+      client_secret: env.META_APP_SECRET,
+      grant_type: "authorization_code",
+      redirect_uri: opts.redirectUri,
+      code: opts.code,
+    }),
+  });
+  if (!shortRes.ok) {
+    throw new Error(`Threads short token failed (${shortRes.status}): ${await shortRes.text()}`);
+  }
+  const short = (await shortRes.json()) as { access_token: string; user_id: string };
+
+  // Exchange for long-lived (60-day) token.
+  const longRes = await fetch(
+    `https://graph.threads.net/access_token?grant_type=th_exchange_token&client_secret=${encodeURIComponent(env.META_APP_SECRET)}&access_token=${encodeURIComponent(short.access_token)}`,
+  );
+  if (!longRes.ok) {
+    throw new Error(`Threads long token failed (${longRes.status}): ${await longRes.text()}`);
+  }
+  const long = (await longRes.json()) as { access_token: string; expires_in: number };
+  return {
+    accessToken: long.access_token,
+    userId: short.user_id,
+    expiresAt: new Date(Date.now() + long.expires_in * 1000).toISOString(),
+  };
+}
+
+export async function threadsVerify(
+  accessToken: string,
+  userId: string,
+): Promise<{ username: string }> {
+  const res = await fetch(`${GRAPH}/${userId}?fields=username&access_token=${encodeURIComponent(accessToken)}`);
+  if (!res.ok) {
+    throw new Error(`Threads verify failed (${res.status}): ${await res.text()}`);
+  }
+  const json = (await res.json()) as { username: string };
+  return { username: json.username };
+}
+
+// ─── Posting ───────────────────────────────────────────────────────────────
+
+export async function threadsPost(
+  creds: ThreadsCredentials,
+  text: string,
+  imageUrl?: string,
+): Promise<ThreadsPostResult> {
+  // Step 1: create the media container.
+  const containerParams = new URLSearchParams({
+    access_token: creds.accessToken,
+    media_type: imageUrl ? "IMAGE" : "TEXT",
+    text,
+  });
+  if (imageUrl) containerParams.set("image_url", imageUrl);
+
+  const containerRes = await fetch(`${GRAPH}/${creds.userId}/threads?${containerParams}`, {
+    method: "POST",
+  });
+  if (!containerRes.ok) {
+    throw new Error(`Threads container failed (${containerRes.status}): ${await containerRes.text()}`);
+  }
+  const { id: containerId } = (await containerRes.json()) as { id: string };
+
+  // Step 2: publish. Meta says wait ~30s for IMAGE containers to process — we
+  // poll briefly with backoff to keep latency reasonable in the cron.
+  if (imageUrl) {
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  const pubRes = await fetch(
+    `${GRAPH}/${creds.userId}/threads_publish?creation_id=${containerId}&access_token=${encodeURIComponent(creds.accessToken)}`,
+    { method: "POST" },
+  );
+  if (!pubRes.ok) {
+    throw new Error(`Threads publish failed (${pubRes.status}): ${await pubRes.text()}`);
+  }
+  const pub = (await pubRes.json()) as { id: string };
+  return { id: pub.id };
+}
+
+// ─── Metrics ───────────────────────────────────────────────────────────────
+
+export async function threadsMetrics(
+  creds: ThreadsCredentials,
+  mediaId: string,
+): Promise<ThreadsMetrics> {
+  const metrics = "views,likes,replies,reposts,quotes";
+  const res = await fetch(
+    `${GRAPH}/${mediaId}/insights?metric=${metrics}&access_token=${encodeURIComponent(creds.accessToken)}`,
+  );
+  if (!res.ok) {
+    throw new Error(`Threads metrics failed (${res.status}): ${await res.text()}`);
+  }
+  const json = (await res.json()) as { data: Array<{ name: string; values: Array<{ value: number }> }> };
+  const map = new Map<string, number>();
+  for (const m of json.data ?? []) {
+    map.set(m.name, m.values?.[0]?.value ?? 0);
+  }
+  return {
+    impressions: map.get("views") ?? 0,
+    likes: map.get("likes") ?? 0,
+    replies: map.get("replies") ?? 0,
+    reposts: map.get("reposts") ?? 0,
+    quotes: map.get("quotes") ?? 0,
+  };
+}
