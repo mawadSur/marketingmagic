@@ -23,6 +23,19 @@ const serverSchema = z.object({
   // Meta (Threads + Instagram share these).
   META_APP_ID: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
   META_APP_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
+  // Resend transactional email — used by the daily approval digest cron.
+  // Optional: when unset the digest route logs and skips instead of throwing,
+  // so the rest of the app keeps booting without an email provider configured.
+  RESEND_API_KEY: z.preprocess(v => (v === "" ? undefined : v), z.string().min(8).optional()),
+  // Secret used to HMAC-sign approve/reject magic links in digest emails.
+  // Min 32 chars so the signing key has enough entropy. Optional with the
+  // same graceful-degrade pattern as RESEND_API_KEY.
+  EMAIL_LINK_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().min(32).optional()),
+  // From-address for the digest. Defaults to a noreply on our brand domain;
+  // override per environment if you want a different sender.
+  EMAIL_FROM: z
+    .preprocess(v => (v === "" ? undefined : v), z.string().optional())
+    .default("marketingmagic <noreply@marketingmagic.app>"),
 });
 
 const publicSchema = serverSchema.pick({
