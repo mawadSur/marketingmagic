@@ -6,8 +6,9 @@ import {
 } from "@/lib/dashboard/analytics";
 import { getOrGenerateAiReview } from "@/lib/dashboard/ai-review";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ChannelBadge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 import { EngagementChart } from "./engagement-chart";
-import { CHANNELS } from "@/lib/channels/registry";
 
 export const dynamic = "force-dynamic";
 
@@ -32,13 +33,16 @@ export default async function AnalyticsPage() {
   const avgRate = totals.impressions > 0 ? totals.engagement / totals.impressions : 0;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-10">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Analytics</h1>
-        <p className="text-sm text-muted-foreground">Last 30 days across all connected channels.</p>
+        <p className="label-eyebrow">Last 30 days</p>
+        <h1 className="text-3xl font-semibold tracking-tight">Analytics</h1>
+        <p className="text-sm text-muted-foreground">
+          Aggregated across every connected channel. Metrics refresh hourly.
+        </p>
       </header>
 
-      <section className="grid grid-cols-2 gap-4 md:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
         <Kpi label="Posts" value={totals.posts.toLocaleString()} />
         <Kpi label="Impressions" value={totals.impressions.toLocaleString()} />
         <Kpi label="Engagements" value={totals.engagement.toLocaleString()} />
@@ -46,9 +50,14 @@ export default async function AnalyticsPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-medium">Engagement over time</h2>
+        <div className="flex items-end justify-between">
+          <div>
+            <p className="label-eyebrow">Trend</p>
+            <h2 className="text-base font-medium">Engagement over time</h2>
+          </div>
+        </div>
         <Card>
-          <CardContent className="pt-4">
+          <CardContent className="pt-5 sm:pt-6">
             <EngagementChart data={byDay} />
           </CardContent>
         </Card>
@@ -56,24 +65,33 @@ export default async function AnalyticsPage() {
 
       <section className="grid gap-6 lg:grid-cols-2">
         <div className="space-y-3">
-          <h2 className="text-sm font-medium">By channel</h2>
+          <div>
+            <p className="label-eyebrow">Breakdown</p>
+            <h2 className="text-base font-medium">By channel</h2>
+          </div>
           {byChannel.length === 0 ? (
-            <p className="rounded-lg border p-4 text-sm text-muted-foreground">
-              No posts in the window yet.
-            </p>
+            <EmptyState
+              icon="chart"
+              title="Nothing's posted in the last 30 days."
+              description="Once your scheduled drafts go live, channel stats land here."
+            />
           ) : (
-            <ul className="divide-y rounded-lg border">
+            <ul className="divide-y rounded-lg border bg-card">
               {byChannel.map((c) => {
-                const label = CHANNELS[c.channel as keyof typeof CHANNELS]?.label ?? c.channel;
                 const pct = c.engagement_rate * 100;
                 return (
-                  <li key={c.channel} className="flex items-center justify-between px-4 py-3 text-sm">
+                  <li
+                    key={c.channel}
+                    className="flex items-center justify-between gap-3 px-4 py-3 text-sm transition-colors duration-200 hover:bg-muted/30"
+                  >
                     <div className="flex items-center gap-3">
-                      <span className="rounded-md border px-2 py-0.5 text-xs uppercase">{label}</span>
+                      <ChannelBadge channel={c.channel} />
                       <span className="text-muted-foreground">{c.posts} posts</span>
                     </div>
-                    <div className="flex items-center gap-3 tabular-nums">
-                      <span>{c.impressions.toLocaleString()} impressions</span>
+                    <div className="flex flex-wrap items-center justify-end gap-2 tabular-nums sm:gap-3">
+                      <span className="text-muted-foreground">
+                        {c.impressions.toLocaleString()} <span className="hidden sm:inline">impressions</span>
+                      </span>
                       <span className="font-medium">{pct.toFixed(2)}%</span>
                     </div>
                   </li>
@@ -84,11 +102,16 @@ export default async function AnalyticsPage() {
         </div>
 
         <div className="space-y-3">
-          <h2 className="text-sm font-medium">AI review (weekly)</h2>
+          <div>
+            <p className="label-eyebrow">Weekly AI review</p>
+            <h2 className="text-base font-medium">Summary</h2>
+          </div>
           {review === null ? (
-            <p className="rounded-lg border p-4 text-sm text-muted-foreground">
-              Need at least 5 posts in the window to generate a review.
-            </p>
+            <EmptyState
+              icon="doc"
+              title="Need a few more posts."
+              description="Claude writes a review once you've shipped at least 5 posts in the window."
+            />
           ) : (
             <Card>
               <CardHeader className="pb-2">
@@ -108,7 +131,7 @@ export default async function AnalyticsPage() {
                 {review.next_actions.length > 0 ? (
                   <ReviewList title="Next actions" items={review.next_actions} />
                 ) : null}
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                <p className="label-eyebrow">
                   Generated {review.generated_at.slice(0, 10)}
                 </p>
               </CardContent>
@@ -118,8 +141,13 @@ export default async function AnalyticsPage() {
       </section>
 
       <section className="grid gap-6 lg:grid-cols-2">
-        <PostList title="Top posts" posts={ranked.top} />
-        <PostList title="Worst posts" posts={ranked.bottom} />
+        <PostList title="Top posts" emptyIcon="spark" emptyTitle="Top posts will surface here." posts={ranked.top} />
+        <PostList
+          title="Needs work"
+          emptyIcon="chart"
+          emptyTitle="Nothing flagged yet."
+          posts={ranked.bottom}
+        />
       </section>
     </div>
   );
@@ -127,14 +155,12 @@ export default async function AnalyticsPage() {
 
 function Kpi({ label, value }: { label: string; value: string }) {
   return (
-    <Card>
+    <Card className="surface-kpi">
       <CardHeader className="pb-2">
-        <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {label}
-        </CardTitle>
+        <CardTitle className="label-eyebrow">{label}</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-semibold tabular-nums">{value}</div>
+        <div className="text-2xl font-semibold tabular-nums sm:text-3xl">{value}</div>
       </CardContent>
     </Card>
   );
@@ -151,13 +177,13 @@ function ReviewList({
 }) {
   const cls =
     tone === "positive"
-      ? "border-l-2 border-emerald-500/50 pl-3"
+      ? "border-l-2 border-emerald-500/60 pl-3"
       : tone === "negative"
-      ? "border-l-2 border-amber-500/50 pl-3"
-      : "border-l-2 border-muted pl-3";
+      ? "border-l-2 border-amber-500/60 pl-3"
+      : "border-l-2 border-muted-foreground/30 pl-3";
   return (
     <div className={cls}>
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</p>
+      <p className="label-eyebrow">{title}</p>
       <ul className="mt-1 list-disc space-y-1 pl-4">
         {items.map((s, i) => (
           <li key={i}>{s}</li>
@@ -177,24 +203,40 @@ interface PostLike {
   engagement_rate: number | null;
 }
 
-function PostList({ title, posts }: { title: string; posts: PostLike[] }) {
+function PostList({
+  title,
+  posts,
+  emptyTitle,
+  emptyIcon,
+}: {
+  title: string;
+  posts: PostLike[];
+  emptyTitle: string;
+  emptyIcon: "spark" | "chart";
+}) {
   return (
     <div className="space-y-3">
-      <h2 className="text-sm font-medium">{title}</h2>
+      <div>
+        <p className="label-eyebrow">Ranked</p>
+        <h2 className="text-base font-medium">{title}</h2>
+      </div>
       {posts.length === 0 ? (
-        <p className="rounded-lg border p-4 text-sm text-muted-foreground">No posts yet.</p>
+        <EmptyState icon={emptyIcon} title={emptyTitle} description="Waiting for posted-and-measured posts in the window." />
       ) : (
-        <ul className="divide-y rounded-lg border">
+        <ul className="divide-y rounded-lg border bg-card">
           {posts.map((p) => (
-            <li key={p.id} className="space-y-1 px-4 py-3 text-sm">
+            <li
+              key={p.id}
+              className="space-y-1 px-4 py-3 text-sm transition-colors duration-200 hover:bg-muted/30"
+            >
               <p className="line-clamp-2 font-medium">{p.text}</p>
-              <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="rounded-md border px-1.5 py-0.5 uppercase">{p.channel}</span>
+              <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <ChannelBadge channel={p.channel} />
                 {p.theme ? <span>#{p.theme}</span> : null}
-                <span>·</span>
+                <span aria-hidden>·</span>
                 <span>{p.impressions.toLocaleString()} impressions</span>
-                <span>·</span>
-                <span>{((p.engagement_rate ?? 0) * 100).toFixed(2)}%</span>
+                <span aria-hidden>·</span>
+                <span className="font-medium tabular-nums">{((p.engagement_rate ?? 0) * 100).toFixed(2)}%</span>
               </p>
             </li>
           ))}

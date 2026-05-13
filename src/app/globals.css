@@ -54,3 +54,24 @@
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
+
+@layer components {
+  /* KPI/stat cards. Faint top-down gradient adds depth without colour noise. */
+  .surface-kpi {
+    background-image: linear-gradient(
+      180deg,
+      hsl(var(--background)) 0%,
+      hsl(var(--muted) / 0.45) 100%
+    );
+  }
+
+  /* Section eyebrow — tiny uppercase label above a heading. */
+  .label-eyebrow {
+    @apply text-xs font-medium uppercase tracking-wide text-muted-foreground;
+  }
+
+  /* Interactive card hover: gentle lift, no bouncy motion. */
+  .card-hover {
+    @apply transition-shadow duration-200 hover:shadow-sm hover:border-foreground/15;
+  }
+}
