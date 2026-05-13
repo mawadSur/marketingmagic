@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
+import { Badge, statusBadgeLabel, statusBadgeVariant } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export const dynamic = "force-dynamic";
 
@@ -14,48 +16,60 @@ export default async function PlansPage() {
     .order("created_at", { ascending: false });
 
   return (
-    <div className="space-y-6">
-      <header className="flex items-center justify-between">
+    <div className="space-y-8">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Plans</h1>
+          <p className="label-eyebrow">Posting plans</p>
+          <h1 className="text-3xl font-semibold tracking-tight">Plans</h1>
           <p className="text-sm text-muted-foreground">
-            Auto-generated posting calendars. Each plan creates drafts in the queue for approval.
+            Auto-generated posting calendars. Every plan drops fresh drafts into the queue.
           </p>
         </div>
         <Link
           href="/plans/new"
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+          className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity duration-200 hover:opacity-90"
         >
           New plan
         </Link>
       </header>
 
       {plans && plans.length > 0 ? (
-        <ul className="divide-y rounded-lg border">
+        <ul className="divide-y rounded-lg border bg-card">
           {plans.map((p) => (
-            <li key={p.id} className="flex items-center justify-between px-4 py-3 text-sm">
-              <div>
-                <Link href={`/plans/${p.id}`} className="font-medium hover:underline">
+            <li
+              key={p.id}
+              className="flex items-center justify-between gap-3 px-4 py-3 text-sm transition-colors duration-200 hover:bg-muted/30"
+            >
+              <div className="min-w-0 space-y-1">
+                <Link
+                  href={`/plans/${p.id}`}
+                  className="block truncate font-medium transition-colors duration-200 hover:underline"
+                >
                   {p.name}
                 </Link>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs tabular-nums text-muted-foreground">
                   {p.start_at.slice(0, 10)} → {p.end_at.slice(0, 10)}
                   {p.parent_plan_id ? " · iteration" : ""}
                 </p>
               </div>
-              <span className="rounded-md border px-2 py-0.5 text-xs uppercase tracking-wide">
-                {p.status}
-              </span>
+              <Badge variant={statusBadgeVariant(p.status)}>{statusBadgeLabel(p.status)}</Badge>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="rounded-lg border p-6 text-sm text-muted-foreground">
-          No plans yet.{" "}
-          <Link href="/plans/new" className="text-primary underline-offset-4 hover:underline">
-            Generate one.
-          </Link>
-        </p>
+        <EmptyState
+          icon="calendar"
+          title="No plans yet."
+          description="Generate your first plan and Claude will draft a week (or month) of posts straight into the queue."
+          action={
+            <Link
+              href="/plans/new"
+              className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity duration-200 hover:opacity-90"
+            >
+              Generate plan
+            </Link>
+          }
+        />
       )}
     </div>
   );
