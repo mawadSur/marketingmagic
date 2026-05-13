@@ -23,6 +23,14 @@ const serverSchema = z.object({
   // Meta (Threads + Instagram share these).
   META_APP_ID: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
   META_APP_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
+  // Stripe billing. All optional so the app still boots when billing is
+  // not configured (Hobby tier is the default in DB, so unpaid features
+  // just keep working without these). When STRIPE_SECRET_KEY is missing,
+  // stripeClient() throws a clear error at the call site.
+  STRIPE_SECRET_KEY: z.preprocess(v => (v === "" ? undefined : v), z.string().min(8).optional()),
+  STRIPE_WEBHOOK_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().min(8).optional()),
+  STRIPE_PRICE_PRO: z.preprocess(v => (v === "" ? undefined : v), z.string().min(4).optional()),
+  STRIPE_PRICE_AGENCY: z.preprocess(v => (v === "" ? undefined : v), z.string().min(4).optional()),
 });
 
 const publicSchema = serverSchema.pick({

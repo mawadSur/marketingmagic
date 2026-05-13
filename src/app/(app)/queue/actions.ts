@@ -7,6 +7,8 @@ import { supabaseService } from "@/lib/supabase/service";
 import { getActiveWorkspaceOrRedirect, getAuthedUserOrRedirect } from "@/lib/workspace";
 import { defaultImageProvider } from "@/lib/images";
 import { maxCharsFor } from "@/lib/channels/registry";
+import { assertWithinImageQuota, QuotaExceededError } from "@/lib/billing/limits";
+import { incrementImagesGenerated } from "@/lib/billing/usage";
 
 type ActionResult = { error: string | null };
 type GenerateImageResult = { error: string | null; publicUrl: string | null };
@@ -159,6 +161,18 @@ export async function generatePostImageAction(
     return { error: `Cannot generate image from ${post.status}.`, publicUrl: null };
   }
 
+  // Plan-gating: hobby tier has 0 image gens; pro/agency have monthly caps.
+  // Check BEFORE the fal.ai call so we don't pay for a generation we'd
+  // then have to discard.
+  try {
+    await assertWithinImageQuota(post.workspace_id, 1);
+  } catch (err) {
+    if (err instanceof QuotaExceededError) {
+      return { error: err.message, publicUrl: null };
+    }
+    throw err;
+  }
+
   // Generate via the configured provider.
   let img;
   try {
@@ -213,6 +227,15 @@ export async function generatePostImageAction(
   if (updateErr) {
     await svc.storage.from("post-media").remove([storagePath]);
     return { error: updateErr.message, publicUrl: null };
+  }
+
+  // Charge the image quota only after the asset is fully persisted. If a
+  // mid-flight error rolled back the post update, we don't want a phantom
+  // billing event. Best-effort — counter failure shouldn't block return.
+  try {
+    await incrementImagesGenerated(post.workspace_id, 1);
+  } catch (err) {
+    console.warn("Failed to increment images usage counter:", err);
   }
 
   const { data: pub } = svc.storage.from("post-media").getPublicUrl(storagePath);
