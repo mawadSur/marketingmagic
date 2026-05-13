@@ -24,12 +24,20 @@ export default async function DashboardPage() {
             Last 7 days of activity. Cron pulls metrics hourly.
           </p>
         </div>
-        <Link
-          href="/plans/new"
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
-        >
-          Generate plan
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link
+            href="/onboarding/wizard?step=1"
+            className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            Take the tour
+          </Link>
+          <Link
+            href="/plans/new"
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+          >
+            Generate plan
+          </Link>
+        </div>
       </header>
 
       <TrustNudge workspaceId={ws.id} />
