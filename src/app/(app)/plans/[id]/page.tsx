@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
+import { Badge, ChannelBadge, statusBadgeLabel, statusBadgeVariant } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export const dynamic = "force-dynamic";
 
@@ -34,39 +36,68 @@ export default async function PlanDetailPage({
   const posts = postsRes.data ?? [];
 
   return (
-    <div className="space-y-6">
-      <header className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold tracking-tight">{plan.name}</h1>
-          <span className="rounded-md border px-2 py-0.5 text-xs uppercase tracking-wide">
-            {plan.status}
-          </span>
+    <div className="space-y-8">
+      <header className="space-y-3">
+        <Link
+          href="/plans"
+          className="inline-flex items-center text-xs text-muted-foreground transition-colors duration-200 hover:text-foreground"
+        >
+          ← All plans
+        </Link>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1">
+            <p className="label-eyebrow">Plan</p>
+            <h1 className="text-3xl font-semibold tracking-tight">{plan.name}</h1>
+          </div>
+          <Badge variant={statusBadgeVariant(plan.status)}>{statusBadgeLabel(plan.status)}</Badge>
         </div>
         <p className="text-sm text-muted-foreground">
-          {plan.start_at.slice(0, 10)} → {plan.end_at.slice(0, 10)} ·{" "}
-          {posts.length} posts ·{" "}
-          <Link href="/queue" className="text-primary underline-offset-4 hover:underline">
+          <span className="tabular-nums">
+            {plan.start_at.slice(0, 10)} → {plan.end_at.slice(0, 10)}
+          </span>
+          {" · "}
+          {posts.length} {posts.length === 1 ? "post" : "posts"}
+          {" · "}
+          <Link
+            href="/queue"
+            className="text-primary underline-offset-4 transition-colors duration-200 hover:underline"
+          >
             review in queue →
           </Link>
         </p>
         {plan.generation_prompt ? (
-          <p className="rounded-md border bg-muted/50 p-3 text-sm">{plan.generation_prompt}</p>
+          <p className="rounded-md border bg-muted/40 p-3 text-sm leading-relaxed">
+            {plan.generation_prompt}
+          </p>
         ) : null}
       </header>
 
-      <ul className="divide-y rounded-lg border">
-        {posts.map((p) => (
-          <li key={p.id} className="space-y-1 px-4 py-3 text-sm">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>
-                {p.theme ? `#${p.theme}` : ""} · {p.scheduled_at?.slice(0, 16).replace("T", " ")}
-              </span>
-              <span className="rounded-md border px-2 py-0.5 text-[10px] uppercase">{p.status}</span>
-            </div>
-            <p className="whitespace-pre-wrap">{p.text}</p>
-          </li>
-        ))}
-      </ul>
+      {posts.length === 0 ? (
+        <EmptyState
+          icon="doc"
+          title="This plan has no posts."
+          description="That's unusual — generation may have failed mid-flight. Try regenerating from /plans/new."
+        />
+      ) : (
+        <ul className="divide-y rounded-lg border bg-card">
+          {posts.map((p) => (
+            <li
+              key={p.id}
+              className="space-y-1.5 px-4 py-3 text-sm transition-colors duration-200 hover:bg-muted/30"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-2">
+                  <ChannelBadge channel={p.channel} />
+                  {p.theme ? <span>#{p.theme}</span> : null}
+                  <span className="tabular-nums">{p.scheduled_at?.slice(0, 16).replace("T", " ")}</span>
+                </div>
+                <Badge variant={statusBadgeVariant(p.status)}>{statusBadgeLabel(p.status)}</Badge>
+              </div>
+              <p className="whitespace-pre-wrap leading-relaxed">{p.text}</p>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

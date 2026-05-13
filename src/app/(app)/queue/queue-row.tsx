@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
+import { Badge, ChannelBadge, statusBadgeLabel, statusBadgeVariant } from "@/components/ui/badge";
 import {
   approvePostAction,
   clearPostImageAction,
@@ -113,12 +114,19 @@ export function QueueRow({ post }: { post: PostRow }) {
 
   return (
     <li className="space-y-3 px-4 py-4 text-sm">
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>
-          {post.channel} {post.theme ? `· #${post.theme}` : ""} ·{" "}
-          {post.scheduled_at ? post.scheduled_at.slice(0, 16).replace("T", " ") : "no time"}
-        </span>
-        <span className="rounded-md border px-2 py-0.5 text-[10px] uppercase">{post.status}</span>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2">
+          <ChannelBadge channel={post.channel} />
+          {post.theme ? <span>#{post.theme}</span> : null}
+          <span className="tabular-nums">
+            {post.scheduled_at
+              ? post.scheduled_at.slice(0, 16).replace("T", " ")
+              : "no time set"}
+          </span>
+        </div>
+        <Badge variant={statusBadgeVariant(post.status)}>
+          {statusBadgeLabel(post.status)}
+        </Badge>
       </div>
 
       {editing ? (
@@ -145,8 +153,8 @@ export function QueueRow({ post }: { post: PostRow }) {
               />
             </div>
           ) : (
-            <div className="flex h-24 items-center justify-center rounded-md border border-dashed text-xs text-muted-foreground">
-              No image yet
+            <div className="flex h-24 items-center justify-center rounded-md border border-dashed bg-muted/20 text-xs text-muted-foreground">
+              No image yet — type a prompt below or upload one.
             </div>
           )}
 
