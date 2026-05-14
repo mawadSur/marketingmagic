@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { supabaseService } from "@/lib/supabase/service";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
-import { xVerify, type XCredentials } from "@/lib/social/x";
+import { xVerify, type XConnectionMethod, type XCredentials } from "@/lib/social/x";
 import { assertWithinChannelQuota, QuotaExceededError } from "@/lib/billing/limits";
 
 export type ConnectXState = { error: string | null; success: string | null };
@@ -53,6 +53,12 @@ export async function connectXAction(
 
   // Service-role write — RLS members can insert but the credentials column should
   // only ever round-trip through the server. Use service to keep the principle consistent.
+  // Tag with connection_method: "manual" so the settings UI can nudge legacy
+  // users toward the OAuth re-auth path.
+  const persisted: XCredentials & { connection_method: XConnectionMethod } = {
+    ...creds,
+    connection_method: "manual",
+  };
   const svc = supabaseService();
   const { error } = await svc
     .from("social_accounts")
@@ -61,7 +67,7 @@ export async function connectXAction(
         workspace_id: ws.id,
         channel: "x",
         handle: username,
-        credentials: creds as unknown as Record<string, string>,
+        credentials: persisted as unknown as Record<string, string>,
         status: "connected",
       },
       { onConflict: "workspace_id,channel,handle" },
