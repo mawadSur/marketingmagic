@@ -59,6 +59,15 @@ export interface VoiceProfileDiff {
   proposed_at: string;
 }
 
+// Phase 4.7 (Discord integration): per-event filter toggles stored as a jsonb
+// blob on integrations.event_filters. Kept narrow and boolean-only on purpose
+// — anything more shaped should be its own column to remain queryable.
+export interface DiscordEventFilters {
+  digest: boolean;       // daily approval-digest embed
+  realtime: boolean;     // post-by-post embed on pending_approval creation
+  alerts_only: boolean;  // reserved: high-priority alerts only (errors, billing)
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -460,6 +469,43 @@ export interface Database {
           channels: string[];
           theme: string | null;
           enabled: boolean;
+        }>;
+        Relationships: [];
+      };
+      integrations: {
+        // Phase 4.7: third-party transports (Discord today, Slack deferred).
+        // One row per (workspace, provider, channel) destination. See
+        // migration 011 for the CHECK constraint on `provider` and the
+        // partial index on workspace_id where provider = 'discord'.
+        Row: {
+          id: string;
+          workspace_id: string;
+          provider: "discord";
+          target_channel_id: string;
+          target_guild_id: string | null;
+          auth_payload: Json | null;
+          // Defaults to {digest: true, realtime: false, alerts_only: false}
+          // in the DB; modelled here as an interface for the UI toggles.
+          event_filters: DiscordEventFilters;
+          installed_by: string | null;
+          installed_at: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          provider: "discord";
+          target_channel_id: string;
+          target_guild_id?: string | null;
+          auth_payload?: Json | null;
+          event_filters?: DiscordEventFilters;
+          installed_by?: string | null;
+        };
+        Update: Partial<{
+          target_channel_id: string;
+          target_guild_id: string | null;
+          auth_payload: Json | null;
+          event_filters: DiscordEventFilters;
         }>;
         Relationships: [];
       };
