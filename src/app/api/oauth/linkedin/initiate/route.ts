@@ -35,12 +35,16 @@ export async function GET(_req: NextRequest) {
   const authorize = linkedinAuthorizeUrl({ redirectUri, state });
 
   const res = NextResponse.redirect(authorize);
+  // Scope the cookie path to the OAuth subtree — matches the X OAuth pattern
+  // and means an attacker triggering an unrelated GET on the rest of the app
+  // never sees this cookie. Callback reads at /api/oauth/linkedin/callback so
+  // it's still in-scope.
   res.cookies.set("li_oauth_nonce", nonce, {
     httpOnly: true,
-    secure: true,
+    secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     maxAge: 10 * 60,
-    path: "/",
+    path: "/api/oauth/linkedin",
   });
   return res;
 }
