@@ -13,6 +13,10 @@ export type PostStatus =
 export type ApprovalAction = "approved" | "rejected" | "edited" | "unapproved";
 export type PlanStatus = "draft" | "active" | "archived";
 export type AccountStatus = "connected" | "expired" | "revoked";
+// Phase 2: cross-channel idea grouping. One "idea" maps to N posts (one per
+// channel variant). Stored as text so the generator could later use stable
+// labels; today the plans/new action mints a UUID per idea.
+export type IdeaId = string;
 
 export interface Database {
   public: {
@@ -205,6 +209,10 @@ export interface Database {
           generation_metadata: Json | null;
           approved_at: string | null;
           revoked_at: string | null;
+          // Phase 2: groups channel-tuned variants that share a single "idea".
+          // NULL for legacy / single-channel posts; non-null variants in the
+          // same idea share the value so the queue UI can group them.
+          idea_id: IdeaId | null;
           created_at: string;
           updated_at: string;
         };
@@ -221,6 +229,7 @@ export interface Database {
           status?: PostStatus;
           source_event_id?: string | null;
           generation_metadata?: Json | null;
+          idea_id?: IdeaId | null;
         };
         Update: Partial<{
           text: string;
@@ -233,6 +242,7 @@ export interface Database {
           failure_reason: string | null;
           approved_at: string | null;
           revoked_at: string | null;
+          idea_id: IdeaId | null;
         }>;
         Relationships: [];
       };
