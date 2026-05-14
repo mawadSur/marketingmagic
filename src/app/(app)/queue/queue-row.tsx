@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Badge, ChannelBadge, statusBadgeLabel, statusBadgeVariant } from "@/components/ui/badge";
+import type { RejectionReason } from "@/lib/db/types";
 import {
   approvePostAction,
   clearPostImageAction,
@@ -35,7 +36,16 @@ interface PostRow {
   media: QueueMediaItem[];
   image_prompt: string | null;
   mediaPublicUrl: string | null;
+  voice_score: number | null;
+  low_confidence: boolean;
 }
+
+const REJECTION_REASONS: Array<{ value: RejectionReason; label: string; helper: string }> = [
+  { value: "off_voice", label: "Off-voice", helper: "Didn't sound like the brand." },
+  { value: "wrong_theme", label: "Wrong theme", helper: "Off-strategy for this audience." },
+  { value: "factually_wrong", label: "Factually wrong", helper: "Made-up claim or bad number." },
+  { value: "other", label: "Other", helper: "Use the note to explain." },
+];
 
 export function QueueRow({ post }: { post: PostRow }) {
   const router = useRouter();
@@ -43,6 +53,9 @@ export function QueueRow({ post }: { post: PostRow }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(post.text);
   const [error, setError] = useState<string | null>(null);
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectReason, setRejectReason] = useState<RejectionReason | null>(null);
+  const [rejectNote, setRejectNote] = useState("");
 
   // Image-gen state. `prompt` is what the user types/edits; seeded from the
   // saved media's prompt (when an image already exists), else from Claude's
@@ -124,9 +137,24 @@ export function QueueRow({ post }: { post: PostRow }) {
               : "no time set"}
           </span>
         </div>
-        <Badge variant={statusBadgeVariant(post.status)}>
-          {statusBadgeLabel(post.status)}
-        </Badge>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {post.low_confidence ? (
+            <span
+              title={
+                post.voice_score !== null
+                  ? `Voice match ${post.voice_score.toFixed(0)}/100 — review before approving`
+                  : "Low confidence — review before approving"
+              }
+              className="rounded-md border border-amber-500/40 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-950/30 dark:text-amber-400"
+            >
+              Low voice match
+              {post.voice_score !== null ? ` · ${post.voice_score.toFixed(0)}` : ""}
+            </span>
+          ) : null}
+          <Badge variant={statusBadgeVariant(post.status)}>
+            {statusBadgeLabel(post.status)}
+          </Badge>
+        </div>
       </div>
 
       {editing ? (
@@ -220,8 +248,91 @@ export function QueueRow({ post }: { post: PostRow }) {
         />
       ) : null}
 
+      {isPending && rejecting ? (
+        <div className="space-y-3 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+          <p className="text-xs font-medium text-destructive">Why reject this draft?</p>
+          <div className="space-y-1.5">
+            {REJECTION_REASONS.map((opt) => (
+              <label
+                key={opt.value}
+                className="flex cursor-pointer items-start gap-2 rounded-md p-1.5 hover:bg-destructive/10"
+              >
+                <input
+                  type="radio"
+                  name={`reject-reason-${post.id}`}
+                  value={opt.value}
+                  checked={rejectReason === opt.value}
+                  onChange={() => setRejectReason(opt.value)}
+                  className="mt-0.5"
+                />
+                <span className="flex-1 text-xs">
+                  <span className="font-medium text-foreground">{opt.label}</span>
+                  <span className="ml-2 text-muted-foreground">{opt.helper}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <Textarea
+            rows={2}
+            value={rejectNote}
+            maxLength={500}
+            placeholder={
+              rejectReason === "other"
+                ? "Explain what was wrong (required for Other)."
+                : "Optional: specifics — they feed back into the next plan generation."
+            }
+            onChange={(e) => setRejectNote(e.target.value)}
+            className="text-xs"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={
+                pending ||
+                rejectReason === null ||
+                (rejectReason === "other" && rejectNote.trim().length === 0)
+              }
+              onClick={() => {
+                if (!rejectReason) return;
+                const note = rejectNote.trim();
+                run(async () => {
+                  const r = await rejectPostAction(
+                    post.id,
+                    rejectReason,
+                    note.length > 0 ? note : undefined,
+                  );
+                  if (!r.error) {
+                    setRejecting(false);
+                    setRejectReason(null);
+                    setRejectNote("");
+                  }
+                  return r;
+                });
+              }}
+            >
+              Confirm reject
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              onClick={() => {
+                setRejecting(false);
+                setRejectReason(null);
+                setRejectNote("");
+                setError(null);
+              }}
+            >
+              Cancel
+            </Button>
+            {error ? <span className="text-xs text-destructive">{error}</span> : null}
+          </div>
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-2">
-        {isPending && !editing ? (
+        {isPending && !editing && !rejecting ? (
           <>
             <Button
               size="sm"
@@ -237,7 +348,12 @@ export function QueueRow({ post }: { post: PostRow }) {
               size="sm"
               variant="destructive"
               disabled={pending}
-              onClick={() => run(() => rejectPostAction(post.id))}
+              onClick={() => {
+                setRejecting(true);
+                setRejectReason(null);
+                setRejectNote("");
+                setError(null);
+              }}
             >
               Reject
             </Button>

@@ -15,6 +15,8 @@ interface PostQueryRow {
   channel: string;
   media: unknown;
   generation_metadata: unknown;
+  voice_score: number | null;
+  low_confidence: boolean | null;
 }
 
 export default async function QueuePage() {
@@ -22,7 +24,9 @@ export default async function QueuePage() {
   const supabase = await supabaseServer();
   const { data: posts } = await supabase
     .from("posts")
-    .select("id, text, theme, scheduled_at, status, channel, social_account_id, media, generation_metadata")
+    .select(
+      "id, text, theme, scheduled_at, status, channel, social_account_id, media, generation_metadata, voice_score, low_confidence",
+    )
     .eq("workspace_id", ws.id)
     .in("status", ["pending_approval", "scheduled"])
     .order("scheduled_at", { ascending: true });
@@ -42,6 +46,8 @@ export default async function QueuePage() {
       mediaPublicUrl: media[0]?.storage_path
         ? publicUrlFor(media[0].storage_path)
         : null,
+      voice_score: p.voice_score,
+      low_confidence: p.low_confidence ?? false,
     };
   });
 
