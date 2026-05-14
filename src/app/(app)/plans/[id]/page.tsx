@@ -10,6 +10,7 @@ import { buildSignals, generateExplainer } from "@/lib/explain/extract";
 import { explainerCardSchema, type ExplainerCard } from "@/lib/explain/schema";
 import { supabaseService } from "@/lib/supabase/service";
 import { WhyThisWinsCard } from "@/components/why-this-wins-card";
+import { PostTimingExplainer } from "./post-timing-explainer";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +32,7 @@ export default async function PlanDetailPage({
       .maybeSingle(),
     supabase
       .from("posts")
-      .select("id, text, theme, scheduled_at, status, channel")
+      .select("id, text, theme, scheduled_at, status, channel, posted_at")
       .eq("plan_id", id)
       .eq("workspace_id", ws.id)
       .order("scheduled_at", { ascending: true }),
@@ -110,6 +111,13 @@ export default async function PlanDetailPage({
                   <Badge variant={statusBadgeVariant(p.status)}>{statusBadgeLabel(p.status)}</Badge>
                 </div>
                 <p className="whitespace-pre-wrap leading-relaxed">{p.text}</p>
+                {p.posted_at ? (
+                  <PostTimingExplainer
+                    workspaceId={ws.id}
+                    channel={p.channel}
+                    postedAt={p.posted_at}
+                  />
+                ) : null}
                 {explainer ? (
                   <WhyThisWinsCard
                     postId={p.id}
