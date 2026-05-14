@@ -96,11 +96,21 @@ export async function linkedinVerify(accessToken: string): Promise<{ urn: string
 
 // ─── Posting ────────────────────────────────────────────────────────────────
 
+// LinkedIn's UGC shareCommentary maxes at ~3,000 chars. The dispatcher
+// trims at generation time, but we hard-stop here as a defensive guard
+// in case a manually-edited post slips through.
+const LINKEDIN_MAX_TEXT = 3000;
+
 export async function linkedinPost(
   creds: LinkedInCredentials,
   text: string,
   mediaAssetUrns: string[] = [],
 ): Promise<LinkedInPostResult> {
+  if (text.length > LINKEDIN_MAX_TEXT) {
+    throw new Error(
+      `LinkedIn post text exceeds ${LINKEDIN_MAX_TEXT} chars (got ${text.length}).`,
+    );
+  }
   const body = {
     author: creds.memberUrn,
     lifecycleState: "PUBLISHED",
@@ -132,9 +142,13 @@ export async function linkedinPost(
   if (!res.ok) {
     throw new Error(`LinkedIn post failed (${res.status}): ${await res.text()}`);
   }
-  const json = (await res.json()) as { id?: string };
-  if (!json.id) throw new Error("LinkedIn post returned no id.");
-  return { id: json.id };
+  // UGC API returns the URN in the body as `id`, and also echoes it in
+  // `x-restli-id` header. Body is canonical; header is a fallback if a
+  // future API change drops the body for some reason.
+  const json = (await res.json().catch(() => ({}))) as { id?: string };
+  const id = json.id ?? res.headers.get("x-restli-id") ?? null;
+  if (!id) throw new Error("LinkedIn post returned no id.");
+  return { id };
 }
 
 // Two-step image upload: register the asset, then upload bytes to the
@@ -196,24 +210,45 @@ export async function linkedinMetrics(
   creds: LinkedInCredentials,
   ugcPostUrn: string,
 ): Promise<LinkedInMetrics> {
-  // LinkedIn social actions: counts of likes + comments. Impressions need
-  // the organization-share statistics API (separate scope). For V1 we'll
-  // return what's available via /socialActions/{urn}.
+  // /v2/socialActions/{urn} returns likes + comments counts and is the only
+  // metrics endpoint available to a personal `w_member_social` token —
+  // impressions/shares/clicks live on the organization-share statistics API
+  // which requires the gated `r_organization_social` scope.
+  //
+  // We swallow 403/404 here and return zeros instead of throwing. The hourly
+  // pull-metrics cron iterates dozens of posts per workspace; a transient
+  // permission blip on one LinkedIn post must not poison the batch.
   const res = await fetch(
     `${API}/v2/socialActions/${encodeURIComponent(ugcPostUrn)}`,
-    { headers: { Authorization: `Bearer ${creds.accessToken}` } },
+    {
+      headers: {
+        Authorization: `Bearer ${creds.accessToken}`,
+        "X-Restli-Protocol-Version": "2.0.0",
+      },
+    },
   );
+  if (res.status === 403 || res.status === 404) {
+    return { impressions: 0, likes: 0, comments: 0, shares: 0, clicks: 0 };
+  }
   if (!res.ok) {
     throw new Error(`LinkedIn metrics failed (${res.status}): ${await res.text()}`);
   }
   const json = (await res.json()) as {
-    likesSummary?: { totalLikes?: number };
-    commentsSummary?: { totalFirstLevelComments?: number };
+    likesSummary?: { totalLikes?: number; aggregatedTotalLikes?: number };
+    commentsSummary?: { totalFirstLevelComments?: number; aggregatedTotalComments?: number };
   };
+  const likes =
+    json.likesSummary?.totalLikes ??
+    json.likesSummary?.aggregatedTotalLikes ??
+    0;
+  const comments =
+    json.commentsSummary?.totalFirstLevelComments ??
+    json.commentsSummary?.aggregatedTotalComments ??
+    0;
   return {
     impressions: 0,
-    likes: json.likesSummary?.totalLikes ?? 0,
-    comments: json.commentsSummary?.totalFirstLevelComments ?? 0,
+    likes,
+    comments,
     shares: 0,
     clicks: 0,
   };
