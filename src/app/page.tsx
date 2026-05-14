@@ -25,14 +25,20 @@ export default function HomePage() {
 
         <div className="flex flex-wrap items-center justify-center gap-3">
           <Link
-            href="/signup"
+            href="/start"
             className="inline-flex h-10 items-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground transition-opacity duration-200 hover:opacity-90"
           >
-            Get started
+            See a preview plan (30s, no signup)
+          </Link>
+          <Link
+            href="/signup"
+            className="inline-flex h-10 items-center rounded-md border border-input px-5 text-sm font-medium transition-colors duration-200 hover:bg-accent"
+          >
+            Sign up
           </Link>
           <Link
             href="/login"
-            className="inline-flex h-10 items-center rounded-md border border-input px-5 text-sm font-medium transition-colors duration-200 hover:bg-accent"
+            className="inline-flex h-10 items-center text-sm font-medium text-muted-foreground underline-offset-2 hover:underline"
           >
             Log in
           </Link>
