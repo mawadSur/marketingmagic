@@ -60,6 +60,11 @@ export interface PlanGenInputs {
   // and the system prompt explicitly instructs Claude to ground every
   // idea in the source. When unset, behaviour is unchanged from Phase 2.
   source?: SourceContext;
+  // Phase 6.10: per-channel pre-ranked tag suggestions drawn from the
+  // workspace's hashtag_usage history. The block this thread renders is
+  // hint-only — chips in /queue are the actual recommendation surface.
+  // When unset or empty for a channel, the prompt block is skipped.
+  hashtagSuggestions?: Map<ChannelId, string[]>;
 }
 
 // Renders a "Preferred patterns from your saved playbook" block. Each line
@@ -131,6 +136,58 @@ function sourceBlock(src: SourceContext | undefined): string {
   return lines.join("\n") + "\n";
 }
 
+// ─────────────────────────────────────────────────────────────
+// Phase 6.10 hashtag — recommendedHashtagsBlock
+// ─────────────────────────────────────────────────────────────
+//
+// Render a per-channel hint section ONLY when the caller hands in a
+// non-empty `hashtagSuggestions`. Deliberately minimal: tag names + the
+// per-channel policy line. We do not pass confidence scores — the
+// recommender already capped and ranked, and Claude shouldn't pretend
+// to re-rank on numbers it can't verify.
+//
+// The instruction is "may use" not "must use" — Phase 6.10 is
+// recommendation-only and the /queue chip UI is the binding contract.
+// This block exists so generated drafts already align with the chips
+// instead of requiring the user to add tags by hand.
+function recommendedHashtagsBlock(
+  suggestions: Map<ChannelId, string[]> | undefined,
+  activeChannels: ChannelId[],
+): string {
+  if (!suggestions || suggestions.size === 0) return "";
+  const lines: string[] = ["## Hashtag hints (recommendation-only — do not over-tag)"];
+  lines.push(
+    "These tags come from this workspace's own engagement history. Use them where they fit the post naturally. Channel-specific caps are HARD — never exceed them, and prefer fewer tags over more.",
+  );
+  // Cap copy (mirrors src/lib/hashtags/rules.ts).
+  const CAP_COPY: Record<ChannelId, string> = {
+    x: "X: 0–1 tags. Default is no tag — the algorithm penalizes spam.",
+    linkedin: "LinkedIn: exactly 3 niche tags. Audience-specific beats mega-broad.",
+    threads: "Threads: 1–2 conversational tags.",
+    instagram: "Instagram: 8–15 mixed-tier tags (mega + mid + niche).",
+    bluesky: "Bluesky: NO hashtags. Skip entirely.",
+  };
+  for (const ch of activeChannels) {
+    const tags = suggestions.get(ch) ?? [];
+    if (ch === "bluesky") {
+      // Always emit the explicit "no tags" rule on Bluesky so a stray
+      // historical tag in another channel can't bleed into a Bluesky variant.
+      lines.push(`- ${CHANNELS[ch].label}: ${CAP_COPY[ch]}`);
+      continue;
+    }
+    if (tags.length === 0) {
+      lines.push(`- ${CHANNELS[ch].label}: ${CAP_COPY[ch]} (no workspace history yet — pick tags only if they fit the prose)`);
+      continue;
+    }
+    lines.push(
+      `- ${CHANNELS[ch].label}: ${CAP_COPY[ch]} Candidate tags from history: ${tags
+        .map((t) => `#${t}`)
+        .join(" ")}`,
+    );
+  }
+  return lines.join("\n") + "\n";
+}
+
 function windowSummary(channel: ChannelId): string {
   const spec = CHANNELS[channel];
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -195,6 +252,7 @@ export function planSystemPrompt(inputs: PlanGenInputs): string {
     voiceProfile ? voiceProfileBlock(voiceProfile) : "",
     savedPatternsBlock(inputs.savedPatterns),
     sourceBlock(inputs.source),
+    recommendedHashtagsBlock(inputs.hashtagSuggestions, activeChannels),
     "## Channel constraints",
     ...inputs.channelMix.map(
       (c) => `- ${CHANNELS[c.channel].label} (@${c.handle}): ${CHANNELS[c.channel].promptConstraint}`,

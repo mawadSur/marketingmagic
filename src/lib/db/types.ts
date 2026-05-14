@@ -624,6 +624,34 @@ export interface Database {
         }>;
         Relationships: [];
       };
+      hashtag_usage: {
+        // Phase 6.10: per-workspace tag history. One row per (post, tag)
+        // pair, populated by the extract→insert hook on plan-generation
+        // and by the one-shot backfill admin endpoint. Recommender reads
+        // this; it never writes back to posts.text.
+        Row: {
+          id: string;
+          workspace_id: string;
+          channel: string;
+          tag: string;
+          post_id: string | null;
+          engagement_at_post: number | null;
+          recorded_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          channel: string;
+          tag: string;
+          post_id?: string | null;
+          engagement_at_post?: number | null;
+          recorded_at?: string;
+        };
+        Update: Partial<{
+          engagement_at_post: number | null;
+        }>;
+        Relationships: [];
+      };
       ai_reviews: {
         Row: {
           id: string;
