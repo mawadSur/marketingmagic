@@ -205,6 +205,7 @@ export interface Database {
           generation_metadata: Json | null;
           approved_at: string | null;
           revoked_at: string | null;
+          explainer: Json | null;
           created_at: string;
           updated_at: string;
         };
@@ -221,6 +222,7 @@ export interface Database {
           status?: PostStatus;
           source_event_id?: string | null;
           generation_metadata?: Json | null;
+          explainer?: Json | null;
         };
         Update: Partial<{
           text: string;
@@ -233,6 +235,34 @@ export interface Database {
           failure_reason: string | null;
           approved_at: string | null;
           revoked_at: string | null;
+          explainer: Json | null;
+        }>;
+        Relationships: [];
+      };
+      playbook_patterns: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          source_post_id: string | null;
+          pattern_kind: string;
+          pattern_data: Json;
+          summary: string;
+          saved_at: string;
+          saved_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          source_post_id?: string | null;
+          pattern_kind: string;
+          pattern_data: Json;
+          summary: string;
+          saved_by?: string | null;
+        };
+        Update: Partial<{
+          pattern_kind: string;
+          pattern_data: Json;
+          summary: string;
         }>;
         Relationships: [];
       };
