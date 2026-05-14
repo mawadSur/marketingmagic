@@ -16,6 +16,11 @@ export interface XCredentials {
   accessTokenSecret: string;
 }
 
+// Extra metadata we tag onto credentials JSONB to distinguish manual-paste
+// from OAuth-issued tokens. Optional — older rows omit it. Used by the
+// settings UI to decide whether to surface a "re-authorize via OAuth" banner.
+export type XConnectionMethod = "oauth" | "manual";
+
 export interface XPostResult {
   id: string;
   text: string;
@@ -157,5 +162,147 @@ export async function xMetrics(creds: XCredentials, tweetId: string): Promise<XT
     likes: d.public_metrics?.like_count ?? 0,
     reposts: d.public_metrics?.retweet_count ?? 0,
     replies: d.public_metrics?.reply_count ?? 0,
+  };
+}
+
+// ─── 3-legged OAuth 1.0a (V3 self-serve) ────────────────────────────────────
+//
+// Flow:
+//   1. POST /oauth/request_token — app-only signed, returns request token.
+//   2. Redirect user to /oauth/authorize?oauth_token=<token>.
+//   3. Twitter redirects back with oauth_token + oauth_verifier.
+//   4. POST /oauth/access_token — exchanges verifier for permanent user token.
+//
+// The consumer (app-level) key/secret come from env (X_CLIENT_ID/SECRET).
+// The user-level access_token/access_token_secret are persisted per workspace.
+
+const REQUEST_TOKEN_URL = "https://api.twitter.com/oauth/request_token";
+const AUTHORIZE_URL = "https://api.twitter.com/oauth/authorize";
+const ACCESS_TOKEN_URL = "https://api.twitter.com/oauth/access_token";
+
+function appClient(apiKey: string, apiSecret: string) {
+  return new OAuth({
+    consumer: { key: apiKey, secret: apiSecret },
+    signature_method: "HMAC-SHA1",
+    hash_function(base, key) {
+      return crypto.createHmac("sha1", key).update(base).digest("base64");
+    },
+  });
+}
+
+// Parse Twitter's `application/x-www-form-urlencoded` OAuth response bodies.
+// Throws when the response is missing required fields — callers translate
+// to user-facing errors at the route boundary.
+function parseOAuthBody(body: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const pair of body.split("&")) {
+    if (!pair) continue;
+    const [k, v] = pair.split("=");
+    if (k) out[decodeURIComponent(k)] = decodeURIComponent(v ?? "");
+  }
+  return out;
+}
+
+export interface XRequestTokenResult {
+  oauth_token: string;
+  oauth_token_secret: string;
+  oauth_callback_confirmed: boolean;
+}
+
+// Step 1: ask Twitter for a request token. Twitter signs the response with the
+// app credentials only — no user token yet. The returned oauth_token doubles
+// as the lookup key once Twitter redirects back; oauth_token_secret must be
+// stashed server-side until then.
+export async function xRequestToken(opts: {
+  apiKey: string;
+  apiSecret: string;
+  callbackUrl: string;
+}): Promise<XRequestTokenResult> {
+  const oauth = appClient(opts.apiKey, opts.apiSecret);
+  const reqData = {
+    url: REQUEST_TOKEN_URL,
+    method: "POST",
+    data: { oauth_callback: opts.callbackUrl },
+  };
+  // Pass empty token — request_token is app-only signed.
+  const header = oauth.toHeader(oauth.authorize(reqData));
+  const res = await fetch(REQUEST_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      ...header,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ oauth_callback: opts.callbackUrl }).toString(),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`X request_token failed (${res.status}): ${text.slice(0, 200)}`);
+  }
+  const parsed = parseOAuthBody(await res.text());
+  if (!parsed.oauth_token || !parsed.oauth_token_secret) {
+    throw new Error("X request_token response missing oauth_token / oauth_token_secret.");
+  }
+  return {
+    oauth_token: parsed.oauth_token,
+    oauth_token_secret: parsed.oauth_token_secret,
+    oauth_callback_confirmed: parsed.oauth_callback_confirmed === "true",
+  };
+}
+
+// Step 2: produce the URL we redirect the user to. Twitter prompts them to
+// approve; on approval, Twitter redirects back to our callback with
+// oauth_token + oauth_verifier on the query string.
+export function xAuthorizeUrl(oauthToken: string): string {
+  const params = new URLSearchParams({ oauth_token: oauthToken });
+  return `${AUTHORIZE_URL}?${params}`;
+}
+
+export interface XAccessTokenResult {
+  oauth_token: string; // user-scoped access token
+  oauth_token_secret: string;
+  user_id: string;
+  screen_name: string;
+}
+
+// Step 4: exchange verifier for permanent user token. We sign with the
+// app credentials *and* the request-token pair so Twitter can match the
+// callback to its original /authorize prompt.
+export async function xAccessToken(opts: {
+  apiKey: string;
+  apiSecret: string;
+  requestToken: string;
+  requestTokenSecret: string;
+  verifier: string;
+}): Promise<XAccessTokenResult> {
+  const oauth = appClient(opts.apiKey, opts.apiSecret);
+  const reqData = {
+    url: ACCESS_TOKEN_URL,
+    method: "POST",
+    data: { oauth_verifier: opts.verifier },
+  };
+  const header = oauth.toHeader(
+    oauth.authorize(reqData, { key: opts.requestToken, secret: opts.requestTokenSecret }),
+  );
+  const res = await fetch(ACCESS_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      ...header,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ oauth_verifier: opts.verifier }).toString(),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`X access_token failed (${res.status}): ${text.slice(0, 200)}`);
+  }
+  const parsed = parseOAuthBody(await res.text());
+  if (!parsed.oauth_token || !parsed.oauth_token_secret) {
+    throw new Error("X access_token response missing oauth_token / oauth_token_secret.");
+  }
+  return {
+    oauth_token: parsed.oauth_token,
+    oauth_token_secret: parsed.oauth_token_secret,
+    user_id: parsed.user_id ?? "",
+    screen_name: parsed.screen_name ?? "",
   };
 }
