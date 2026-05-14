@@ -10,7 +10,15 @@ import { loginAction, type LoginActionState } from "./actions";
 const initialState: LoginActionState = { error: null };
 
 export function LoginForm() {
-  const next = useSearchParams().get("next") ?? "/dashboard";
+  const search = useSearchParams();
+  // If we were sent here from an invite link, redirect back to the invite
+  // page after login so the user can accept. The invite page itself has
+  // server-side validation that the token is still good.
+  const inviteToken = search.get("invite");
+  const next = inviteToken
+    ? `/invite/${encodeURIComponent(inviteToken)}`
+    : (search.get("next") ?? "/dashboard");
+  const prefillEmail = search.get("email") ?? "";
   const [state, formAction, pending] = useActionState(loginAction, initialState);
 
   return (
@@ -18,7 +26,14 @@ export function LoginForm() {
       <input type="hidden" name="next" value={next} />
       <div className="space-y-2">
         <Label htmlFor="email">Email</Label>
-        <Input id="email" name="email" type="email" autoComplete="email" required />
+        <Input
+          id="email"
+          name="email"
+          type="email"
+          autoComplete="email"
+          defaultValue={prefillEmail}
+          required
+        />
       </div>
       <div className="space-y-2">
         <Label htmlFor="password">Password</Label>
