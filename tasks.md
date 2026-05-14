@@ -269,14 +269,14 @@ Unblock onboarding so customers can sign up without manual hand-holding.
 
 **Added 2026-05-13 (10x Expansion #12).** Per-channel hashtag recommendations driven by workspace history + competitor-watch tag winners + channel-specific best practices. Recommendation-only, never auto-applied.
 
-- [TODO] **`hashtag_usage` table** — `workspace_id`, `channel`, `tag`, `post_id`, `engagement_at_post`, `recorded_at`. Migration `014_hashtag_usage.sql`.
-- [TODO] **Backfill cron** — one-time scan of historical posts to extract hashtag usage.
-- [TODO] **Channel-specific rules** — X: 0-1 tag; LinkedIn: 3 tags; IG: 8-15 mixed-tier; Threads: 1-2; Bluesky: 0-1.
-- [TODO] **Recommendation prompt** — Claude takes draft + workspace tag history + competitor-tag winners → ranked 3-5 suggestions per channel.
-- [TODO] **Competitor tag harvest** — daily cron pulls top hashtags from Phase 6.6 competitor winners; recency-weighted (14-day window).
-- [TODO] **`/queue` hashtag pill UI** — pre-checked recommendations under each draft; one-click add/remove; channel-specific cap enforced.
-- [TODO] **Channel-aware UI copy** — X UI explicitly explains "0-1 tags recommended on X — algorithm penalizes spam."
-- [TODO] **Cold-start blend** — workspaces with <20 historical posts blend with channel best-practice defaults.
+- [DONE 2026-05-14] **`hashtag_usage` table** — Migration `014_hashtag_usage.sql`; unique (post_id, tag); index (workspace_id, channel, recorded_at desc); RLS via `is_workspace_member`; CHECK enforces normalized (lowercase, no leading #) tags. *Implemented at `supabase/migrations/014_hashtag_usage.sql`.*
+- [DONE 2026-05-14] **Backfill cron** — admin endpoint `POST /api/admin/backfill-hashtags` (CRON_SECRET-auth) walks every workspace × bulk-upserts with ignoreDuplicates. Plus per-batch backfill on every new plan insert via `backfillHashtagsForPosts()` so freshly-generated drafts get logged without an explicit cron run. *Implemented at `src/lib/hashtags/backfill.ts` + `src/app/api/admin/backfill-hashtags/route.ts`.*
+- [DONE 2026-05-14] **Channel-specific rules** — `getChannelHashtagPolicy(channel)` in `src/lib/hashtags/rules.ts`: X 0–1, LinkedIn 3 (exactly), Threads 1–2, IG 8–15, Bluesky 0 (showChips=false). Single source of truth — recommender, /queue UI, and prompt block all read from it.
+- [DONE 2026-05-14] **Recommendation pipeline** — `src/lib/hashtags/recommend.ts` is purely data-driven (no Claude call per post). Bayesian-shrunk recency-weighted engagement over 90-day window; 30-day exponential decay half life; per-channel cap applied. Plan generator gets a Map<ChannelId, string[]> hint via the new `recommendedHashtagsBlock()` in `src/lib/plan/prompt.ts`. *Claude call deferred — workspace history + channel defaults are sufficient signal and free.*
+- [DEFERRED 2026-05-14] **Competitor tag harvest** — depends on Phase 6.6 Competitor Watch (not yet shipped). The `hashtag_usage` schema already supports it (nullable `post_id`, channel-keyed) so when 6.6 lands, the daily cron only needs to insert with `post_id=NULL` and a synthetic `engagement_at_post`. Recommender will pick it up unchanged. *Phase 6.6 must ship first.*
+- [DONE 2026-05-14] **`/queue` hashtag pill UI** — `src/components/hashtag-pill-row.tsx` renders pre-checked chips below the draft text; one-click toggle; channel cap enforced inline and on the server via `setPostHashtagsAction`. Suggestions are server-rendered via `src/app/(app)/queue/hashtag-suggestions-server.tsx` and slotted into `QueueRow` so the client surface stays clean.
+- [DONE 2026-05-14] **Channel-aware UI copy** — every channel's policy returns a `notes` string explaining the rule. X: "0–1 hashtags — the algorithm penalizes spammy tag stacks. Default is no tag." Bluesky: chips hidden, replaced with "Hashtags off: Bluesky's culture and algorithm both reward plain prose." X also forces zero pre-checked tags regardless of suggestions.
+- [DONE 2026-05-14] **Cold-start blend** — workspaces with <20 historical posts × channel blend in `COLD_START_SEEDS` at neutral confidence. Reason badge `channel_default` distinguishes seeds from observed winners in the chip tooltip.
 
 ## Open Decisions
 

@@ -10,6 +10,8 @@ import { generatePlan, type PlanGenResult } from "@/lib/plan/generate";
 import { collectThemeSignals } from "@/lib/plan/signals";
 import { collectRejectionSignals } from "@/lib/plan/rejection-signals";
 import { loadRecentPatterns } from "@/lib/explain/playbook";
+import { recommendHashtagsForChannels } from "@/lib/hashtags/recommend";
+import { backfillHashtagsForPosts } from "@/lib/hashtags/backfill";
 import { channelSpec, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
 import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementPostsGenerated } from "@/lib/billing/usage";
@@ -107,10 +109,15 @@ export async function generatePlanAction(
   // channel-agnostic. Per-channel signal split is a future refinement.
   // Rejection signals (Phase 1) and saved playbook patterns (Phase 6.7)
   // ride alongside the theme signals.
-  const [themeSignals, rejections, savedPatterns] = await Promise.all([
+  // Phase 6.10: per-channel hashtag suggestions, drawn from this
+  // workspace's own tag history (free, no LLM call). The generator
+  // weaves them in as soft hints; the /queue chip row is the binding UI.
+  const channelsToScan = Array.from(new Set(channelMix.map((c) => c.channel)));
+  const [themeSignals, rejections, savedPatterns, hashtagSuggestions] = await Promise.all([
     collectThemeSignals(ws.id),
     collectRejectionSignals(ws.id),
     loadRecentPatterns(ws.id),
+    recommendHashtagsForChannels(ws.id, channelsToScan),
   ]);
   const { winners, losers, parent_plan_id } = themeSignals;
 
@@ -159,6 +166,7 @@ export async function generatePlanAction(
         rejections,
         savedPatterns,
         retryNote,
+        hashtagSuggestions,
       });
 
       const avgVoice = averageVoiceScore(attemptResult);
@@ -429,7 +437,10 @@ export async function generatePlanAction(
     return { error: "Claude generated only posts for channels you haven't connected.", planId: null };
   }
 
-  const { error: postsErr } = await svc.from("posts").insert(postsPayload);
+  const { data: insertedPosts, error: postsErr } = await svc
+    .from("posts")
+    .insert(postsPayload)
+    .select("id");
   if (postsErr) {
     await svc.from("posting_plans").delete().eq("id", planRow.id);
     return { error: postsErr.message, planId: null };
@@ -442,6 +453,17 @@ export async function generatePlanAction(
     await incrementPostsGenerated(ws.id, postsPayload.length);
   } catch (err) {
     console.warn("Failed to increment posts usage counter:", err);
+  }
+
+  // Phase 6.10: scan the freshly-inserted post bodies for hashtags and
+  // log them to hashtag_usage so the next plan generation can learn from
+  // what the model actually wrote. Best-effort; failure here only means
+  // the recommender misses a few rows.
+  try {
+    const newIds = (insertedPosts ?? []).map((r) => r.id);
+    if (newIds.length > 0) await backfillHashtagsForPosts(newIds);
+  } catch (err) {
+    console.warn("Hashtag backfill on new plan failed:", err);
   }
 
   revalidatePath("/plans");
