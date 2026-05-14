@@ -154,7 +154,24 @@ export async function generatePlanAction(
   for (const a of accounts) accountByChannel.set(a.channel, a);
 
   const skipped: string[] = [];
-  const postsPayload = result.plan.posts.flatMap((p) => {
+  // Phase 2 transition: the schema now supports either `ideas[]` (new) or
+  // `posts[]` (legacy). The real fan-out lives in the next commit; for now
+  // we coerce ideas → flat posts so existing single-channel insert logic
+  // still works.
+  const legacyPosts = result.plan.posts
+    ?? (result.plan.ideas ?? []).flatMap((idea) =>
+      idea.variants
+        .filter((v) => !v.skip)
+        .map((v) => ({
+          channel: v.channel,
+          text: v.text,
+          theme: idea.theme,
+          suggested_scheduled_at: idea.suggested_scheduled_at,
+          rationale: v.rationale,
+          image_prompt: v.image_prompt,
+        })),
+    );
+  const postsPayload = legacyPosts.flatMap((p) => {
     const acct = accountByChannel.get(p.channel);
     if (!acct) {
       skipped.push(p.channel);
