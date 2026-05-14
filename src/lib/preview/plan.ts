@@ -154,6 +154,7 @@ function synthBrief(opts: SynthBriefOpts): Brief {
     voice_profile_extracted_at: null,
     pending_voice_diff: null,
     pending_voice_diff_at: null,
+    audience_timezone: "UTC",
     created_at: now,
     updated_at: now,
   };

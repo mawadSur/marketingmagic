@@ -143,6 +143,10 @@ export interface Database {
           voice_profile_extracted_at: string | null;
           pending_voice_diff: VoiceProfileDiff | null;
           pending_voice_diff_at: string | null;
+          // Phase 6.5: IANA timezone the audience lives in. NULL/"UTC" = no
+          // preference. Used by smart-timing analysis to bucket post_metrics
+          // into day-of-week × 2-hour windows in the right frame.
+          audience_timezone: string;
           created_at: string;
           updated_at: string;
         };
@@ -159,6 +163,7 @@ export interface Database {
           voice_profile_extracted_at?: string | null;
           pending_voice_diff?: VoiceProfileDiff | null;
           pending_voice_diff_at?: string | null;
+          audience_timezone?: string;
         };
         Update: Partial<{
           product_description: string;
@@ -171,6 +176,7 @@ export interface Database {
           voice_profile_extracted_at: string | null;
           pending_voice_diff: VoiceProfileDiff | null;
           pending_voice_diff_at: string | null;
+          audience_timezone: string;
         }>;
         Relationships: [];
       };
