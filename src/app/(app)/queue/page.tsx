@@ -4,6 +4,8 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { EmptyState } from "@/components/ui/empty-state";
 import { QueueIdeaRow, QueueRow, type QueueMediaItem } from "./queue-row";
 import { HashtagSuggestionsServer } from "./hashtag-suggestions-server";
+import { ThreadBuilderRow, type ThreadTweetRow } from "@/components/thread-builder-ui";
+import { readThreadMeta } from "@/lib/threads/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +21,8 @@ interface PostQueryRow {
   voice_score: number | null;
   low_confidence: boolean | null;
   idea_id: string | null;
+  external_id: string | null;
+  failure_reason: string | null;
 }
 
 interface QueueDisplayRow {
@@ -34,6 +38,9 @@ interface QueueDisplayRow {
   voice_score: number | null;
   low_confidence: boolean;
   idea_id: string | null;
+  external_id: string | null;
+  failure_reason: string | null;
+  generation_metadata: unknown;
 }
 
 export default async function QueuePage() {
@@ -42,13 +49,50 @@ export default async function QueuePage() {
   const { data: posts } = await supabase
     .from("posts")
     .select(
-      "id, text, theme, scheduled_at, status, channel, social_account_id, media, generation_metadata, voice_score, low_confidence, idea_id",
+      "id, text, theme, scheduled_at, status, channel, social_account_id, media, generation_metadata, voice_score, low_confidence, idea_id, external_id, failure_reason",
     )
     .eq("workspace_id", ws.id)
     .in("status", ["pending_approval", "scheduled"])
     .order("scheduled_at", { ascending: true });
 
-  const rows: QueueDisplayRow[] = ((posts ?? []) as PostQueryRow[]).map((p) => {
+  // Phase 6.8: when any active row in the workspace belongs to a thread,
+  // pull the FULL thread (including already-posted or failed tweets) so
+  // the queue UI can surface partial-publish state with a retry CTA.
+  // Scoped to idea_ids that already appear in the active set — we don't
+  // want fully-historical threads polluting the queue.
+  const activeIdeaIds = Array.from(
+    new Set(((posts ?? []) as PostQueryRow[]).filter((p) => p.idea_id).map((p) => p.idea_id!)),
+  );
+  let extraThreadRows: PostQueryRow[] = [];
+  if (activeIdeaIds.length > 0) {
+    const { data: extras } = await supabase
+      .from("posts")
+      .select(
+        "id, text, theme, scheduled_at, status, channel, social_account_id, media, generation_metadata, voice_score, low_confidence, idea_id, external_id, failure_reason",
+      )
+      .eq("workspace_id", ws.id)
+      .in("idea_id", activeIdeaIds)
+      .in("status", ["posted", "failed"])
+      .order("scheduled_at", { ascending: true });
+    extraThreadRows = (extras ?? []) as PostQueryRow[];
+  }
+
+  const allRawRows: PostQueryRow[] = [
+    ...((posts ?? []) as PostQueryRow[]),
+    ...extraThreadRows,
+  ];
+  // Dedupe (idea_id pull may overlap with the active query when rows
+  // share state in transit). Last write wins — extras are always the
+  // posted/failed completion state.
+  const seen = new Set<string>();
+  const deduped: PostQueryRow[] = [];
+  for (const r of allRawRows) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    deduped.push(r);
+  }
+
+  const rows: QueueDisplayRow[] = deduped.map((p) => {
     const media = Array.isArray(p.media) ? (p.media as QueueMediaItem[]) : [];
     const meta = (p.generation_metadata ?? {}) as { image_prompt?: string | null };
     return {
@@ -66,19 +110,54 @@ export default async function QueuePage() {
       voice_score: p.voice_score,
       low_confidence: p.low_confidence ?? false,
       idea_id: p.idea_id,
+      external_id: p.external_id,
+      failure_reason: p.failure_reason,
+      generation_metadata: p.generation_metadata,
     };
   });
 
-  const pending = rows.filter((p) => p.status === "pending_approval");
-  const scheduled = rows.filter((p) => p.status === "scheduled");
+  // Phase 6.8: thread rows in posted/failed state are only here because
+  // their idea has an active sibling. Slot them into the same section as
+  // their sibling rows so the user sees the whole thread together.
+  // Strategy: group by idea_id; if any row in an idea is pending → idea
+  // lands in pending; else if any row is scheduled/failed → scheduled;
+  // else (fully posted) → drop from the queue entirely.
+  const ideaSectionOf = new Map<string, "pending" | "scheduled" | "drop">();
+  const idToIdea = new Map<string, string | null>();
+  for (const r of rows) {
+    idToIdea.set(r.id, r.idea_id);
+    if (!r.idea_id) continue;
+    const cur = ideaSectionOf.get(r.idea_id);
+    if (r.status === "pending_approval") {
+      ideaSectionOf.set(r.idea_id, "pending");
+    } else if (r.status === "scheduled" || r.status === "failed") {
+      if (cur !== "pending") ideaSectionOf.set(r.idea_id, "scheduled");
+    } else if (!cur) {
+      ideaSectionOf.set(r.idea_id, "drop");
+    }
+  }
+
+  function sectionForRow(r: QueueDisplayRow): "pending" | "scheduled" | "drop" {
+    if (r.idea_id) return ideaSectionOf.get(r.idea_id) ?? "drop";
+    if (r.status === "pending_approval") return "pending";
+    if (r.status === "scheduled") return "scheduled";
+    return "drop";
+  }
+
+  const pending = rows.filter((r) => sectionForRow(r) === "pending");
+  const scheduled = rows.filter((r) => sectionForRow(r) === "scheduled");
 
   // Phase 6.10: pre-render per-post hashtag chip rows so the client
   // QueueRow component can just slot them in. We only build slots for
   // pending posts (scheduled is read-only). Server components render
   // serially here; for typical queue sizes (10–30 pending posts) this
   // is one DB roundtrip per channel-in-view via the recommender.
+  // Phase 6.8: skip hashtag suggestions for thread tweets — X threads
+  // are explicitly no-hashtags (the algorithm penalises them) and the
+  // chip row would clutter the per-tweet editor.
   const hashtagSlots = new Map<string, React.ReactNode>();
   for (const p of pending) {
+    if (readThreadMeta(p.generation_metadata) !== null) continue;
     hashtagSlots.set(
       p.id,
       <HashtagSuggestionsServer
@@ -153,7 +232,8 @@ function renderGrouped(
 ): React.ReactNode {
   type Group =
     | { kind: "single"; row: QueueDisplayRow; sortKey: string }
-    | { kind: "idea"; ideaId: string; variants: QueueDisplayRow[]; sortKey: string };
+    | { kind: "idea"; ideaId: string; variants: QueueDisplayRow[]; sortKey: string }
+    | { kind: "thread"; ideaId: string; tweets: ThreadTweetRow[]; theme: string | null; sortKey: string };
 
   const byIdea = new Map<string, QueueDisplayRow[]>();
   const standalone: Array<{ row: QueueDisplayRow; sortKey: string }> = [];
@@ -173,6 +253,33 @@ function renderGrouped(
     groups.push({ kind: "single", row: s.row, sortKey: s.sortKey });
   }
   for (const [ideaId, variants] of byIdea.entries()) {
+    // Phase 6.8: thread detection. Every row carries thread meta and
+    // sits on channel='x' ⇒ this is a thread, not a cross-channel idea.
+    const allThread = variants.every(
+      (v) => v.channel === "x" && readThreadMeta(v.generation_metadata) !== null,
+    );
+    if (allThread && variants.length >= 2) {
+      const tweets: ThreadTweetRow[] = variants
+        .map((v) => {
+          const m = readThreadMeta(v.generation_metadata)!;
+          return {
+            id: v.id,
+            text: v.text,
+            status: v.status,
+            scheduled_at: v.scheduled_at,
+            external_id: v.external_id,
+            failure_reason: v.failure_reason,
+            tweet_index: m.tweet_index,
+            total_tweets: m.total_tweets,
+            role: m.role,
+          };
+        })
+        .sort((a, b) => a.tweet_index - b.tweet_index);
+      const earliest = variants.map(sortKeyOf).sort()[0] ?? "";
+      const theme = variants.find((v) => v.theme)?.theme ?? null;
+      groups.push({ kind: "thread", ideaId, tweets, theme, sortKey: earliest });
+      continue;
+    }
     // Single-variant ideas degrade to a plain row — collapsing the header
     // would just be visual noise when there's nothing to compare against.
     if (variants.length === 1) {
@@ -185,22 +292,35 @@ function renderGrouped(
 
   groups.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 
-  return groups.map((g) =>
-    g.kind === "idea" ? (
-      <QueueIdeaRow
-        key={`idea-${g.ideaId}`}
-        ideaId={g.ideaId}
-        variants={g.variants}
-        hashtagSlots={hashtagSlots ?? undefined}
-      />
-    ) : (
+  return groups.map((g) => {
+    if (g.kind === "thread") {
+      return (
+        <ThreadBuilderRow
+          key={`thread-${g.ideaId}`}
+          ideaId={g.ideaId}
+          tweets={g.tweets}
+          theme={g.theme}
+        />
+      );
+    }
+    if (g.kind === "idea") {
+      return (
+        <QueueIdeaRow
+          key={`idea-${g.ideaId}`}
+          ideaId={g.ideaId}
+          variants={g.variants}
+          hashtagSlots={hashtagSlots ?? undefined}
+        />
+      );
+    }
+    return (
       <QueueRow
         key={g.row.id}
         post={g.row}
         hashtagRow={hashtagSlots?.get(g.row.id)}
       />
-    ),
-  );
+    );
+  });
 }
 
 function sortKeyOf(r: QueueDisplayRow): string {
