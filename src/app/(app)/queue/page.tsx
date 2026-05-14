@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
 import { EmptyState } from "@/components/ui/empty-state";
-import { QueueRow, type QueueMediaItem } from "./queue-row";
+import { QueueIdeaRow, QueueRow, type QueueMediaItem } from "./queue-row";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +15,20 @@ interface PostQueryRow {
   channel: string;
   media: unknown;
   generation_metadata: unknown;
+  idea_id: string | null;
+}
+
+interface QueueDisplayRow {
+  id: string;
+  text: string;
+  theme: string | null;
+  scheduled_at: string | null;
+  status: string;
+  channel: string;
+  media: QueueMediaItem[];
+  image_prompt: string | null;
+  mediaPublicUrl: string | null;
+  idea_id: string | null;
 }
 
 export default async function QueuePage() {
@@ -22,12 +36,14 @@ export default async function QueuePage() {
   const supabase = await supabaseServer();
   const { data: posts } = await supabase
     .from("posts")
-    .select("id, text, theme, scheduled_at, status, channel, social_account_id, media, generation_metadata")
+    .select(
+      "id, text, theme, scheduled_at, status, channel, social_account_id, media, generation_metadata, idea_id",
+    )
     .eq("workspace_id", ws.id)
     .in("status", ["pending_approval", "scheduled"])
     .order("scheduled_at", { ascending: true });
 
-  const rows = ((posts ?? []) as PostQueryRow[]).map((p) => {
+  const rows: QueueDisplayRow[] = ((posts ?? []) as PostQueryRow[]).map((p) => {
     const media = Array.isArray(p.media) ? (p.media as QueueMediaItem[]) : [];
     const meta = (p.generation_metadata ?? {}) as { image_prompt?: string | null };
     return {
@@ -42,6 +58,7 @@ export default async function QueuePage() {
       mediaPublicUrl: media[0]?.storage_path
         ? publicUrlFor(media[0].storage_path)
         : null,
+      idea_id: p.idea_id,
     };
   });
 
@@ -77,9 +94,7 @@ export default async function QueuePage() {
           />
         }
       >
-        {pending.map((p) => (
-          <QueueRow key={p.id} post={p} />
-        ))}
+        {renderGrouped(pending)}
       </Section>
 
       <Section
@@ -93,12 +108,68 @@ export default async function QueuePage() {
           />
         }
       >
-        {scheduled.map((p) => (
-          <QueueRow key={p.id} post={p} />
-        ))}
+        {renderGrouped(scheduled)}
       </Section>
     </div>
   );
+}
+
+/**
+ * Group rows by idea_id. Rows with idea_id=null render as standalone
+ * QueueRow (legacy / single-channel posts). Rows that share an idea_id
+ * render as a single QueueIdeaRow with their variants nested inside.
+ *
+ * Sort order respects the upstream `order by scheduled_at` — the first
+ * variant of each idea anchors the idea's position in the list.
+ */
+function renderGrouped(rows: QueueDisplayRow[]): React.ReactNode {
+  type Group =
+    | { kind: "single"; row: QueueDisplayRow; sortKey: string }
+    | { kind: "idea"; ideaId: string; variants: QueueDisplayRow[]; sortKey: string };
+
+  const byIdea = new Map<string, QueueDisplayRow[]>();
+  const standalone: Array<{ row: QueueDisplayRow; sortKey: string }> = [];
+
+  for (const r of rows) {
+    if (r.idea_id) {
+      const arr = byIdea.get(r.idea_id) ?? [];
+      arr.push(r);
+      byIdea.set(r.idea_id, arr);
+    } else {
+      standalone.push({ row: r, sortKey: sortKeyOf(r) });
+    }
+  }
+
+  const groups: Group[] = [];
+  for (const s of standalone) {
+    groups.push({ kind: "single", row: s.row, sortKey: s.sortKey });
+  }
+  for (const [ideaId, variants] of byIdea.entries()) {
+    // Single-variant ideas degrade to a plain row — collapsing the header
+    // would just be visual noise when there's nothing to compare against.
+    if (variants.length === 1) {
+      groups.push({ kind: "single", row: variants[0], sortKey: sortKeyOf(variants[0]) });
+      continue;
+    }
+    const earliest = variants.map(sortKeyOf).sort()[0] ?? "";
+    groups.push({ kind: "idea", ideaId, variants, sortKey: earliest });
+  }
+
+  groups.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+  return groups.map((g) =>
+    g.kind === "idea" ? (
+      <QueueIdeaRow key={`idea-${g.ideaId}`} ideaId={g.ideaId} variants={g.variants} />
+    ) : (
+      <QueueRow key={g.row.id} post={g.row} />
+    ),
+  );
+}
+
+function sortKeyOf(r: QueueDisplayRow): string {
+  // Fallback to "z" prefix so rows without a scheduled_at land at the end
+  // rather than at the top via empty-string sort.
+  return r.scheduled_at ?? `zzz-${r.id}`;
 }
 
 function publicUrlFor(storagePath: string): string {
