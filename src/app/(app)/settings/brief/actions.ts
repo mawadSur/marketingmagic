@@ -6,6 +6,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { supabaseServer } from "@/lib/supabase/server";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { serverEnv } from "@/lib/env";
+import { extractVoiceProfile } from "@/lib/voice/extract";
+import type { VoiceProfile, VoiceProfileDiff } from "@/lib/db/types";
 
 export type SaveBriefState = { error: string | null; savedAt: string | null };
 
@@ -278,4 +280,143 @@ export async function suggestBriefFromUrlAction(url: string): Promise<SuggestBri
   }
 
   return { data: result.data, error: null };
+}
+
+// ─── Voice profile extraction (Phase 1) ───────────────────────────────────
+
+export type ExtractVoiceResult = {
+  profile: VoiceProfile | null;
+  error: string | null;
+};
+
+// Runs the extractor against the current workspace's brief. We trust the
+// brief in the DB rather than the (potentially unsaved) form state — the
+// user must save reference_posts first; the UI button is disabled until then.
+export async function extractVoiceProfileAction(): Promise<ExtractVoiceResult> {
+  const ws = await getActiveWorkspaceOrRedirect();
+  const supabase = await supabaseServer();
+
+  const { data: brief, error: briefErr } = await supabase
+    .from("brand_briefs")
+    .select("id, reference_posts, product_description, voice")
+    .eq("workspace_id", ws.id)
+    .maybeSingle();
+  if (briefErr) return { profile: null, error: briefErr.message };
+  if (!brief) return { profile: null, error: "Save the brief before extracting voice." };
+
+  if (!brief.reference_posts || brief.reference_posts.length < 3) {
+    return {
+      profile: null,
+      error: "Add at least 3 reference posts (one per line) before extracting voice.",
+    };
+  }
+
+  let result;
+  try {
+    result = await extractVoiceProfile({
+      referencePosts: brief.reference_posts,
+      productDescription: brief.product_description,
+      voiceHint: brief.voice,
+    });
+  } catch (err) {
+    return {
+      profile: null,
+      error: err instanceof Error ? err.message : "Voice extraction failed.",
+    };
+  }
+
+  const { error: updateErr } = await supabase
+    .from("brand_briefs")
+    .update({
+      voice_profile: result.profile,
+      voice_profile_extracted_at: result.profile.extracted_at,
+    })
+    .eq("id", brief.id);
+  if (updateErr) return { profile: null, error: updateErr.message };
+
+  revalidatePath("/settings/brief");
+  return { profile: result.profile, error: null };
+}
+
+// ─── Voice diff accept / dismiss (Phase 1, voice evolution cron sink) ─────
+
+export type VoiceDiffActionResult = { error: string | null };
+
+// Merge the pending diff into voice_profile, then null out the diff.
+// "Merge" is intentionally conservative: replace scalars, add to arrays
+// without dedupe (Claude is asked to dedupe at proposal time), remove
+// from arrays only when explicit, and patch summary verbatim when given.
+export async function acceptVoiceDiffAction(): Promise<VoiceDiffActionResult> {
+  const ws = await getActiveWorkspaceOrRedirect();
+  const supabase = await supabaseServer();
+
+  const { data: brief, error: briefErr } = await supabase
+    .from("brand_briefs")
+    .select("id, voice_profile, pending_voice_diff")
+    .eq("workspace_id", ws.id)
+    .maybeSingle();
+  if (briefErr) return { error: briefErr.message };
+  if (!brief) return { error: "Workspace has no brand brief." };
+  if (!brief.voice_profile) return { error: "Extract a voice profile first." };
+  if (!brief.pending_voice_diff) return { error: "No pending voice update to apply." };
+
+  const profile = brief.voice_profile as VoiceProfile;
+  const diff = brief.pending_voice_diff as VoiceProfileDiff;
+
+  const next: VoiceProfile = {
+    ...profile,
+    do_not_say: mergeStringArray(
+      profile.do_not_say,
+      diff.add_do_not_say,
+      diff.remove_do_not_say,
+    ),
+    signature_phrases: mergeStringArray(
+      profile.signature_phrases,
+      diff.add_signature_phrases,
+      diff.remove_signature_phrases,
+    ),
+    formality: diff.formality ?? profile.formality,
+    emoji_usage: diff.emoji_usage ?? profile.emoji_usage,
+    summary: diff.summary_patch ?? profile.summary,
+    extracted_at: new Date().toISOString(),
+  };
+
+  const { error: updateErr } = await supabase
+    .from("brand_briefs")
+    .update({
+      voice_profile: next,
+      voice_profile_extracted_at: next.extracted_at,
+      pending_voice_diff: null,
+      pending_voice_diff_at: null,
+    })
+    .eq("id", brief.id);
+  if (updateErr) return { error: updateErr.message };
+
+  revalidatePath("/settings/brief");
+  return { error: null };
+}
+
+export async function dismissVoiceDiffAction(): Promise<VoiceDiffActionResult> {
+  const ws = await getActiveWorkspaceOrRedirect();
+  const supabase = await supabaseServer();
+  const { error } = await supabase
+    .from("brand_briefs")
+    .update({ pending_voice_diff: null, pending_voice_diff_at: null })
+    .eq("workspace_id", ws.id);
+  if (error) return { error: error.message };
+  revalidatePath("/settings/brief");
+  return { error: null };
+}
+
+function mergeStringArray(
+  current: string[],
+  add: string[] | undefined,
+  remove: string[] | undefined,
+): string[] {
+  const removeSet = new Set((remove ?? []).map((s) => s.trim().toLowerCase()));
+  const filtered = current.filter((s) => !removeSet.has(s.trim().toLowerCase()));
+  if (!add || add.length === 0) return filtered;
+  const existing = new Set(filtered.map((s) => s.trim().toLowerCase()));
+  const additions = add.filter((s) => !existing.has(s.trim().toLowerCase()));
+  return [...filtered, ...additions];
 }

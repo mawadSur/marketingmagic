@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { Database } from "@/lib/db/types";
 import { saveBriefAction, suggestBriefFromUrlAction, type SaveBriefState } from "./actions";
+import { ExtractVoiceButton } from "./extract-voice-button";
 
 type Brief = Database["public"]["Tables"]["brand_briefs"]["Row"];
 
@@ -187,17 +188,23 @@ export function BriefForm({ initial: brief }: { initial: Brief | null }) {
       <Field
         id="reference_posts"
         label="Reference posts"
-        helper="One post per line — voice exemplars Claude will pattern-match against."
+        helper="Paste 5–20 of your own posts, one per line. The voice extractor below pattern-matches against these."
       >
         <Textarea
           id="reference_posts"
           name="reference_posts"
-          rows={4}
+          rows={6}
           value={values.reference_posts}
           onChange={(e) => set("reference_posts", e.target.value)}
           placeholder={"shipped X this week\nturns out the bug was Y, not Z"}
         />
       </Field>
+
+      <ExtractVoiceButton
+        initialProfile={brief?.voice_profile ?? null}
+        initialExtractedAt={brief?.voice_profile_extracted_at ?? null}
+        referencePostsCount={values.reference_posts.split("\n").map((s) => s.trim()).filter(Boolean).length}
+      />
 
       <div className="flex flex-wrap items-center gap-3 border-t pt-4">
         <Button type="submit" disabled={pending}>
