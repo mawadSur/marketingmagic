@@ -44,6 +44,12 @@ const serverSchema = z.object({
   STRIPE_WEBHOOK_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().min(8).optional()),
   STRIPE_PRICE_PRO: z.preprocess(v => (v === "" ? undefined : v), z.string().min(4).optional()),
   STRIPE_PRICE_AGENCY: z.preprocess(v => (v === "" ? undefined : v), z.string().min(4).optional()),
+  // Groq — hosted Whisper transcription for Phase 2.5 source ingestion
+  // (YouTube / podcast / MP3 → text). Optional; when unset the audio/video
+  // ingestion paths gracefully short-circuit with "transcription unavailable"
+  // and HTML / PDF / paste-transcript paths still work. Get a free key at
+  // https://console.groq.com/keys.
+  GROQ_API_KEY: z.preprocess(v => (v === "" ? undefined : v), z.string().min(8).optional()),
 });
 
 const publicSchema = serverSchema.pick({
