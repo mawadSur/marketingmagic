@@ -44,6 +44,10 @@ const serverSchema = z.object({
   STRIPE_WEBHOOK_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().min(8).optional()),
   STRIPE_PRICE_PRO: z.preprocess(v => (v === "" ? undefined : v), z.string().min(4).optional()),
   STRIPE_PRICE_AGENCY: z.preprocess(v => (v === "" ? undefined : v), z.string().min(4).optional()),
+  // Phase 2.6 Founder tier. Optional like the others — when missing, the
+  // pricing page hides the upgrade affordance for Founder and existing
+  // subscribers degrade gracefully (planForPriceId returns null).
+  STRIPE_PRICE_FOUNDER: z.preprocess(v => (v === "" ? undefined : v), z.string().min(4).optional()),
   // Discord bot integration (Phase 4.7). All optional so the app boots without
   // Discord configured — `/integrations/discord` renders a "configure to enable"
   // empty state and the digest cron silently skips Discord transport.

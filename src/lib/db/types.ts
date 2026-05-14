@@ -106,7 +106,7 @@ export interface Database {
           name: string;
           owner_id: string;
           webhook_secret: string | null;
-          plan: "hobby" | "pro" | "agency";
+          plan: "hobby" | "pro" | "agency" | "founder";
           stripe_customer_id: string | null;
           stripe_subscription_id: string | null;
           subscription_status: string | null;
@@ -119,7 +119,7 @@ export interface Database {
           name: string;
           owner_id: string;
           webhook_secret?: string | null;
-          plan?: "hobby" | "pro" | "agency";
+          plan?: "hobby" | "pro" | "agency" | "founder";
           stripe_customer_id?: string | null;
           stripe_subscription_id?: string | null;
           subscription_status?: string | null;
@@ -128,7 +128,7 @@ export interface Database {
           slug: string;
           name: string;
           webhook_secret: string | null;
-          plan: "hobby" | "pro" | "agency";
+          plan: "hobby" | "pro" | "agency" | "founder";
           stripe_customer_id: string | null;
           stripe_subscription_id: string | null;
           subscription_status: string | null;
@@ -188,6 +188,10 @@ export interface Database {
           // gap detection. See migration 013_theme_snooze.sql.
           theme_snooze: ThemeSnoozeEntry[];
           theme_gaps_enabled: boolean;
+          // Phase 2.6 Founder Mode: opt-in to retain raw voice-memo audio
+          // in the `founder-audio` Storage bucket after transcription.
+          // Default false (audio discarded post-transcription).
+          keep_raw_audio: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -207,6 +211,7 @@ export interface Database {
           audience_timezone?: string;
           theme_snooze?: ThemeSnoozeEntry[];
           theme_gaps_enabled?: boolean;
+          keep_raw_audio?: boolean;
         };
         Update: Partial<{
           product_description: string;
@@ -222,6 +227,7 @@ export interface Database {
           audience_timezone: string;
           theme_snooze: ThemeSnoozeEntry[];
           theme_gaps_enabled: boolean;
+          keep_raw_audio: boolean;
         }>;
         Relationships: [];
       };
