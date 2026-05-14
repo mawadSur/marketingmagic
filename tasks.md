@@ -109,9 +109,9 @@ Unblock onboarding so customers can sign up without manual hand-holding.
 
 - [DONE 2026-05-13] **X 3-legged OAuth flow** at `/api/oauth/x/initiate` + callback. Replace manual-paste creds UI.
 - [DONE 2026-05-13] **Existing user migration path** — manual-paste users prompted to re-auth via OAuth.
-- [TODO] **`/settings/team` page** — invite by email, assign role (owner/editor/viewer).
-- [TODO] **Memberships RLS audit** — verify every business-table policy honors membership, not just `owner_id`.
-- [TODO] **Multi-workspace switcher UX** — agency users with 5+ workspaces need fast switching + a "switch to" search.
+- [DONE 2026-05-14] **`/settings/team` page** — invite by email, assign role (owner/editor/viewer).
+- [DONE 2026-05-14] **Memberships RLS audit** — verify every business-table policy honors membership, not just `owner_id`.
+- [DONE 2026-05-14] **Multi-workspace switcher UX** — agency users with 5+ workspaces need fast switching + a "switch to" search.
 
 ## Phase 4.5 — Reply Inbox + Engagement Assistant (~3 weeks)
 
