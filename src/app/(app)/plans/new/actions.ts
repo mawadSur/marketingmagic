@@ -8,6 +8,7 @@ import { supabaseService } from "@/lib/supabase/service";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { generatePlan } from "@/lib/plan/generate";
 import { collectThemeSignals } from "@/lib/plan/signals";
+import { loadRecentPatterns } from "@/lib/explain/playbook";
 import { channelSpec, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
 import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementPostsGenerated } from "@/lib/billing/usage";
@@ -93,7 +94,10 @@ export async function generatePlanAction(
 
   // Signals share across all channels for now — V2 keeps theme signals
   // channel-agnostic. Per-channel signal split is a future refinement.
-  const { winners, losers, parent_plan_id } = await collectThemeSignals(ws.id);
+  const [{ winners, losers, parent_plan_id }, savedPatterns] = await Promise.all([
+    collectThemeSignals(ws.id),
+    loadRecentPatterns(ws.id),
+  ]);
 
   // Estimate posts BEFORE calling Claude so we don't burn tokens for a
   // workspace that's over quota. We charge for what we actually generated
@@ -119,6 +123,7 @@ export async function generatePlanAction(
       startDate,
       winners,
       losers,
+      savedPatterns,
     });
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Generation failed.", planId: null };
