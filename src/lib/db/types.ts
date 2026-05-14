@@ -14,6 +14,47 @@ export type ApprovalAction = "approved" | "rejected" | "edited" | "unapproved";
 export type PlanStatus = "draft" | "active" | "archived";
 export type AccountStatus = "connected" | "expired" | "revoked";
 
+// Phase 1 (Voice Wedge): structured rejection reason captured in /queue.
+// Mirrored by the radio options in queue-row.tsx and by the CHECK constraint
+// in migration 006. `other` is the catch-all; `reason_note` carries the prose.
+export type RejectionReason = "off_voice" | "wrong_theme" | "factually_wrong" | "other";
+
+// Phase 1 (Voice Wedge): extracted from brand_briefs.reference_posts via a
+// Claude tool-use call. Shape is the source of truth — zod schema in
+// src/lib/voice/schema.ts mirrors this exactly. Stored as jsonb on
+// brand_briefs.voice_profile.
+export interface VoiceProfile {
+  vocabulary_signature: string;
+  opener_patterns: string[];
+  sentence_length_avg: number;
+  formality: "casual" | "neutral" | "formal";
+  emoji_usage: "none" | "sparse" | "frequent";
+  punctuation_quirks: string[];
+  do_not_say: string[];
+  signature_phrases: string[];
+  summary: string;
+  extracted_at: string;
+  source_count: number;
+}
+
+// A diff proposal stored on brand_briefs.pending_voice_diff. The weekly
+// voice-evolution cron writes this; the user accepts (merge into
+// voice_profile) or dismisses (null it out) from /settings/brief.
+export interface VoiceProfileDiff {
+  rationale: string;
+  add_do_not_say?: string[];
+  remove_do_not_say?: string[];
+  formality?: VoiceProfile["formality"];
+  emoji_usage?: VoiceProfile["emoji_usage"];
+  add_signature_phrases?: string[];
+  remove_signature_phrases?: string[];
+  summary_patch?: string;
+  // Counts of rejections that produced this diff. Helpful for the UI to
+  // explain "we noticed N off-voice rejections this week."
+  source_rejection_count: number;
+  proposed_at: string;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -94,6 +135,10 @@ export interface Database {
           do_not_say: string[];
           reference_links: string[];
           reference_posts: string[];
+          voice_profile: VoiceProfile | null;
+          voice_profile_extracted_at: string | null;
+          pending_voice_diff: VoiceProfileDiff | null;
+          pending_voice_diff_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -106,6 +151,10 @@ export interface Database {
           do_not_say?: string[];
           reference_links?: string[];
           reference_posts?: string[];
+          voice_profile?: VoiceProfile | null;
+          voice_profile_extracted_at?: string | null;
+          pending_voice_diff?: VoiceProfileDiff | null;
+          pending_voice_diff_at?: string | null;
         };
         Update: Partial<{
           product_description: string;
@@ -114,6 +163,10 @@ export interface Database {
           do_not_say: string[];
           reference_links: string[];
           reference_posts: string[];
+          voice_profile: VoiceProfile | null;
+          voice_profile_extracted_at: string | null;
+          pending_voice_diff: VoiceProfileDiff | null;
+          pending_voice_diff_at: string | null;
         }>;
         Relationships: [];
       };
@@ -205,6 +258,8 @@ export interface Database {
           generation_metadata: Json | null;
           approved_at: string | null;
           revoked_at: string | null;
+          voice_score: number | null;
+          low_confidence: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -221,6 +276,8 @@ export interface Database {
           status?: PostStatus;
           source_event_id?: string | null;
           generation_metadata?: Json | null;
+          voice_score?: number | null;
+          low_confidence?: boolean;
         };
         Update: Partial<{
           text: string;
@@ -233,6 +290,8 @@ export interface Database {
           failure_reason: string | null;
           approved_at: string | null;
           revoked_at: string | null;
+          voice_score: number | null;
+          low_confidence: boolean;
         }>;
         Relationships: [];
       };
@@ -243,9 +302,19 @@ export interface Database {
           user_id: string;
           action: ApprovalAction;
           diff: string | null;
+          reason: RejectionReason | null;
+          reason_note: string | null;
           created_at: string;
         };
-        Insert: { id?: string; post_id: string; user_id: string; action: ApprovalAction; diff?: string | null };
+        Insert: {
+          id?: string;
+          post_id: string;
+          user_id: string;
+          action: ApprovalAction;
+          diff?: string | null;
+          reason?: RejectionReason | null;
+          reason_note?: string | null;
+        };
         Update: Record<string, never>;
         Relationships: [];
       };
