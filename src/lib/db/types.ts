@@ -18,6 +18,25 @@ export type AccountStatus = "connected" | "expired" | "revoked";
 // labels; today the plans/new action mints a UUID per idea.
 export type IdeaId = string;
 
+// Phase 2.5 (Source-to-Posts): kinds of artifact we can ingest. Mirrors
+// the CHECK constraint in migration 009 and the discriminated union in
+// src/lib/sources/schema.ts. Adding a kind = update both places + the
+// fetch/extract routing in src/lib/sources/fetch.ts.
+export type SourceKind = "html" | "youtube" | "podcast" | "pdf" | "transcript";
+
+// Structured extraction result. Stored verbatim on sources.extracted_*
+// columns. The shape is the source of truth — zod schema in
+// src/lib/sources/schema.ts mirrors it.
+export interface ExtractedQuote {
+  text: string;
+  speaker?: string;
+}
+export interface ExtractedFact {
+  text: string;
+  // Optional inline citation (e.g. paragraph index, timestamp).
+  context?: string;
+}
+
 // Phase 1 (Voice Wedge): structured rejection reason captured in /queue.
 // Mirrored by the radio options in queue-row.tsx and by the CHECK constraint
 // in migration 006. `other` is the catch-all; `reason_note` carries the prose.
@@ -284,6 +303,11 @@ export interface Database {
           // NULL for legacy / single-channel posts; non-null variants in the
           // same idea share the value so the queue UI can group them.
           idea_id: IdeaId | null;
+          // Phase 2.5: the source artifact that anchored this post's cluster.
+          // NULL for posts not generated from a source. Analytics rolls
+          // engagement up via this FK; deleting the source ON DELETE SET NULL
+          // preserves the audit trail without resurrecting the source row.
+          source_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -304,6 +328,7 @@ export interface Database {
           low_confidence?: boolean;
           explainer?: Json | null;
           idea_id?: IdeaId | null;
+          source_id?: string | null;
         };
         Update: Partial<{
           text: string;
@@ -320,6 +345,45 @@ export interface Database {
           low_confidence: boolean;
           explainer: Json | null;
           idea_id: IdeaId | null;
+          source_id: string | null;
+        }>;
+        Relationships: [];
+      };
+      sources: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          source_kind: SourceKind;
+          source_url: string | null;
+          file_path: string | null;
+          title: string | null;
+          extracted_summary: string | null;
+          extracted_quotes: Json;
+          extracted_themes: Json;
+          extracted_facts: Json;
+          ingested_by: string | null;
+          ingested_at: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          source_kind: SourceKind;
+          source_url?: string | null;
+          file_path?: string | null;
+          title?: string | null;
+          extracted_summary?: string | null;
+          extracted_quotes?: Json;
+          extracted_themes?: Json;
+          extracted_facts?: Json;
+          ingested_by?: string | null;
+        };
+        Update: Partial<{
+          title: string | null;
+          extracted_summary: string | null;
+          extracted_quotes: Json;
+          extracted_themes: Json;
+          extracted_facts: Json;
         }>;
         Relationships: [];
       };
