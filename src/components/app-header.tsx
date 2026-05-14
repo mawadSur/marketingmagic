@@ -22,13 +22,18 @@ const baseNav = [
 // Portfolio only makes sense when the user is in ≥2 workspaces. We sneak
 // it in right after Dashboard so the agency-lite users can flip between
 // per-client and roll-up views without hunting.
-function buildNav(showPortfolio: boolean) {
-  if (!showPortfolio) return baseNav;
-  return [
-    baseNav[0],
-    { href: "/portfolio", label: "Portfolio" },
-    ...baseNav.slice(1),
-  ];
+//
+// Team is owner-only (the page itself redirects non-owners). Surfaced
+// next to Billing so settings-y links cluster together.
+function buildNav(showPortfolio: boolean, showTeam: boolean) {
+  let items = baseNav;
+  if (showPortfolio) {
+    items = [baseNav[0]!, { href: "/portfolio", label: "Portfolio" }, ...baseNav.slice(1)];
+  }
+  if (showTeam) {
+    items = [...items, { href: "/settings/team", label: "Team" }];
+  }
+  return items;
 }
 
 function isActive(pathname: string, href: string): boolean {
@@ -40,9 +45,17 @@ function isActive(pathname: string, href: string): boolean {
   return pathname.startsWith(href + "/");
 }
 
-export function AppHeader({ active, workspaces }: { active: Workspace; workspaces: Workspace[] }) {
+export function AppHeader({
+  active,
+  workspaces,
+  isOwner = false,
+}: {
+  active: Workspace;
+  workspaces: Workspace[];
+  isOwner?: boolean;
+}) {
   const pathname = usePathname();
-  const nav = buildNav(workspaces.length >= 2);
+  const nav = buildNav(workspaces.length >= 2, isOwner);
 
   return (
     <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
