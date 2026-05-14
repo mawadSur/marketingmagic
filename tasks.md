@@ -203,16 +203,16 @@ Unblock onboarding so customers can sign up without manual hand-holding.
 
 **Added 2026-05-13 (10x Expansion #6).** Data-driven per-channel scheduling using each workspace's own engagement-rate-by-time data, with industry-baseline fallback for cold-start.
 
-- [TODO] **Time-slot analysis function** — per-channel engagement-rate distribution over hour-of-day × day-of-week buckets (2-hour windows); Bayesian smoothing toward baseline for sparse slots.
-- [TODO] **Decay weighting** — recent data weighted higher; share the decay function with Phase 6A theme analytics.
-- [TODO] **Industry-baseline fallback dataset** — public-research-derived defaults per channel × category for cold-start workspaces.
-- [TODO] **Magic Moment Onboarding integration** — if Phase 1.5 scraped public engagement data, seed per-workspace optimal windows from day 1.
-- [TODO] **Per-channel optimal windows API** — top 3-5 slots per channel per workspace, with confidence levels.
-- [TODO] **Plan generator integration** — `suggested_scheduled_at` defaults to next-available optimal window.
-- [TODO] **Trust-mode integration** — auto-scheduled posts go to optimal windows by default; manual override always honored.
-- [TODO] **Dashboard "Best Windows" widget** — visual heatmap per channel with confidence shading.
-- [TODO] **Per-post timing explainer** — UI shows "Why this time? +X% engagement vs your previous slot."
-- [TODO] **Workspace timezone setting** — explicit `audience_timezone` field; default to owner TZ; user-toggleable.
+- [DONE 2026-05-14] **Time-slot analysis function** — per-channel engagement-rate distribution over hour-of-day × day-of-week buckets (2-hour windows); Bayesian smoothing toward baseline for sparse slots. *Implemented in `src/lib/timing/analyze.ts` (prior weight 5, 90d window).*
+- [DONE 2026-05-14] **Decay weighting** — recent data weighted higher; share the decay function with Phase 6A theme analytics. *`src/lib/timing/decay.ts` — exponential decay, 30d half-life.*
+- [DONE 2026-05-14] **Industry-baseline fallback dataset** — public-research-derived defaults per channel × category for cold-start workspaces. *`src/lib/timing/baselines.ts` — Sprout/Hootsuite/Later 2024 baselines per channel × day × 2h.*
+- [N/A] **Magic Moment Onboarding integration** — *Magic Moment's public scraping is too thin to feed per-slot engagement estimates (no per-post impression data). Revisit when scraping gains depth or when a public engagement API becomes available.*
+- [DONE 2026-05-14] **Per-channel optimal windows API** — top 3-5 slots per channel per workspace, with confidence levels. *`getOptimalWindows(workspaceId, channel)` returns `OptimalWindowsResult` with `top[]` + `grid[]` + confidence labels.*
+- [DEFERRED 2026-05-14] **Plan generator integration** — `suggested_scheduled_at` defaults to next-available optimal window. *Depends on a coordinated `src/lib/plan/prompt.ts` edit, will land in a follow-up to avoid worktree conflict with sources/discord/memberships agents this round.*
+- [DEFERRED 2026-05-14] **Trust-mode integration** — auto-scheduled posts go to optimal windows by default; manual override always honored. *Depends on a coordinated `plans/new/actions.ts` edit, will land in a follow-up to avoid worktree conflict with sources/discord/memberships agents this round.*
+- [DONE 2026-05-14] **Dashboard "Best Windows" widget** — visual heatmap per channel with confidence shading. *`src/app/(app)/dashboard/best-windows-widget.tsx` — 7×12 heatmap + top-3 list with confidence pills, baseline-only chip when no observed posts.*
+- [DONE 2026-05-14] **Per-post timing explainer** — UI shows "Why this time? +X% engagement vs your previous slot." *`src/app/(app)/plans/[id]/post-timing-explainer.tsx` — four tones (success/warning/default/muted) based on lift-vs-average.*
+- [DONE 2026-05-14] **Workspace timezone setting** — explicit `audience_timezone` field; default to owner TZ; user-toggleable. *Stored on `brand_briefs.audience_timezone` (migration 012, default 'UTC'); UI at `src/app/(app)/settings/brief/timezone-section.tsx`.*
 
 ## Phase 6.6 — Competitor Watch (~2 weeks, Founder-tier gated)
 
