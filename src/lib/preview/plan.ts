@@ -157,6 +157,7 @@ function synthBrief(opts: SynthBriefOpts): Brief {
     audience_timezone: "UTC",
     theme_snooze: [],
     theme_gaps_enabled: true,
+    keep_raw_audio: false,
     created_at: now,
     updated_at: now,
   };
