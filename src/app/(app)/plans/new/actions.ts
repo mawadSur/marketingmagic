@@ -9,6 +9,7 @@ import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { generatePlan, type PlanGenResult } from "@/lib/plan/generate";
 import { collectThemeSignals } from "@/lib/plan/signals";
 import { collectRejectionSignals } from "@/lib/plan/rejection-signals";
+import { loadRecentPatterns } from "@/lib/explain/playbook";
 import { channelSpec, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
 import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementPostsGenerated } from "@/lib/billing/usage";
@@ -102,11 +103,12 @@ export async function generatePlanAction(
 
   // Signals share across all channels for now — V2 keeps theme signals
   // channel-agnostic. Per-channel signal split is a future refinement.
-  // Rejection signals (Phase 1) ride alongside; they're prompt-injected
-  // as "do not repeat these patterns."
-  const [themeSignals, rejections] = await Promise.all([
+  // Rejection signals (Phase 1) and saved playbook patterns (Phase 6.7)
+  // ride alongside the theme signals.
+  const [themeSignals, rejections, savedPatterns] = await Promise.all([
     collectThemeSignals(ws.id),
     collectRejectionSignals(ws.id),
+    loadRecentPatterns(ws.id),
   ]);
   const { winners, losers, parent_plan_id } = themeSignals;
 
@@ -153,6 +155,7 @@ export async function generatePlanAction(
         winners,
         losers,
         rejections,
+        savedPatterns,
         retryNote,
       });
 

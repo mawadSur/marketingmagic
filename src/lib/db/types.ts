@@ -260,6 +260,7 @@ export interface Database {
           revoked_at: string | null;
           voice_score: number | null;
           low_confidence: boolean;
+          explainer: Json | null;
           created_at: string;
           updated_at: string;
         };
@@ -278,6 +279,7 @@ export interface Database {
           generation_metadata?: Json | null;
           voice_score?: number | null;
           low_confidence?: boolean;
+          explainer?: Json | null;
         };
         Update: Partial<{
           text: string;
@@ -292,6 +294,34 @@ export interface Database {
           revoked_at: string | null;
           voice_score: number | null;
           low_confidence: boolean;
+          explainer: Json | null;
+        }>;
+        Relationships: [];
+      };
+      playbook_patterns: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          source_post_id: string | null;
+          pattern_kind: string;
+          pattern_data: Json;
+          summary: string;
+          saved_at: string;
+          saved_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          source_post_id?: string | null;
+          pattern_kind: string;
+          pattern_data: Json;
+          summary: string;
+          saved_by?: string | null;
+        };
+        Update: Partial<{
+          pattern_kind: string;
+          pattern_data: Json;
+          summary: string;
         }>;
         Relationships: [];
       };
