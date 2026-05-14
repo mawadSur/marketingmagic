@@ -1,5 +1,6 @@
 import type { Database, VoiceProfile } from "@/lib/db/types";
 import { CHANNELS, type ChannelId } from "@/lib/channels/registry";
+import type { SavedPattern } from "@/lib/explain/playbook";
 
 type Brief = Database["public"]["Tables"]["brand_briefs"]["Row"];
 
@@ -31,6 +32,34 @@ export interface PlanGenInputs {
   // came back low-voice we add a stronger nudge telling Claude *which*
   // patterns to abandon and to score itself more honestly this time.
   retryNote?: string;
+  // Patterns the user has explicitly saved from past winner explainer
+  // cards. Surfaced verbatim in the system prompt so Claude can lean into
+  // them. Loaded from the playbook_patterns table (last 90d, max 12 entries).
+  savedPatterns?: SavedPattern[];
+}
+
+// Renders a "Preferred patterns from your saved playbook" block. Each line
+// is a verbatim summary the user explicitly clicked Save on — these are
+// stronger than the auto-detected winner/loser themes because they're a
+// human signal that "yes, do more of this." We hedge the framing so
+// Claude doesn't ape every saved pattern into every post.
+function savedPatternsBlock(patterns: SavedPattern[] | undefined): string {
+  if (!patterns || patterns.length === 0) return "";
+  const grouped = new Map<string, string[]>();
+  for (const p of patterns) {
+    const arr = grouped.get(p.pattern_kind) ?? [];
+    arr.push(p.summary);
+    grouped.set(p.pattern_kind, arr);
+  }
+  const lines = ["## Preferred patterns from your saved playbook"];
+  lines.push(
+    "The user has explicitly saved these patterns from past winning posts. Lean into them where natural — do not force every post to satisfy every pattern.",
+  );
+  for (const [kind, summaries] of grouped.entries()) {
+    lines.push(`### ${kind}`);
+    for (const s of summaries) lines.push(`- ${s}`);
+  }
+  return lines.join("\n") + "\n";
 }
 
 function windowSummary(channel: ChannelId): string {
@@ -72,6 +101,7 @@ export function planSystemPrompt(inputs: PlanGenInputs): string {
       ? `### Reference posts (voice exemplars — match this register)\n${brief.reference_posts.map((p) => `- ${p}`).join("\n")}\n`
       : "",
     voiceProfile ? voiceProfileBlock(voiceProfile) : "",
+    savedPatternsBlock(inputs.savedPatterns),
     "## Channel constraints",
     ...inputs.channelMix.map(
       (c) => `- ${CHANNELS[c.channel].label} (@${c.handle}): ${CHANNELS[c.channel].promptConstraint}`,

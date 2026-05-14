@@ -23,15 +23,15 @@ Sharpen the voice fidelity so plan-generated drafts sound like the customer, not
 
 **Added 2026-05-13 (10x Expansion #1).** Pre-signup activation flow: paste your handle, see your voice profile + preview plan in 30 seconds.
 
-- [TODO] **Landing-page handle entry form** — public, unauthenticated; accepts X/LinkedIn/IG handle.
-- [TODO] **Public post scraping** — read-only public timeline pull per platform; cache aggressively (24h TTL per handle).
-- [TODO] **Reuse Phase 1 voice extraction prompt** — same Claude pipeline, runs on scraped posts.
-- [TODO] **Preview plan generation** — runs voice-aware plan generator, surfaces 5-7 posts as a teaser.
-- [TODO] **Tokenized preview URL** — `/preview/[token]`, expires 24h, no auth required; CTA to sign up.
-- [TODO] **Anti-abuse** — rate limit per IP (5/hour), hCaptcha on landing form.
-- [TODO] **Cold-profile fallback** — handle with <10 posts → graceful redirect to paste-based flow.
-- [TODO] **Signup conversion analytics** — track funnel: landing → preview → signup → first connection.
-- [TODO] **Sequencing gate** — only ship after Phase 1 voice scoring is dogfood-validated; bad preview = brand damage.
+- [DONE 2026-05-13] **Landing-page handle entry form** — `/start` page, unauthenticated; channel selector + handle + optional niche + optional paste-fallback textarea.
+- [DONE 2026-05-13] **Public post scraping** (Bluesky real; X/LinkedIn/IG/Threads paste-only) — Bluesky uses `app.bsky.feed.getAuthorFeed` (genuinely public, no auth). X/LinkedIn/IG/Threads public APIs require OAuth or paid access; documented `UsePasteFallbackError` path is the V1 primary for those channels. (24h cache deferred — token IS the cache.)
+- [DONE 2026-05-13] **Reuse Phase 1 voice extraction prompt** — synthetic Brief shape calls existing `generatePlan` which already feeds `reference_posts` to Claude (the Phase 1 voice mechanism in this codebase). No new prompt.
+- [DONE 2026-05-13] **Preview plan generation** — `previewPlan()` wraps `generatePlan` with weeks=1, slices to ≤7 posts as a teaser.
+- [DONE 2026-05-13] **Tokenized preview URL** — `/preview/[token]`; HMAC-SHA256 with `CRON_SECRET`; 24h TTL; no DB; expired/bad-sig tokens get a graceful recovery view.
+- [DONE 2026-05-13] **Anti-abuse** — in-memory per-IP rate limit (5/hour). hCaptcha punted to follow-up (would require new env vars + a script in landing form). Rate limit is documented as not-Vercel-cold-start-tight; swap to Upstash when abuse is observed.
+- [DONE 2026-05-13] **Cold-profile fallback** — Bluesky scrapes returning <10 posts surface a friendly paste prompt with the textarea revealed; paste paths with <10 posts re-prompt for more.
+- [DONE 2026-05-13] **Signup conversion analytics** — structured server-side funnel events (`landing_view`, `landing_submit`, `scrape_success`, `scrape_fallback`, `preview_generated`, `preview_view`, `preview_rate_limited`, `preview_cold_profile`, `preview_signup_cta_click`) emitted as single-line JSON; client-side Vercel Analytics `track('mm_preview_signup_cta', ...)` fires on CTA click; signup link carries `?from=preview&t=` for the joinable funnel.
+- [TODO] **Sequencing gate** — only ship after Phase 1 voice scoring is dogfood-validated; bad preview = brand damage. **(Deployment gate, owned by main thread — left intentionally as TODO.)**
 
 ## Phase 2 — Cross-Channel Adaptation (Approach A, ~2 weeks)
 
