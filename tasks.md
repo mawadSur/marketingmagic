@@ -188,15 +188,15 @@ Unblock onboarding so customers can sign up without manual hand-holding.
 
 **Added 2026-05-13 (10x Expansion #7 — Discord only).** Approve-from-anywhere via Discord bot. Slack deferred; Discord is the right channel for indie/creator/community brands.
 
-- [TODO] **Discord bot OAuth + install flow** — `/integrations/discord` page; install bot to server; scope: bot + applications.commands.
-- [TODO] **`integrations` table** — `workspace_id`, `provider`, `target_channel_id`, `auth_payload` (encrypted), `event_filters`. Migration `011_integrations.sql`.
-- [TODO] **Daily digest dispatch** — share payload pipeline with existing email-digest cron; new transport adapter.
-- [TODO] **Interactive Components (buttons)** — approve/edit/reject buttons on per-post embeds.
-- [TODO] **Slash commands** — `/mm queue` shows pending; `/mm stats` shows today's KPIs; `/mm pause` pauses trust-mode posting.
-- [TODO] **Action handler endpoint** — `/api/integrations/discord/action`; verify Ed25519 signature; perform action; edit message in-place.
-- [TODO] **Threading discipline** — daily digest as one parent message + thread reply per post; channel stays quiet.
-- [TODO] **Per-event configuration UI** — workspace picks digest-only / real-time / alerts-only / off.
-- [TODO] **Multi-member attribution** — each Discord-user-action records the actor in the audit trail.
+- [DONE 2026-05-14] **Discord bot OAuth + install flow** — `/integrations/discord` page; install bot to server; scope: bot + applications.commands.
+- [DONE 2026-05-14] **`integrations` table** — `workspace_id`, `provider`, `target_channel_id`, `auth_payload` (encrypted), `event_filters`. Migration `011_integrations.sql`.
+- [DONE 2026-05-14] **Daily digest dispatch** — share payload pipeline with existing email-digest cron; new transport adapter. Email + Discord run independently in the same cron — one transport failing never breaks the other.
+- [DONE 2026-05-14] **Interactive Components (buttons)** — approve/edit/reject buttons on per-post embeds. Custom IDs HMAC-signed with EMAIL_LINK_SECRET, 48h UTC-day bucket so they survive midnight rollover.
+- [DONE 2026-05-14] **Slash commands** — `/mm queue` shows pending; `/mm stats` shows today's KPIs; `/mm pause` pauses trust-mode posting. Global registration via `POST /api/integrations/discord/commands` (cron-secret auth).
+- [DONE 2026-05-14] **Action handler endpoint** — `/api/integrations/discord/action`; verify Ed25519 signature (Node built-in crypto.verify, no tweetnacl); perform action; edit message in-place via UPDATE_MESSAGE response.
+- [DONE 2026-05-14] **Threading discipline** — daily digest as one parent message; per-post embeds with buttons in a 24h auto-archive thread. Channel stays quiet.
+- [DONE 2026-05-14] **Per-event configuration UI** — workspace picks digest / realtime / alerts-only via checkbox form on `/integrations/discord`. `alerts_only` reserved (not wired yet).
+- [PARTIAL] **Multi-member attribution** — each Discord-user-action records the Discord username + user id in `approvals.diff`. User_id still maps to workspace owner (no Discord→Supabase membership table yet); follow-up work to link Discord accounts to real members.
 - [DEFERRED] **Slack integration** — revisit when first agency/marketing-team customer asks.
 
 ## Phase 6.5 — Smart Timing / Optimal Posting Windows (~1 week)

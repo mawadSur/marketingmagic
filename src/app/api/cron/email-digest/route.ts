@@ -3,6 +3,7 @@ import { serverEnv, siteUrl } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { signLinkToken } from "@/lib/email/sign";
 import { renderDigestEmail, type DigestPost } from "@/lib/email/digest-template";
+import { dispatchDigest, type DispatchResult } from "@/lib/integrations/dispatch";
 
 // Daily approval digest. Runs 14:00 UTC from .github/workflows/cron-email-digest.yml.
 // Auth: Bearer CRON_SECRET (same shape as the other cron routes). Service-role
@@ -26,6 +27,10 @@ interface EmailResult {
   recipient?: string;
   pendingCount?: number;
   reason?: string;
+  // Phase 4.7: parallel Discord transport. One entry per integration row.
+  // Email + Discord are independent; either failing does not affect the
+  // other. Absent (undefined) for workspaces with no Discord integration.
+  discord?: DispatchResult[];
 }
 
 export async function GET(req: NextRequest) {
@@ -41,16 +46,22 @@ async function handle(req: NextRequest) {
   }
 
   const env = serverEnv();
-  if (!env.RESEND_API_KEY) {
-    return NextResponse.json({ skipped: "RESEND_API_KEY not set" });
-  }
-  if (!env.EMAIL_LINK_SECRET) {
-    return NextResponse.json({ skipped: "EMAIL_LINK_SECRET not set" });
+  // Email + Discord transports are independent. We only short-circuit when
+  // BOTH are missing — a workspace with only Discord configured should still
+  // get its digest. EMAIL_LINK_SECRET is the cross-transport requirement
+  // (it signs both email magic links and Discord button custom_ids).
+  const emailEnabled = Boolean(env.RESEND_API_KEY && env.EMAIL_LINK_SECRET);
+  const discordEnabled = Boolean(env.DISCORD_BOT_TOKEN && env.EMAIL_LINK_SECRET);
+  if (!emailEnabled && !discordEnabled) {
+    return NextResponse.json({
+      skipped:
+        "no transport configured (need RESEND_API_KEY+EMAIL_LINK_SECRET or DISCORD_BOT_TOKEN+EMAIL_LINK_SECRET)",
+    });
   }
 
   const svc = supabaseService();
   const base = siteUrl();
-  const linkSecret = env.EMAIL_LINK_SECRET;
+  const linkSecret = env.EMAIL_LINK_SECRET ?? "";
 
   // 1. Find workspaces with pending_approval posts. We do this in two steps
   //    because Supabase doesn't expose a clean "group by + having count > 0"
@@ -87,20 +98,8 @@ async function handle(req: NextRequest) {
       status: "skipped",
     };
 
-    // Look up the owner's email via the admin API. Returns null user if the
-    // owner row was deleted; we just skip those quietly.
-    const { data: userResp, error: userErr } = await svc.auth.admin.getUserById(ws.owner_id);
-    if (userErr || !userResp?.user?.email) {
-      result.status = "skipped";
-      result.reason = userErr?.message ?? "owner has no email";
-      results.push(result);
-      continue;
-    }
-    const recipient = userResp.user.email;
-    result.recipient = recipient;
-
-    // Pull the pending posts for this workspace (ordered: oldest first so the
-    // most urgent ones are at the top of the email).
+    // Pull the pending posts FIRST — we use them for both transports.
+    // Order: oldest first so the most urgent ones lead the digest.
     const { data: posts, error: postsErr } = await svc
       .from("posts")
       .select("id, channel, theme, text, scheduled_at, created_at")
@@ -131,6 +130,64 @@ async function handle(req: NextRequest) {
       text: p.text,
       scheduledAt: p.scheduled_at,
     }));
+
+    // ── Discord transport ──────────────────────────────────────────────
+    // Independent of email. dispatchDigest looks up the workspace's
+    // Discord integrations and fans out; returns [] when none configured
+    // so this is a zero-cost no-op for workspaces without Discord.
+    if (discordEnabled) {
+      try {
+        const discordResults = await dispatchDigest({
+          workspaceId: ws.id,
+          workspaceName: ws.name,
+          posts: top,
+          totalPending,
+        });
+        if (discordResults.length > 0) result.discord = discordResults;
+      } catch (err) {
+        result.discord = [
+          {
+            integrationId: "",
+            channelId: "",
+            status: "failed",
+            reason: err instanceof Error ? err.message : "dispatch_failed",
+          },
+        ];
+      }
+    }
+
+    // ── Email transport ────────────────────────────────────────────────
+    if (!emailEnabled) {
+      // No email configured for this run. If Discord succeeded we still
+      // mark the workspace as "sent" so the report reflects something
+      // shipped; otherwise we'd misleadingly count it as skipped.
+      const discordSent = result.discord?.some((d) => d.status === "sent");
+      if (discordSent) {
+        result.status = "sent";
+        sentCount += 1;
+      } else {
+        result.status = "skipped";
+        result.reason = result.reason ?? "email not configured; no Discord delivery";
+      }
+      results.push(result);
+      continue;
+    }
+
+    // Look up the owner's email via the admin API. Returns null user if
+    // the owner row was deleted; we skip those quietly.
+    const { data: userResp, error: userErr } = await svc.auth.admin.getUserById(ws.owner_id);
+    if (userErr || !userResp?.user?.email) {
+      // Email lookup failed — but Discord may still have delivered. Treat
+      // as a soft skip and credit any successful Discord delivery.
+      const discordSent = result.discord?.some((d) => d.status === "sent");
+      result.status = discordSent ? "sent" : "skipped";
+      result.reason = userErr?.message ?? "owner has no email";
+      if (discordSent) sentCount += 1;
+      results.push(result);
+      continue;
+    }
+    const recipient = userResp.user.email;
+    result.recipient = recipient;
 
     const html = renderDigestEmail({
       workspaceName: ws.name,

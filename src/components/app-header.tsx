@@ -16,6 +16,7 @@ const baseNav = [
   { href: "/settings/brief", label: "Brief" },
   { href: "/settings/channels", label: "Channels" },
   { href: "/settings/events", label: "Events" },
+  { href: "/integrations", label: "Integrations" },
   { href: "/settings/billing", label: "Billing" },
 ];
 

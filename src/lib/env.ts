@@ -44,6 +44,17 @@ const serverSchema = z.object({
   STRIPE_WEBHOOK_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().min(8).optional()),
   STRIPE_PRICE_PRO: z.preprocess(v => (v === "" ? undefined : v), z.string().min(4).optional()),
   STRIPE_PRICE_AGENCY: z.preprocess(v => (v === "" ? undefined : v), z.string().min(4).optional()),
+  // Discord bot integration (Phase 4.7). All optional so the app boots without
+  // Discord configured — `/integrations/discord` renders a "configure to enable"
+  // empty state and the digest cron silently skips Discord transport.
+  // - CLIENT_ID + CLIENT_SECRET drive the bot install OAuth2 flow.
+  // - PUBLIC_KEY verifies Ed25519 signatures on inbound interaction webhooks.
+  // - BOT_TOKEN authenticates outbound REST calls (channels.messages.create,
+  //   etc.). Never logged anywhere — treat as a high-blast-radius secret.
+  DISCORD_CLIENT_ID: z.preprocess(v => (v === "" ? undefined : v), z.string().min(4).optional()),
+  DISCORD_CLIENT_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().min(8).optional()),
+  DISCORD_PUBLIC_KEY: z.preprocess(v => (v === "" ? undefined : v), z.string().min(32).optional()),
+  DISCORD_BOT_TOKEN: z.preprocess(v => (v === "" ? undefined : v), z.string().min(16).optional()),
 });
 
 const publicSchema = serverSchema.pick({
