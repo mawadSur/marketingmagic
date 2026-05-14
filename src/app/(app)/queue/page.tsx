@@ -3,6 +3,7 @@ import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
 import { EmptyState } from "@/components/ui/empty-state";
 import { QueueIdeaRow, QueueRow, type QueueMediaItem } from "./queue-row";
+import { HashtagSuggestionsServer } from "./hashtag-suggestions-server";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +72,24 @@ export default async function QueuePage() {
   const pending = rows.filter((p) => p.status === "pending_approval");
   const scheduled = rows.filter((p) => p.status === "scheduled");
 
+  // Phase 6.10: pre-render per-post hashtag chip rows so the client
+  // QueueRow component can just slot them in. We only build slots for
+  // pending posts (scheduled is read-only). Server components render
+  // serially here; for typical queue sizes (10–30 pending posts) this
+  // is one DB roundtrip per channel-in-view via the recommender.
+  const hashtagSlots = new Map<string, React.ReactNode>();
+  for (const p of pending) {
+    hashtagSlots.set(
+      p.id,
+      <HashtagSuggestionsServer
+        workspaceId={ws.id}
+        postId={p.id}
+        channel={p.channel}
+        text={p.text}
+      />,
+    );
+  }
+
   return (
     <div className="space-y-10">
       <header className="space-y-1">
@@ -100,7 +119,7 @@ export default async function QueuePage() {
           />
         }
       >
-        {renderGrouped(pending)}
+        {renderGrouped(pending, hashtagSlots)}
       </Section>
 
       <Section
@@ -114,7 +133,7 @@ export default async function QueuePage() {
           />
         }
       >
-        {renderGrouped(scheduled)}
+        {renderGrouped(scheduled, null)}
       </Section>
     </div>
   );
@@ -128,7 +147,10 @@ export default async function QueuePage() {
  * Sort order respects the upstream `order by scheduled_at` — the first
  * variant of each idea anchors the idea's position in the list.
  */
-function renderGrouped(rows: QueueDisplayRow[]): React.ReactNode {
+function renderGrouped(
+  rows: QueueDisplayRow[],
+  hashtagSlots: Map<string, React.ReactNode> | null,
+): React.ReactNode {
   type Group =
     | { kind: "single"; row: QueueDisplayRow; sortKey: string }
     | { kind: "idea"; ideaId: string; variants: QueueDisplayRow[]; sortKey: string };
@@ -165,9 +187,18 @@ function renderGrouped(rows: QueueDisplayRow[]): React.ReactNode {
 
   return groups.map((g) =>
     g.kind === "idea" ? (
-      <QueueIdeaRow key={`idea-${g.ideaId}`} ideaId={g.ideaId} variants={g.variants} />
+      <QueueIdeaRow
+        key={`idea-${g.ideaId}`}
+        ideaId={g.ideaId}
+        variants={g.variants}
+        hashtagSlots={hashtagSlots ?? undefined}
+      />
     ) : (
-      <QueueRow key={g.row.id} post={g.row} />
+      <QueueRow
+        key={g.row.id}
+        post={g.row}
+        hashtagRow={hashtagSlots?.get(g.row.id)}
+      />
     ),
   );
 }
