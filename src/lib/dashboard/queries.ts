@@ -126,6 +126,70 @@ export async function getThemeLeaderboard(workspaceId: string): Promise<ThemeRow
     .slice(0, 10);
 }
 
+// Phase 2.5 — source attribution leaderboard. Mirrors the theme leaderboard
+// shape: average engagement_rate across the latest metric snapshot per
+// post, grouped by source_id. Posts with NULL source_id are excluded —
+// the dashboard treats them as "not source-attributed".
+//
+// Surfaced on /dashboard so the user can see which ingested sources are
+// producing the highest-engagement clusters. Cold start: empty when no
+// source-anchored posts have shipped or no metrics have landed yet.
+export interface SourceLeaderRow {
+  source_id: string;
+  title: string;
+  posts: number;
+  avg_engagement_rate: number;
+}
+
+export async function getSourceLeaderboard(workspaceId: string): Promise<SourceLeaderRow[]> {
+  const svc = supabaseService();
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data } = await svc
+    .from("posts")
+    .select("source_id, post_metrics(engagement_rate, fetched_at), sources(title)")
+    .eq("workspace_id", workspaceId)
+    .eq("status", "posted")
+    .gte("posted_at", since)
+    .not("source_id", "is", null);
+
+  type Row = {
+    source_id: string | null;
+    post_metrics: Array<{ engagement_rate: number | null; fetched_at: string }>;
+    sources: { title: string | null } | { title: string | null }[] | null;
+  };
+
+  const bySource = new Map<string, { sum: number; count: number; title: string }>();
+  for (const row of (data ?? []) as unknown as Row[]) {
+    if (!row.source_id) continue;
+    const latest = row.post_metrics
+      .slice()
+      .sort((a, b) => +new Date(b.fetched_at) - +new Date(a.fetched_at))[0];
+    if (!latest || latest.engagement_rate == null) continue;
+    // Supabase nested selects can return either an object or an array
+    // depending on the relationship cardinality — coerce both shapes.
+    const srcRaw = row.sources;
+    const title = Array.isArray(srcRaw)
+      ? srcRaw[0]?.title ?? "Untitled source"
+      : srcRaw?.title ?? "Untitled source";
+    const agg = bySource.get(row.source_id) ?? { sum: 0, count: 0, title };
+    agg.sum += latest.engagement_rate;
+    agg.count += 1;
+    agg.title = title;
+    bySource.set(row.source_id, agg);
+  }
+
+  return Array.from(bySource.entries())
+    .map(([source_id, v]) => ({
+      source_id,
+      title: v.title,
+      posts: v.count,
+      avg_engagement_rate: v.sum / v.count,
+    }))
+    .sort((a, b) => b.avg_engagement_rate - a.avg_engagement_rate)
+    .slice(0, 10);
+}
+
 export async function getCalendar(workspaceId: string, daysAhead = 14): Promise<CalendarPost[]> {
   const svc = supabaseService();
   const until = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString();
