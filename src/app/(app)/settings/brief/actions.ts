@@ -408,6 +408,64 @@ export async function dismissVoiceDiffAction(): Promise<VoiceDiffActionResult> {
   return { error: null };
 }
 
+// ─── Phase 6.5: audience timezone ─────────────────────────────────────────
+
+export type SaveTimezoneResult = { error: string | null };
+
+const TIMEZONE_MAX_LEN = 64;
+
+// Accept any IANA-style identifier Intl recognises. We probe by constructing
+// a DateTimeFormat — if the runtime accepts the zone, we accept it. This
+// avoids hardcoding a static allowlist that goes stale.
+function isValidIanaTimezone(tz: string): boolean {
+  if (!tz || tz.length > TIMEZONE_MAX_LEN) return false;
+  if (!/^[A-Za-z][A-Za-z0-9_+\-/]*$/.test(tz)) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function saveAudienceTimezoneAction(
+  timezone: string,
+): Promise<SaveTimezoneResult> {
+  const ws = await getActiveWorkspaceOrRedirect();
+  const trimmed = (timezone ?? "").trim();
+  if (!isValidIanaTimezone(trimmed)) {
+    return { error: "Pick a valid IANA timezone (e.g. America/New_York)." };
+  }
+
+  const supabase = await supabaseServer();
+  // Update if a brief row exists; otherwise upsert with the timezone alone
+  // alongside minimal placeholders so we never fail on first-time use.
+  const { data: existing, error: readErr } = await supabase
+    .from("brand_briefs")
+    .select("id")
+    .eq("workspace_id", ws.id)
+    .maybeSingle();
+  if (readErr) return { error: readErr.message };
+
+  if (existing) {
+    const { error } = await supabase
+      .from("brand_briefs")
+      .update({ audience_timezone: trimmed })
+      .eq("id", existing.id);
+    if (error) return { error: error.message };
+  } else {
+    // Brief row hasn't been created yet — defer saving the timezone until
+    // the user fills the brief itself. We surface a friendly hint here so
+    // the user understands why the action was a no-op.
+    return {
+      error: "Save the brief first — then the timezone setting will stick.",
+    };
+  }
+
+  revalidatePath("/settings/brief");
+  return { error: null };
+}
+
 function mergeStringArray(
   current: string[],
   add: string[] | undefined,
