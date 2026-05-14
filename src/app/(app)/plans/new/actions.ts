@@ -6,11 +6,20 @@ import { z } from "zod";
 import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseService } from "@/lib/supabase/service";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
-import { generatePlan } from "@/lib/plan/generate";
+import { generatePlan, type PlanGenResult } from "@/lib/plan/generate";
 import { collectThemeSignals } from "@/lib/plan/signals";
+import { collectRejectionSignals } from "@/lib/plan/rejection-signals";
 import { channelSpec, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
 import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementPostsGenerated } from "@/lib/billing/usage";
+
+// Voice-score threshold: posts below this auto-regenerate (up to MAX_RETRIES
+// passes); if still below after retries we keep the best-of-3 and flag as
+// low_confidence. The flag also forces pending_approval even under trust
+// mode — we never auto-publish a draft Claude isn't confident sounds like
+// the brand.
+const VOICE_SCORE_THRESHOLD = 70;
+const MAX_RETRIES = 2; // first pass + 2 retries = best-of-3
 
 export type GeneratePlanState = { error: string | null; planId: string | null };
 
@@ -93,7 +102,13 @@ export async function generatePlanAction(
 
   // Signals share across all channels for now — V2 keeps theme signals
   // channel-agnostic. Per-channel signal split is a future refinement.
-  const { winners, losers, parent_plan_id } = await collectThemeSignals(ws.id);
+  // Rejection signals (Phase 1) ride alongside; they're prompt-injected
+  // as "do not repeat these patterns."
+  const [themeSignals, rejections] = await Promise.all([
+    collectThemeSignals(ws.id),
+    collectRejectionSignals(ws.id),
+  ]);
+  const { winners, losers, parent_plan_id } = themeSignals;
 
   // Estimate posts BEFORE calling Claude so we don't burn tokens for a
   // workspace that's over quota. We charge for what we actually generated
@@ -109,17 +124,46 @@ export async function generatePlanAction(
     throw err;
   }
 
-  let result;
+  // Best-of-3 retry loop. Generate, score, keep if average voice >=
+  // threshold OR we've exhausted retries. We keep the best attempt so
+  // far rather than throwing it away on the next pass.
+  //
+  // Skip the loop entirely if the brief has no voice_profile — without
+  // it Claude has nothing to score against and we'd just burn tokens.
+  const startDate = new Date();
+  const hasVoiceProfile = briefRes.data.voice_profile != null;
+  let result: PlanGenResult;
+  let bestAttempt: { result: PlanGenResult; avgVoice: number } | null = null;
   try {
-    const startDate = new Date();
-    result = await generatePlan({
-      brief: briefRes.data,
-      channelMix,
-      weeks: parsed.data.weeks,
-      startDate,
-      winners,
-      losers,
-    });
+    const maxAttempts = hasVoiceProfile ? MAX_RETRIES + 1 : 1;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const retryNote =
+        attempt > 0 && bestAttempt
+          ? `Previous attempt averaged voice_score ${bestAttempt.avgVoice.toFixed(1)} ` +
+            `(threshold ${VOICE_SCORE_THRESHOLD}). Re-read the voice profile carefully — match ` +
+            `the opener patterns and signature phrases more tightly this pass, and score ` +
+            `yourself more honestly. Posts scored below ${VOICE_SCORE_THRESHOLD} block trust-mode auto-publish.`
+          : undefined;
+
+      const attemptResult = await generatePlan({
+        brief: briefRes.data,
+        channelMix,
+        weeks: parsed.data.weeks,
+        startDate,
+        winners,
+        losers,
+        rejections,
+        retryNote,
+      });
+
+      const avgVoice = averageVoiceScore(attemptResult);
+      if (!bestAttempt || avgVoice > bestAttempt.avgVoice) {
+        bestAttempt = { result: attemptResult, avgVoice };
+      }
+      if (!hasVoiceProfile || avgVoice >= VOICE_SCORE_THRESHOLD) break;
+    }
+    if (!bestAttempt) throw new Error("Generation produced no attempts.");
+    result = bestAttempt.result;
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Generation failed.", planId: null };
   }
@@ -160,7 +204,14 @@ export async function generatePlanAction(
       skipped.push(p.channel);
       return [];
     }
-    const trusted = acct.trust_mode === true;
+    // Per-post voice fields. low_confidence is the *post-retry* signal —
+    // we already kept the best-of-3 above, so if it's still below threshold
+    // the user should see + approve it before it ships. Trust mode is
+    // explicitly overridden for low_confidence drafts.
+    const voiceScore = typeof p.voice_score === "number" ? p.voice_score : null;
+    const lowConfidence =
+      hasVoiceProfile && voiceScore !== null && voiceScore < VOICE_SCORE_THRESHOLD;
+    const trusted = acct.trust_mode === true && !lowConfidence;
     // Enforce per-channel max chars. If Claude exceeded, truncate rather
     // than reject — losing one line beats throwing the plan away.
     const max = channelSpec(acct.channel)?.maxChars ?? 280;
@@ -176,6 +227,8 @@ export async function generatePlanAction(
         theme: p.theme,
         scheduled_at: p.suggested_scheduled_at,
         status: (trusted ? "scheduled" : "pending_approval") as "scheduled" | "pending_approval",
+        voice_score: voiceScore,
+        low_confidence: lowConfidence,
         generation_metadata: {
           rationale: p.rationale,
           cache_read_input_tokens: result.usage.cache_read_input_tokens ?? 0,
@@ -214,4 +267,15 @@ export async function generatePlanAction(
     console.warn("Plan generator dropped posts for unconnected channels:", skipped);
   }
   redirect(`/plans/${planRow.id}`);
+}
+
+// Average voice_score across all posts in a generation result. Posts that
+// omit voice_score (legacy or when no profile is set) count as 100 — they
+// shouldn't penalise the average for workspaces without voice profiles,
+// and the caller checks hasVoiceProfile before consulting this anyway.
+function averageVoiceScore(result: PlanGenResult): number {
+  const scored = result.plan.posts.filter((p) => typeof p.voice_score === "number");
+  if (scored.length === 0) return 100;
+  const total = scored.reduce((sum, p) => sum + (p.voice_score ?? 0), 0);
+  return total / scored.length;
 }

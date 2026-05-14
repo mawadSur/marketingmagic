@@ -12,6 +12,10 @@ export const planPostSchema = z.object({
   // Optional starting prompt for image gen. Claude may omit it for posts that
   // shouldn't have an image (e.g. pure text replies, time-sensitive announcements).
   image_prompt: z.preprocess(v => (v === "" ? undefined : v), z.string().min(1).max(500).optional()),
+  // Phase 1 (Voice Wedge): Claude self-scores fidelity to the supplied
+  // voice profile. Optional because the field is unset on legacy plans
+  // and when no voice_profile is on the brief.
+  voice_score: z.number().min(0).max(100).optional(),
 });
 
 export const planSchema = z.object({

@@ -52,6 +52,16 @@ const PLAN_TOOL = {
               description:
                 "Single sentence describing the paired image. Omit when an image would feel forced.",
             },
+            voice_score: {
+              type: "number",
+              minimum: 0,
+              maximum: 100,
+              description:
+                "Your honest self-assessment of how closely this post matches the supplied " +
+                "voice_profile (0=generic AI, 100=indistinguishable from the brand's own posts). " +
+                "Required when a voice_profile is provided. Be calibrated — overscoring is worse " +
+                "than underscoring because the downstream auto-regenerate loop trusts this number.",
+            },
           },
           additionalProperties: false,
         },

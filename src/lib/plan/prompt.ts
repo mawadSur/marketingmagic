@@ -1,4 +1,4 @@
-import type { Database } from "@/lib/db/types";
+import type { Database, VoiceProfile } from "@/lib/db/types";
 import { CHANNELS, type ChannelId } from "@/lib/channels/registry";
 
 type Brief = Database["public"]["Tables"]["brand_briefs"]["Row"];
@@ -9,6 +9,16 @@ export interface ThemeSignal {
   sample_size: number;
 }
 
+// Phase 1 (Voice Wedge): per-reason aggregates from recent rejections.
+// Surfaced in the user prompt as "avoid these patterns."
+export interface RejectionSignal {
+  reason: "off_voice" | "wrong_theme" | "factually_wrong" | "other";
+  count: number;
+  // Up to ~3 short snippets of the post text that was rejected with this
+  // reason. Optional — the cron may also include reason_note text.
+  examples: string[];
+}
+
 export interface PlanGenInputs {
   brief: Brief;
   channelMix: Array<{ channel: ChannelId; handle: string; posts_per_week: number }>;
@@ -16,6 +26,11 @@ export interface PlanGenInputs {
   startDate: Date;
   winners?: ThemeSignal[];
   losers?: ThemeSignal[];
+  rejections?: RejectionSignal[];
+  // Optional: hard signal from the retry loop. When the previous attempt
+  // came back low-voice we add a stronger nudge telling Claude *which*
+  // patterns to abandon and to score itself more honestly this time.
+  retryNote?: string;
 }
 
 function windowSummary(channel: ChannelId): string {
@@ -31,6 +46,7 @@ function windowSummary(channel: ChannelId): string {
 
 export function planSystemPrompt(inputs: PlanGenInputs): string {
   const { brief } = inputs;
+  const voiceProfile = brief.voice_profile as VoiceProfile | null;
   return [
     "You are the planning brain of marketingmagic, a marketing-automation tool.",
     "Your job: produce a posting plan that sounds like the brand wrote it themselves.",
@@ -55,6 +71,7 @@ export function planSystemPrompt(inputs: PlanGenInputs): string {
     brief.reference_posts.length > 0
       ? `### Reference posts (voice exemplars — match this register)\n${brief.reference_posts.map((p) => `- ${p}`).join("\n")}\n`
       : "",
+    voiceProfile ? voiceProfileBlock(voiceProfile) : "",
     "## Channel constraints",
     ...inputs.channelMix.map(
       (c) => `- ${CHANNELS[c.channel].label} (@${c.handle}): ${CHANNELS[c.channel].promptConstraint}`,
@@ -74,10 +91,41 @@ export function planSystemPrompt(inputs: PlanGenInputs): string {
     "  Keep it concrete and visual (subject, setting, mood, style). No text overlays",
     "  unless the post is specifically about a quoted phrase. Omit `image_prompt`",
     "  entirely for posts where an image would feel forced.",
+    voiceProfile
+      ? "- For EVERY post, include a `voice_score` (0-100) self-assessing match to the voice profile above. Be calibrated — 70 is the threshold below which the post will be auto-regenerated."
+      : "",
     "- Output strict JSON matching the schema. No prose outside the JSON.",
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function voiceProfileBlock(v: VoiceProfile): string {
+  const lines: string[] = [
+    "### Voice profile (extracted from the brand's own posts — match this register precisely)",
+    "",
+    v.summary,
+    "",
+    `- Vocabulary signature: ${v.vocabulary_signature}`,
+    `- Formality: ${v.formality}`,
+    `- Emoji usage: ${v.emoji_usage}`,
+    `- Average sentence length: ~${v.sentence_length_avg.toFixed(0)} words`,
+  ];
+  if (v.opener_patterns.length > 0) {
+    lines.push(`- Typical openers: ${v.opener_patterns.slice(0, 8).map((s) => `"${s}"`).join(", ")}`);
+  }
+  if (v.signature_phrases.length > 0) {
+    lines.push(
+      `- Signature phrases (use these where they fit naturally): ${v.signature_phrases.slice(0, 10).map((s) => `"${s}"`).join(", ")}`,
+    );
+  }
+  if (v.punctuation_quirks.length > 0) {
+    lines.push(`- Punctuation quirks: ${v.punctuation_quirks.slice(0, 6).join(", ")}`);
+  }
+  if (v.do_not_say.length > 0) {
+    lines.push(`- Voice anti-patterns (additional do-not-say from profile): ${v.do_not_say.slice(0, 10).join(", ")}`);
+  }
+  return lines.join("\n") + "\n";
 }
 
 export function planUserPrompt(inputs: PlanGenInputs): string {
@@ -115,6 +163,30 @@ export function planUserPrompt(inputs: PlanGenInputs): string {
 
   const channelsAllowed = Array.from(new Set(inputs.channelMix.map((c) => c.channel))).join(", ");
 
+  const rejectionNote =
+    (inputs.rejections?.length ?? 0) > 0
+      ? [
+          "",
+          "## Recent rejection feedback (do NOT repeat these patterns)",
+          ...(inputs.rejections ?? []).map((r) => {
+            const label = rejectionReasonLabel(r.reason);
+            const examples = r.examples
+              .slice(0, 3)
+              .map((e) => `  · ${truncate(e, 140)}`)
+              .join("\n");
+            return `- ${label} (${r.count} recent post${r.count === 1 ? "" : "s"} rejected)${examples ? "\n" + examples : ""}`;
+          }),
+        ].join("\n")
+      : "";
+
+  const retryNote = inputs.retryNote
+    ? [
+        "",
+        "## Retry pass — read carefully",
+        inputs.retryNote,
+      ].join("\n")
+    : "";
+
   return [
     `Generate a ${inputs.weeks}-week posting plan starting ${start}.`,
     "",
@@ -128,9 +200,31 @@ export function planUserPrompt(inputs: PlanGenInputs): string {
     "Spread `suggested_scheduled_at` across the window — bias toward the recommended posting windows listed in the system prompt. Use UTC ISO timestamps.",
     "Theme tags are free-form labels like build-progress, winner-announcement, voice-thought-piece, behind-the-scenes. Reuse the SAME tag for posts of the same category so we can measure engagement per theme.",
     kpiNote,
+    rejectionNote,
+    retryNote,
     "",
     "Call the submit_plan tool with the full plan. Do not respond with prose.",
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function rejectionReasonLabel(
+  r: "off_voice" | "wrong_theme" | "factually_wrong" | "other",
+): string {
+  switch (r) {
+    case "off_voice":
+      return "Off-voice (didn't sound like the brand)";
+    case "wrong_theme":
+      return "Wrong theme (off-strategy for this audience)";
+    case "factually_wrong":
+      return "Factually wrong (made-up claims, bad numbers)";
+    case "other":
+      return "Other reasons";
+  }
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + "…";
 }
