@@ -13,6 +13,8 @@ import { loadRecentPatterns } from "@/lib/explain/playbook";
 import { channelSpec, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
 import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementPostsGenerated } from "@/lib/billing/usage";
+import { getOptimalWindows, nextOptimalSlotIso } from "@/lib/timing/analyze";
+import type { OptimalWindowsResult } from "@/lib/timing/schema";
 
 // Voice-score threshold: posts below this auto-regenerate (up to MAX_RETRIES
 // passes); if still below after retries we keep the best-of-3 and flag as
@@ -256,7 +258,113 @@ export async function generatePlanAction(
     }));
   }
 
-  const postsPayload = flatVariants.flatMap((p) => {
+  // Phase 6.5 — Smart Timing integration.
+  //
+  // Replace each variant's `suggested_scheduled_at` (Claude's pick) with the
+  // workspace's next-available optimal slot for that channel. We preserve the
+  // original ordering (sorted by Claude's suggested time) so earlier ideas
+  // still land in earlier slots — Smart Timing only swaps *when within the day*
+  // each post fires, not which idea ships first.
+  //
+  // Algorithm:
+  //   1. Group variants by channel.
+  //   2. Fetch `getOptimalWindows(ws, channel)` ONCE per channel (parallel).
+  //   3. Sort each channel's variants by suggested_scheduled_at (stable).
+  //   4. Walk the channel's variants in order; for each, call
+  //      `nextOptimalSlotIso(result, { from: cursor })`. Advance the cursor
+  //      past the returned slot (+ 2h, since buckets are 2h) so two posts on
+  //      the same channel never collide on the same window.
+  //   5. Confidence rules (the *top* slot decides the source label):
+  //        - top.confidence ≥ medium ........... timing_source = 'optimal'
+  //        - top.confidence == low / isBaseline   timing_source = 'baseline'
+  //          (still uses the baseline-driven optimal slot for the queue)
+  //   6. Trust-mode cold-start fallback (per-post, applied later in the
+  //      flatMap below): when a post is *trusted* and the slot label is
+  //      'baseline' (no high-confidence observed data yet), we revert to
+  //      Claude's suggested time and mark `timing_source = 'claude_suggested'`
+  //      — we don't want to auto-publish into a guessed slot.
+  type TimingSource = "optimal" | "claude_suggested" | "baseline";
+  const variantsByChannel = new Map<string, number[]>();
+  flatVariants.forEach((v, idx) => {
+    const list = variantsByChannel.get(v.channel) ?? [];
+    list.push(idx);
+    variantsByChannel.set(v.channel, list);
+  });
+
+  const channels = [...variantsByChannel.keys()];
+  const windowsByChannel = new Map<string, OptimalWindowsResult>();
+  await Promise.all(
+    channels.map(async (ch) => {
+      try {
+        const res = await getOptimalWindows(ws.id, ch);
+        windowsByChannel.set(ch, res);
+      } catch (err) {
+        // Smart Timing must never block plan generation — log and skip.
+        console.warn(`Smart Timing failed for channel ${ch}, falling back to Claude:`, err);
+      }
+    }),
+  );
+
+  const slotByVariantIdx = new Map<number, { scheduledAt: string; source: TimingSource }>();
+  const now = new Date();
+  for (const [channel, idxs] of variantsByChannel.entries()) {
+    const windows = windowsByChannel.get(channel);
+    // Sort variants for this channel by Claude's suggested time (ascending)
+    // so later ideas keep later slots.
+    const ordered = [...idxs].sort((a, b) =>
+      flatVariants[a].suggested_scheduled_at.localeCompare(flatVariants[b].suggested_scheduled_at),
+    );
+
+    // Channel has no windows result (Smart Timing threw) — defer entirely to
+    // Claude's suggestion for every variant on this channel.
+    if (!windows) {
+      for (const i of ordered) {
+        slotByVariantIdx.set(i, {
+          scheduledAt: flatVariants[i].suggested_scheduled_at,
+          source: "claude_suggested",
+        });
+      }
+      continue;
+    }
+
+    // Top-slot confidence drives the source label for this channel. If the
+    // best window is still baseline-only the workspace is "cold" for this
+    // channel and downstream trust-mode logic will see source='baseline'.
+    const topSlot = windows.top[0];
+    const channelSource: TimingSource =
+      topSlot && !topSlot.isBaseline && topSlot.confidence !== "low"
+        ? "optimal"
+        : "baseline";
+
+    // Cursor advances past each assigned slot so multiple variants on the
+    // same channel don't collide on a single window.
+    let cursor = now;
+    for (const i of ordered) {
+      // Honour Claude's suggested time as a baseline minimum — if Claude
+      // wanted a slot further in the future than `cursor`, start the search
+      // there to preserve sequencing.
+      const claudeDate = new Date(flatVariants[i].suggested_scheduled_at);
+      const searchFrom =
+        Number.isFinite(claudeDate.getTime()) && claudeDate.getTime() > cursor.getTime()
+          ? claudeDate
+          : cursor;
+      const iso = nextOptimalSlotIso(windows, { from: searchFrom, horizonDays: 14 });
+      if (iso) {
+        slotByVariantIdx.set(i, { scheduledAt: iso, source: channelSource });
+        // Push cursor 2h past this slot (the bucket width) so the next
+        // variant on this channel lands in a different window.
+        cursor = new Date(new Date(iso).getTime() + 2 * 60 * 60 * 1000);
+      } else {
+        // No slot found inside the horizon — keep Claude's suggestion.
+        slotByVariantIdx.set(i, {
+          scheduledAt: flatVariants[i].suggested_scheduled_at,
+          source: "claude_suggested",
+        });
+      }
+    }
+  }
+
+  const postsPayload = flatVariants.flatMap((p, idx) => {
     const acct = accountByChannel.get(p.channel);
     if (!acct) {
       skipped.push(p.channel);
@@ -275,6 +383,22 @@ export async function generatePlanAction(
     const max = channelSpec(acct.channel)?.maxChars ?? 280;
     const text = p.text.length > max ? p.text.slice(0, max - 1) + "…" : p.text;
 
+    // Smart Timing slot resolution. Trust-mode cold-start override: if the
+    // post would auto-publish (trusted) AND the slot source is purely
+    // baseline (no high-confidence observed data yet for this channel), we
+    // revert to Claude's suggested time. Auto-publishing into a baseline
+    // guess feels worse than auto-publishing into the time Claude picked.
+    const assigned = slotByVariantIdx.get(idx) ?? {
+      scheduledAt: p.suggested_scheduled_at,
+      source: "claude_suggested" as TimingSource,
+    };
+    let scheduledAt = assigned.scheduledAt;
+    let timingSource = assigned.source;
+    if (trusted && timingSource === "baseline") {
+      scheduledAt = p.suggested_scheduled_at;
+      timingSource = "claude_suggested";
+    }
+
     return [
       {
         workspace_id: ws.id,
@@ -283,7 +407,7 @@ export async function generatePlanAction(
         channel: acct.channel,
         text,
         theme: p.theme,
-        scheduled_at: p.suggested_scheduled_at,
+        scheduled_at: scheduledAt,
         status: (trusted ? "scheduled" : "pending_approval") as "scheduled" | "pending_approval",
         voice_score: voiceScore,
         low_confidence: lowConfidence,
@@ -294,6 +418,7 @@ export async function generatePlanAction(
           auto_scheduled: trusted,
           image_prompt: p.image_prompt ?? null,
           idea_label: p.idea_label,
+          timing_source: timingSource,
         },
       },
     ];
