@@ -154,13 +154,33 @@ export async function generatePlanAction(
   for (const a of accounts) accountByChannel.set(a.channel, a);
 
   const skipped: string[] = [];
-  // Phase 2 transition: the schema now supports either `ideas[]` (new) or
-  // `posts[]` (legacy). The real fan-out lives in the next commit; for now
-  // we coerce ideas → flat posts so existing single-channel insert logic
-  // still works.
-  const legacyPosts = result.plan.posts
-    ?? (result.plan.ideas ?? []).flatMap((idea) =>
-      idea.variants
+  // Phase 2: the schema supports either `ideas[]` (new) or `posts[]` (legacy).
+  // - ideas: one idea → N variants; we mint a UUID idea_id per idea and tag
+  //   every variant row with it so the queue can group them.
+  // - posts: legacy single-channel shape — each post stands alone with
+  //   idea_id=NULL (no grouping).
+  //
+  // Trust-mode policy for multi-variant ideas: each variant inherits the
+  // trust state of *its* social_account independently. So you can have the X
+  // variant auto-scheduled (trusted channel) while the LinkedIn variant of
+  // the same idea waits in pending_approval (untrusted channel). This
+  // matches the existing per-channel trust model and keeps the per-variant
+  // approve/edit UX intact.
+  type FlatVariant = {
+    channel: string;
+    text: string;
+    theme: string;
+    suggested_scheduled_at: string;
+    rationale: string;
+    image_prompt?: string;
+    idea_id: string | null;
+    idea_label: string | null;
+  };
+  let flatVariants: FlatVariant[];
+  if (result.plan.ideas) {
+    flatVariants = result.plan.ideas.flatMap((idea) => {
+      const ideaId = crypto.randomUUID();
+      return idea.variants
         .filter((v) => !v.skip)
         .map((v) => ({
           channel: v.channel,
@@ -169,9 +189,24 @@ export async function generatePlanAction(
           suggested_scheduled_at: idea.suggested_scheduled_at,
           rationale: v.rationale,
           image_prompt: v.image_prompt,
-        })),
-    );
-  const postsPayload = legacyPosts.flatMap((p) => {
+          idea_id: ideaId,
+          idea_label: idea.idea_label,
+        }));
+    });
+  } else {
+    flatVariants = (result.plan.posts ?? []).map((p) => ({
+      channel: p.channel,
+      text: p.text,
+      theme: p.theme,
+      suggested_scheduled_at: p.suggested_scheduled_at,
+      rationale: p.rationale,
+      image_prompt: p.image_prompt,
+      idea_id: null,
+      idea_label: null,
+    }));
+  }
+
+  const postsPayload = flatVariants.flatMap((p) => {
     const acct = accountByChannel.get(p.channel);
     if (!acct) {
       skipped.push(p.channel);
@@ -193,11 +228,13 @@ export async function generatePlanAction(
         theme: p.theme,
         scheduled_at: p.suggested_scheduled_at,
         status: (trusted ? "scheduled" : "pending_approval") as "scheduled" | "pending_approval",
+        idea_id: p.idea_id,
         generation_metadata: {
           rationale: p.rationale,
           cache_read_input_tokens: result.usage.cache_read_input_tokens ?? 0,
           auto_scheduled: trusted,
           image_prompt: p.image_prompt ?? null,
+          idea_label: p.idea_label,
         },
       },
     ];
