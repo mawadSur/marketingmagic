@@ -11,7 +11,10 @@ import {
 import { useRouter } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { Database } from "@/lib/db/types";
-import { switchWorkspaceAction } from "@/app/(app)/workspace-actions";
+import {
+  switchWorkspaceAction,
+  toggleWorkspacePinAction,
+} from "@/app/(app)/workspace-actions";
 import { cn } from "@/lib/utils";
 
 type Workspace = Database["public"]["Tables"]["workspaces"]["Row"];
@@ -26,22 +29,42 @@ type Workspace = Database["public"]["Tables"]["workspaces"]["Row"];
  * existing `<WorkspaceSwitcher>`: pick a row → set active workspace cookie
  * → navigate to /dashboard.
  *
+ * Phase 4 polish (multi-workspace agency users):
+ *   * Pinned workspaces render first (max 5 pins, server-side cookie).
+ *   * Recent workspaces follow pins (last 5 visited, server-side cookie).
+ *   * Each row shows posts-shipped-this-week as a quick activity signal.
+ *   * Star icon toggles pin/unpin per workspace.
+ *
  * Bind ignores cmd-K when the user is in an input/textarea or has an
  * IME composition open, so we don't fight other shortcuts.
  */
 export function WorkspaceSwitcherCmdK({
   workspaces,
   activeSlug,
+  pinnedIds = [],
+  recentIds = [],
+  postCounts = {},
 }: {
   workspaces: Workspace[];
   activeSlug: string;
+  pinnedIds?: string[];
+  recentIds?: string[];
+  postCounts?: Record<string, number>;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
   const [pending, start] = useTransition();
+  const [pinPending, startPin] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Local mirror of pinned ids so the star icon flips immediately, then
+  // the server action reconciles via revalidatePath on the next paint.
+  const [pinned, setPinned] = useState<string[]>(pinnedIds);
+  useEffect(() => {
+    setPinned(pinnedIds);
+  }, [pinnedIds]);
 
   // Bind cmd-K / ctrl-K globally. Ignore when typing in inputs/textareas
   // or contentEditable surfaces — meta-K is a common in-app shortcut.
@@ -73,15 +96,35 @@ export function WorkspaceSwitcherCmdK({
   }, []);
 
   // Filtered list. Substring match on name/slug, case-insensitive.
-  // Currently-active workspace shows on top so users can see "you are here."
+  //
+  // Ordering rules (when query is empty):
+  //   1. Active workspace.
+  //   2. Pinned workspaces (in pin-cookie order).
+  //   3. Recent workspaces (in recent-cookie order).
+  //   4. Everything else alphabetically.
+  //
+  // When the user is typing, name/slug match wins so search still feels
+  // like search — pins only affect the "no query" home view.
+  const pinnedSet = useMemo(() => new Set(pinned), [pinned]);
+  const recentSet = useMemo(() => new Set(recentIds), [recentIds]);
+  const recentOrder = useMemo(() => {
+    const order = new Map<string, number>();
+    recentIds.forEach((id, i) => order.set(id, i));
+    return order;
+  }, [recentIds]);
+  const pinnedOrder = useMemo(() => {
+    const order = new Map<string, number>();
+    pinned.forEach((id, i) => order.set(id, i));
+    return order;
+  }, [pinned]);
+
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
     const scored = workspaces
       .map((w) => {
         const name = w.name.toLowerCase();
         const slug = w.slug.toLowerCase();
-        if (!q) return { ws: w, score: w.slug === activeSlug ? 1 : 0 };
-        // Prefix > substring > slug match. Higher score = better.
+        if (!q) return { ws: w, score: 0 };
         if (name.startsWith(q)) return { ws: w, score: 100 };
         if (slug.startsWith(q)) return { ws: w, score: 90 };
         if (name.includes(q)) return { ws: w, score: 50 };
@@ -89,9 +132,36 @@ export function WorkspaceSwitcherCmdK({
         return null;
       })
       .filter((x): x is { ws: Workspace; score: number } => x !== null);
-    scored.sort((a, b) => b.score - a.score);
-    return scored.map((s) => s.ws);
-  }, [workspaces, query, activeSlug]);
+
+    if (q) {
+      scored.sort((a, b) => b.score - a.score);
+      return scored.map((s) => s.ws);
+    }
+
+    // No query — apply the pinned/recent ordering.
+    const rank = (w: Workspace): number => {
+      if (w.slug === activeSlug) return -10;
+      if (pinnedSet.has(w.id)) return (pinnedOrder.get(w.id) ?? 0);
+      if (recentSet.has(w.id)) return 100 + (recentOrder.get(w.id) ?? 0);
+      return 1000; // unpinned, non-recent
+    };
+    return scored
+      .map((s) => s.ws)
+      .sort((a, b) => {
+        const ra = rank(a);
+        const rb = rank(b);
+        if (ra !== rb) return ra - rb;
+        return a.name.localeCompare(b.name);
+      });
+  }, [
+    workspaces,
+    query,
+    activeSlug,
+    pinnedSet,
+    pinnedOrder,
+    recentSet,
+    recentOrder,
+  ]);
 
   // Reset highlight when results change. Pin to active workspace when query
   // is empty so cmd-K + enter is a no-op on the current workspace.
@@ -188,44 +258,87 @@ export function WorkspaceSwitcherCmdK({
             </kbd>
           </div>
 
-          <ul role="listbox" className="max-h-72 overflow-y-auto py-1">
+          <ul
+            role="listbox"
+            // Larger max-height for agency users with many workspaces. Browser
+            // scroll handles 50+ rows fine — no need for a virtual-scroll dep.
+            className="max-h-[60vh] overflow-y-auto py-1"
+          >
             {results.length === 0 ? (
               <li className="px-3 py-6 text-center text-sm text-muted-foreground">
                 No workspaces match “{query}”.
               </li>
             ) : (
-              results.map((w, i) => (
-                <li key={w.id} role="option" aria-selected={i === highlight}>
-                  <button
-                    type="button"
-                    onClick={() => pick(w)}
-                    onMouseEnter={() => setHighlight(i)}
-                    disabled={pending}
-                    className={cn(
-                      "flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors",
-                      i === highlight ? "bg-muted" : "hover:bg-muted/50",
-                      "disabled:opacity-60",
-                    )}
-                  >
-                    <span className="flex min-w-0 items-center gap-2.5">
-                      <span
-                        aria-hidden
-                        className={cn(
-                          "h-1.5 w-1.5 shrink-0 rounded-full",
-                          w.slug === activeSlug ? "bg-emerald-500" : "bg-muted-foreground/40",
-                        )}
-                      />
-                      <span className="truncate font-medium">{w.name}</span>
-                      <span className="truncate text-xs text-muted-foreground">{w.slug}</span>
-                    </span>
-                    {w.slug === activeSlug ? (
-                      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                        current
-                      </span>
-                    ) : null}
-                  </button>
-                </li>
-              ))
+              results.map((w, i) => {
+                const isActive = w.slug === activeSlug;
+                const isPinned = pinnedSet.has(w.id);
+                const count = postCounts[w.id] ?? 0;
+                const showPinned = !query && isPinned && !isActive;
+                const showRecent = !query && !isPinned && !isActive && recentSet.has(w.id);
+                const togglePin = (e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  // Optimistic flip; revalidate refreshes ordering.
+                  setPinned((prev) =>
+                    prev.includes(w.id) ? prev.filter((x) => x !== w.id) : [w.id, ...prev].slice(0, 5),
+                  );
+                  startPin(async () => {
+                    await toggleWorkspacePinAction(w.id);
+                    router.refresh();
+                  });
+                };
+                return (
+                  <li key={w.id} role="option" aria-selected={i === highlight}>
+                    <div
+                      className={cn(
+                        "flex w-full items-center justify-between gap-3 px-3 py-2 text-sm transition-colors",
+                        i === highlight ? "bg-muted" : "hover:bg-muted/50",
+                      )}
+                      onMouseEnter={() => setHighlight(i)}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => pick(w)}
+                        disabled={pending}
+                        className="flex min-w-0 flex-1 items-center gap-2.5 text-left disabled:opacity-60"
+                      >
+                        <span
+                          aria-hidden
+                          className={cn(
+                            "h-1.5 w-1.5 shrink-0 rounded-full",
+                            isActive ? "bg-emerald-500" : "bg-muted-foreground/40",
+                          )}
+                        />
+                        <span className="truncate font-medium">{w.name}</span>
+                        <span className="truncate text-xs text-muted-foreground">{w.slug}</span>
+                      </button>
+                      <div className="flex shrink-0 items-center gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+                        {count > 0 ? (
+                          <span title={`${count} posts shipped in the last 7 days`}>
+                            {count} 7d
+                          </span>
+                        ) : null}
+                        {showPinned ? <span aria-label="pinned">pinned</span> : null}
+                        {showRecent ? <span>recent</span> : null}
+                        {isActive ? <span>current</span> : null}
+                        <button
+                          type="button"
+                          onClick={togglePin}
+                          disabled={pinPending}
+                          aria-label={isPinned ? "Unpin workspace" : "Pin workspace"}
+                          title={isPinned ? "Unpin" : "Pin"}
+                          className={cn(
+                            "rounded p-1 transition-colors",
+                            isPinned ? "text-amber-500 hover:text-amber-600" : "text-muted-foreground/50 hover:text-muted-foreground",
+                            "disabled:opacity-60",
+                          )}
+                        >
+                          <PinIcon filled={isPinned} />
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })
             )}
           </ul>
 
@@ -244,5 +357,27 @@ export function WorkspaceSwitcherCmdK({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+function PinIcon({ filled }: { filled: boolean }) {
+  // Simple inline pushpin glyph. No lucide dep because we want the
+  // filled/unfilled variants tied to one path; the lucide pin glyph
+  // doesn't have a fill toggle in the version shipped here.
+  return (
+    <svg
+      width={14}
+      height={14}
+      viewBox="0 0 16 16"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M6 1.5h4l-.5 3 2 2.5v2H4.5v-2l2-2.5L6 1.5z" />
+      <path d="M8 9v5" />
+    </svg>
   );
 }
