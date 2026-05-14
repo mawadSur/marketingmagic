@@ -12,17 +12,20 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { TrustNudge } from "@/components/trust-nudge";
 import { ExplainSection } from "./explain-section";
 import { BestWindowsWidget } from "./best-windows-widget";
+import { NeglectedThemesWidget } from "./neglected-themes-widget";
 import { isInRecommendedWindow } from "@/lib/channels/best-times";
+import { findNeglectedThemes } from "@/lib/themes/gaps";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const ws = await getActiveWorkspaceOrRedirect();
-  const [kpis, calendar, themes, sources] = await Promise.all([
+  const [kpis, calendar, themes, sources, neglected] = await Promise.all([
     getKpiSummary(ws.id),
     getCalendar(ws.id, 14),
     getThemeLeaderboard(ws.id),
     getSourceLeaderboard(ws.id),
+    findNeglectedThemes(ws.id),
   ]);
 
   return (
@@ -184,6 +187,8 @@ export default async function DashboardPage() {
           )}
         </section>
       </div>
+
+      {neglected.length > 0 ? <NeglectedThemesWidget themes={neglected} /> : null}
 
       <BestWindowsWidget workspaceId={ws.id} />
 

@@ -257,13 +257,13 @@ Unblock onboarding so customers can sign up without manual hand-holding.
 
 **Added 2026-05-13 (10x Expansion #11).** Proactive surfacing of high-performing themes that have gone dormant. Dashboard widget + digest integration + one-click regen.
 
-- [TODO] **Daily gap-detection cron** — computes per-workspace theme × `days_since_last_post` × lifetime engagement-rate quartile.
-- [TODO] **Threshold logic** — flag theme as "neglected" when engagement-rank is top quartile AND days_since_last_post > 14.
-- [TODO] **`/dashboard` "Neglected Themes" widget** — sortable list; per-theme "regenerate 2-3 posts" action.
-- [TODO] **Digest integration** — Discord (Phase 4.7) + email — top 1-2 neglected themes surface in daily digest when present; suppressed when no gaps.
-- [TODO] **One-click regen action** — pre-fills plan generator with `theme: X, count: 2-3, schedule: optimal-windows-only`; drops into approval queue.
-- [TODO] **Snooze / archive controls** — per-theme "snooze 30 days" or "archive theme" affordance so customers can intentionally drop themes without being nagged.
-- [TODO] **Opt-out per workspace** — gap-detection on by default; settings toggle to disable.
+- [DONE 2026-05-14] **Daily gap-detection cron** — computes per-workspace theme × `days_since_last_post` × lifetime engagement-rate quartile.
+- [DONE 2026-05-14] **Threshold logic** — flag theme as "neglected" when engagement-rank is top quartile AND days_since_last_post > 14.
+- [DONE 2026-05-14] **`/dashboard` "Neglected Themes" widget** — sortable list; per-theme "regenerate 2-3 posts" action.
+- [DONE 2026-05-14] **Digest integration** — Discord (Phase 4.7) + email — top 1-2 neglected themes surface in daily digest when present; suppressed when no gaps.
+- [DONE 2026-05-14] **One-click regen action** — pre-fills plan generator with `theme: X, count: 2-3, schedule: optimal-windows-only`; drops into approval queue.
+- [DONE 2026-05-14] **Snooze / archive controls** — per-theme "snooze 30 days" or "archive theme" affordance so customers can intentionally drop themes without being nagged.
+- [DONE 2026-05-14] **Opt-out per workspace** — gap-detection on by default; settings toggle to disable.
 
 ## Phase 6.10 — Hashtag Intelligence (~1 week)
 
