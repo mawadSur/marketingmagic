@@ -3,6 +3,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import type { VoiceProfileDiff } from "@/lib/db/types";
 import { BriefForm } from "./brief-form";
 import { PendingVoiceDiffCard } from "./pending-voice-diff-card";
+import { TimezoneSection } from "./timezone-section";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,7 @@ export default async function BriefPage() {
           proposedAt={brief?.pending_voice_diff_at ?? null}
         />
       ) : null}
+      {brief ? <TimezoneSection initial={brief.audience_timezone ?? null} /> : null}
       <BriefForm initial={brief ?? null} />
     </div>
   );
