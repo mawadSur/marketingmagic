@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { LandingForm } from "@/components/landing-form";
+import { track } from "@/lib/preview/analytics";
 
 export const metadata: Metadata = {
   title: "Get your preview plan — marketingmagic",
@@ -8,8 +9,15 @@ export const metadata: Metadata = {
     "Paste your handle, see a 7-post posting plan written in your voice in 30 seconds. No signup.",
 };
 
+// Force this page to render dynamically so the funnel `landing_view` event
+// fires per request rather than once at build time. Vercel Analytics
+// captures client-side pageviews separately; this server-side event is for
+// the structured funnel that joins to landing_submit / preview_generated.
+export const dynamic = "force-dynamic";
+
 // Public page. Anyone can hit this — no auth, no workspace.
 export default function StartPage() {
+  track({ stage: "landing_view" });
   return (
     <main className="relative flex min-h-screen flex-col">
       <div
