@@ -1,8 +1,26 @@
 import type { Database, VoiceProfile } from "@/lib/db/types";
 import { CHANNELS, type ChannelId } from "@/lib/channels/registry";
 import type { SavedPattern } from "@/lib/explain/playbook";
+import type { ExtractedQuote, ExtractedFact } from "@/lib/sources/schema";
 
 type Brief = Database["public"]["Tables"]["brand_briefs"]["Row"];
+
+// Phase 2.5: optional source-anchored context. When present, Claude is told
+// to ground every idea in this material — themes, quotes, and facts from
+// the user-supplied source. The shape is a flat projection of the
+// `ExtractedSource` jsonb columns on `sources` so the caller (the source-
+// generator) can hand them in without re-fetching.
+export interface SourceContext {
+  title: string;
+  summary: string;
+  themes: string[];
+  quotes: ExtractedQuote[];
+  facts: ExtractedFact[];
+  // Free-form pointer the prompt surfaces ("see original article", "see
+  // the linked transcript") — purely a Claude-side hint; we never expose
+  // this string to the user.
+  sourceUrl?: string | null;
+}
 
 export interface ThemeSignal {
   theme: string;
@@ -36,6 +54,12 @@ export interface PlanGenInputs {
   // cards. Surfaced verbatim in the system prompt so Claude can lean into
   // them. Loaded from the playbook_patterns table (last 90d, max 12 entries).
   savedPatterns?: SavedPattern[];
+  // Phase 2.5: source-anchored generation. When set, the plan generator
+  // produces a "content cluster" rooted in this material — themes from
+  // the source bias the planner's theme tags, quotes can be used as hooks,
+  // and the system prompt explicitly instructs Claude to ground every
+  // idea in the source. When unset, behaviour is unchanged from Phase 2.
+  source?: SourceContext;
 }
 
 // Renders a "Preferred patterns from your saved playbook" block. Each line
@@ -58,6 +82,51 @@ function savedPatternsBlock(patterns: SavedPattern[] | undefined): string {
   for (const [kind, summaries] of grouped.entries()) {
     lines.push(`### ${kind}`);
     for (const s of summaries) lines.push(`- ${s}`);
+  }
+  return lines.join("\n") + "\n";
+}
+
+// Phase 2.5: render the source material block. The planner is told this
+// is the *anchor* for every idea — not background context — so every
+// generated post should be traceably grounded in one or more of the items
+// below. Quotes are wrapped in quote marks verbatim; the planner instruction
+// elsewhere in the prompt forbids paraphrasing them when used as hooks.
+function sourceBlock(src: SourceContext | undefined): string {
+  if (!src) return "";
+  const lines: string[] = [];
+  lines.push("## Source material (anchor every idea in this)");
+  lines.push(
+    "The user pasted or fetched this source and is asking for a content cluster built from it. " +
+      "Every idea in the plan must be grounded in one or more themes / quotes / facts below — " +
+      "do not invent material the source doesn't support. When you quote, use the quote verbatim " +
+      "(no paraphrasing).",
+  );
+  lines.push("");
+  lines.push(`### Title: ${src.title}`);
+  if (src.sourceUrl) lines.push(`Source URL: ${src.sourceUrl}`);
+  lines.push("");
+  lines.push("### Summary");
+  lines.push(src.summary);
+  if (src.themes.length > 0) {
+    lines.push("");
+    lines.push("### Themes (lean on these as theme tags — reuse the exact label)");
+    for (const t of src.themes) lines.push(`- ${t}`);
+  }
+  if (src.quotes.length > 0) {
+    lines.push("");
+    lines.push("### Quotes (verbatim — use as hooks where they fit naturally)");
+    for (const q of src.quotes) {
+      const attrib = q.speaker ? ` — ${q.speaker}` : "";
+      lines.push(`- "${q.text}"${attrib}`);
+    }
+  }
+  if (src.facts.length > 0) {
+    lines.push("");
+    lines.push("### Facts (concrete claims — use these instead of inventing numbers)");
+    for (const f of src.facts) {
+      const ctx = f.context ? ` (${f.context})` : "";
+      lines.push(`- ${f.text}${ctx}`);
+    }
   }
   return lines.join("\n") + "\n";
 }
@@ -125,6 +194,7 @@ export function planSystemPrompt(inputs: PlanGenInputs): string {
       : "",
     voiceProfile ? voiceProfileBlock(voiceProfile) : "",
     savedPatternsBlock(inputs.savedPatterns),
+    sourceBlock(inputs.source),
     "## Channel constraints",
     ...inputs.channelMix.map(
       (c) => `- ${CHANNELS[c.channel].label} (@${c.handle}): ${CHANNELS[c.channel].promptConstraint}`,
