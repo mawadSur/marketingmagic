@@ -1,6 +1,8 @@
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
+import type { VoiceProfileDiff } from "@/lib/db/types";
 import { BriefForm } from "./brief-form";
+import { PendingVoiceDiffCard } from "./pending-voice-diff-card";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +15,8 @@ export default async function BriefPage() {
     .eq("workspace_id", ws.id)
     .maybeSingle();
 
+  const pendingDiff = (brief?.pending_voice_diff ?? null) as VoiceProfileDiff | null;
+
   return (
     <div className="mx-auto max-w-2xl space-y-8">
       <header className="space-y-1">
@@ -22,6 +26,12 @@ export default async function BriefPage() {
           The brief feeds every generated post. Keep it sharp — vague briefs produce vague posts.
         </p>
       </header>
+      {pendingDiff ? (
+        <PendingVoiceDiffCard
+          diff={pendingDiff}
+          proposedAt={brief?.pending_voice_diff_at ?? null}
+        />
+      ) : null}
       <BriefForm initial={brief ?? null} />
     </div>
   );
