@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { siteUrl } from "@/lib/env";
+import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseService } from "@/lib/supabase/service";
 import { linkedinExchangeCode, linkedinVerify, type LinkedInCredentials } from "@/lib/social/linkedin";
 import { assertWithinChannelQuota, QuotaExceededError } from "@/lib/billing/limits";
@@ -26,6 +27,30 @@ export async function GET(req: NextRequest) {
   const cookieNonce = req.cookies.get("li_oauth_nonce")?.value;
   if (cookieNonce !== nonce) {
     return NextResponse.json({ error: "nonce mismatch" }, { status: 400 });
+  }
+
+  // Require an authenticated session before persisting credentials. The nonce
+  // cookie proves the redirect originated from our /initiate, but doesn't
+  // prove the user holding the session still owns the target workspace.
+  const sb = await supabaseServer();
+  const {
+    data: { user },
+  } = await sb.auth.getUser();
+  if (!user) {
+    return NextResponse.redirect(new URL("/login", base));
+  }
+
+  // Confirm the authed user has access to the workspace named in state.
+  // RLS on workspaces enforces is_workspace_member — a non-member sees no row.
+  const { data: workspace } = await sb
+    .from("workspaces")
+    .select("id")
+    .eq("id", workspaceId)
+    .maybeSingle();
+  if (!workspace) {
+    return NextResponse.redirect(
+      new URL(`/settings/channels?error=${encodeURIComponent("workspace_access_denied")}`, base),
+    );
   }
 
   const redirectUri = `${base}/api/oauth/linkedin/callback`;
