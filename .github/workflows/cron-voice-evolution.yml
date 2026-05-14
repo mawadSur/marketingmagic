@@ -1,0 +1,37 @@
+name: cron / voice-evolution
+
+# Weekly voice-profile evolution. Mondays 13:00 UTC. Looks at the last 7
+# days of rejected-with-reason posts per workspace; when ≥3 voice-relevant
+# rejections exist, asks Claude to propose a diff to the voice profile.
+# Diff is staged on brand_briefs.pending_voice_diff and the user accepts
+# or dismisses from /settings/brief. Diffs are NEVER applied automatically.
+
+on:
+  schedule:
+    - cron: "0 13 * * 1"
+  workflow_dispatch: {}
+
+concurrency:
+  group: cron-voice-evolution
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Trigger voice-evolution
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$SITE_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "Missing SITE_URL or CRON_SECRET repo secret." >&2
+            exit 1
+          fi
+          curl --fail-with-body \
+               --silent --show-error \
+               --max-time 600 \
+               -H "Authorization: Bearer $CRON_SECRET" \
+               -X POST \
+               "$SITE_URL/api/cron/voice-evolution"
