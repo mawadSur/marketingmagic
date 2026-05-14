@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Badge, ChannelBadge, statusBadgeLabel, statusBadgeVariant } from "@/components/ui/badge";
 import {
+  approveAllVariantsAction,
   approvePostAction,
   clearPostImageAction,
   editPostAction,
@@ -283,6 +284,106 @@ export function QueueRow({ post }: { post: PostRow }) {
 
         {error ? <span className="text-xs text-destructive">{error}</span> : null}
       </div>
+    </li>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// QueueIdeaRow — one collapsible row representing a cross-channel idea.
+// ─────────────────────────────────────────────────────────────
+//
+// Phase 2: a single "idea" fans out into N channel variants (X / LinkedIn /
+// Threads / IG / Bluesky). The queue renders the idea as a collapsible
+// header showing the channels involved + a single "Approve all variants"
+// action; expanding the row stacks the per-variant editors (each a full
+// QueueRow) so per-variant edit/approve/reject still works.
+
+export function QueueIdeaRow({
+  ideaId,
+  variants,
+}: {
+  ideaId: string;
+  variants: PostRow[];
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(true);
+  const [busy, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const pendingCount = variants.filter((v) => v.status === "pending_approval").length;
+  const scheduledCount = variants.filter((v) => v.status === "scheduled").length;
+  const channels = Array.from(new Set(variants.map((v) => v.channel)));
+  const theme = variants.find((v) => v.theme)?.theme ?? null;
+  // Idea-level timestamp = earliest scheduled_at across the variants. Each
+  // variant's own time still shows in its inner row.
+  const earliestAt = variants
+    .map((v) => v.scheduled_at)
+    .filter((t): t is string => !!t)
+    .sort()[0] ?? null;
+
+  function approveAll() {
+    start(async () => {
+      const r = await approveAllVariantsAction(ideaId);
+      if (r.error) {
+        setError(r.error);
+        setNotice(null);
+        return;
+      }
+      setError(null);
+      setNotice(r.approved > 0 ? `Approved ${r.approved} variant${r.approved === 1 ? "" : "s"}.` : "No pending variants left to approve.");
+      router.refresh();
+    });
+  }
+
+  return (
+    <li className="space-y-2 px-4 py-4 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex flex-wrap items-center gap-2 text-left text-xs text-muted-foreground hover:text-foreground"
+          aria-expanded={open}
+        >
+          <span aria-hidden className="inline-block w-3 select-none tabular-nums">
+            {open ? "▾" : "▸"}
+          </span>
+          <span className="font-medium text-foreground">Cross-channel idea</span>
+          <span className="flex flex-wrap items-center gap-1">
+            {channels.map((c) => (
+              <ChannelBadge key={c} channel={c} />
+            ))}
+          </span>
+          {theme ? <span>#{theme}</span> : null}
+          {earliestAt ? (
+            <span className="tabular-nums">{earliestAt.slice(0, 16).replace("T", " ")}</span>
+          ) : null}
+        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {pendingCount > 0 ? (
+            <Badge variant="warning">{pendingCount} pending</Badge>
+          ) : null}
+          {scheduledCount > 0 ? (
+            <Badge variant="success">{scheduledCount} scheduled</Badge>
+          ) : null}
+          {pendingCount > 0 ? (
+            <Button size="sm" disabled={busy} onClick={approveAll}>
+              {busy ? "Approving…" : `Approve all variants${pendingCount > 1 ? ` (${pendingCount})` : ""}`}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      {error ? <p className="text-xs text-destructive">{error}</p> : null}
+      {notice ? <p className="text-xs text-muted-foreground">{notice}</p> : null}
+
+      {open ? (
+        <ul className="divide-y rounded-md border bg-muted/20">
+          {variants.map((v) => (
+            <QueueRow key={v.id} post={v} />
+          ))}
+        </ul>
+      ) : null}
     </li>
   );
 }
