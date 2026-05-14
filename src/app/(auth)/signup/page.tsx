@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { SignupForm } from "./signup-form";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export default function SignupPage() {
   return (
@@ -21,7 +23,9 @@ export default function SignupPage() {
           </div>
         </div>
         <div className="rounded-lg border bg-card p-6 shadow-sm">
-          <SignupForm />
+          <Suspense fallback={<SignupFallback />}>
+            <SignupForm />
+          </Suspense>
         </div>
         <p className="text-center text-sm text-muted-foreground">
           Already have an account?{" "}
@@ -34,5 +38,17 @@ export default function SignupPage() {
         </p>
       </div>
     </main>
+  );
+}
+
+function SignupFallback() {
+  return (
+    <div className="space-y-4">
+      <Skeleton className="h-4 w-12" />
+      <Skeleton className="h-10 w-full" />
+      <Skeleton className="h-4 w-16" />
+      <Skeleton className="h-10 w-full" />
+      <Skeleton className="h-10 w-full" />
+    </div>
   );
 }
