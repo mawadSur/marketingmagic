@@ -484,6 +484,7 @@ export interface Database {
         Update: Partial<{
           email: string;
           role: "editor" | "viewer";
+          token: string;
           expires_at: string;
           accepted_at: string | null;
           accepted_by: string | null;
