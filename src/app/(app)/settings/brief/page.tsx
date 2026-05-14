@@ -4,6 +4,8 @@ import type { VoiceProfileDiff } from "@/lib/db/types";
 import { BriefForm } from "./brief-form";
 import { PendingVoiceDiffCard } from "./pending-voice-diff-card";
 import { TimezoneSection } from "./timezone-section";
+import { ThemeSnoozeControls } from "./theme-snooze-controls";
+import { getThemePreferences } from "@/lib/themes/preferences";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +19,8 @@ export default async function BriefPage() {
     .maybeSingle();
 
   const pendingDiff = (brief?.pending_voice_diff ?? null) as VoiceProfileDiff | null;
+  const prefs = await getThemePreferences(ws.id);
+  const knownThemes = await loadKnownThemes(ws.id);
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
@@ -34,7 +38,40 @@ export default async function BriefPage() {
         />
       ) : null}
       {brief ? <TimezoneSection initial={brief.audience_timezone ?? null} /> : null}
+      {brief ? (
+        <ThemeSnoozeControls
+          gapsEnabled={prefs.gapsEnabled}
+          entries={prefs.entries.map((e) => ({
+            theme: e.theme,
+            snoozed_until: e.snoozed_until,
+            archived: e.archived,
+          }))}
+          knownThemes={knownThemes}
+        />
+      ) : null}
       <BriefForm initial={brief ?? null} />
     </div>
   );
+}
+
+// Pulls the distinct list of themes the workspace has actually used on
+// shipped posts. We feed this into the snooze controls so the user can
+// pre-emptively mute a theme they don't want surfaced. Lower-cased + deduped
+// for a stable presentation; capped at 50 to keep the dropdown sane.
+async function loadKnownThemes(workspaceId: string): Promise<string[]> {
+  const supabase = await supabaseServer();
+  const { data } = await supabase
+    .from("posts")
+    .select("theme")
+    .eq("workspace_id", workspaceId)
+    .not("theme", "is", null)
+    .limit(500);
+  const set = new Set<string>();
+  for (const row of data ?? []) {
+    const t = (row as { theme: string | null }).theme;
+    if (!t) continue;
+    const key = t.trim().toLowerCase();
+    if (key) set.add(key);
+  }
+  return Array.from(set).sort().slice(0, 50);
 }
