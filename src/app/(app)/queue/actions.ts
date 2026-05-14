@@ -9,6 +9,7 @@ import { defaultImageProvider } from "@/lib/images";
 import { maxCharsFor } from "@/lib/channels/registry";
 import { assertWithinImageQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementImagesGenerated } from "@/lib/billing/usage";
+import type { RejectionReason } from "@/lib/db/types";
 
 type ActionResult = { error: string | null };
 type GenerateImageResult = { error: string | null; publicUrl: string | null };
@@ -55,8 +56,33 @@ export async function approvePostAction(postId: string): Promise<ActionResult> {
   return { error: null };
 }
 
-export async function rejectPostAction(postId: string): Promise<ActionResult> {
+// Rejection reasons mirror the CHECK constraint in migration 006 and the
+// radio options in queue-row.tsx. Kept in lockstep with the RejectionReason
+// type in src/lib/db/types.ts.
+const rejectionReasonSchema = z.enum([
+  "off_voice",
+  "wrong_theme",
+  "factually_wrong",
+  "other",
+]);
+const reasonNoteSchema = z
+  .string()
+  .trim()
+  .max(500)
+  .optional()
+  .transform((s) => (s && s.length > 0 ? s : null));
+
+export async function rejectPostAction(
+  postId: string,
+  reason: RejectionReason,
+  reasonNote?: string,
+): Promise<ActionResult> {
   if (!uuid.safeParse(postId).success) return { error: "Bad post id." };
+  const reasonParsed = rejectionReasonSchema.safeParse(reason);
+  if (!reasonParsed.success) return { error: "Pick a rejection reason." };
+  const noteParsed = reasonNoteSchema.safeParse(reasonNote);
+  if (!noteParsed.success) return { error: "Note must be 500 chars or fewer." };
+
   const { error, post, user, supabase } = await loadPostForWorkspace(postId);
   if (error || !post) return { error };
   if (post.status !== "pending_approval") {
@@ -74,6 +100,8 @@ export async function rejectPostAction(postId: string): Promise<ActionResult> {
     user_id: user.id,
     action: "rejected",
     diff: null,
+    reason: reasonParsed.data,
+    reason_note: noteParsed.data,
   });
 
   revalidatePath("/queue");
