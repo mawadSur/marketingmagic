@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge, ChannelBadge, statusBadgeLabel, statusBadgeVariant } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TrustNudge } from "@/components/trust-nudge";
+import { ExplainSection } from "./explain-section";
 import { isInRecommendedWindow } from "@/lib/channels/best-times";
 
 export const dynamic = "force-dynamic";
@@ -44,6 +45,8 @@ export default async function DashboardPage() {
       </header>
 
       <TrustNudge workspaceId={ws.id} />
+
+      <ExplainSection workspaceId={ws.id} />
 
       <section className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
         <KpiCard label="Posts shipped (7d)" value={kpis.posts_shipped_7d.toString()} />
