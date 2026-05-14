@@ -1,6 +1,11 @@
 import Link from "next/link";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
-import { getCalendar, getKpiSummary, getThemeLeaderboard } from "@/lib/dashboard/queries";
+import {
+  getCalendar,
+  getKpiSummary,
+  getSourceLeaderboard,
+  getThemeLeaderboard,
+} from "@/lib/dashboard/queries";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge, ChannelBadge, statusBadgeLabel, statusBadgeVariant } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -12,10 +17,11 @@ export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const ws = await getActiveWorkspaceOrRedirect();
-  const [kpis, calendar, themes] = await Promise.all([
+  const [kpis, calendar, themes, sources] = await Promise.all([
     getKpiSummary(ws.id),
     getCalendar(ws.id, 14),
     getThemeLeaderboard(ws.id),
+    getSourceLeaderboard(ws.id),
   ]);
 
   return (
@@ -177,6 +183,47 @@ export default async function DashboardPage() {
           )}
         </section>
       </div>
+
+      {/* Phase 2.5 — source attribution. Only renders when source-anchored
+          posts have shipped and have engagement metrics; cold-start hides
+          the section entirely rather than showing an empty card. */}
+      {sources.length > 0 ? (
+        <section className="space-y-3">
+          <div className="flex items-end justify-between">
+            <div>
+              <p className="label-eyebrow">Sources</p>
+              <h2 className="text-base font-medium">Top source-anchored posts (30d)</h2>
+            </div>
+            <Link
+              href="/sources"
+              className="text-xs text-muted-foreground transition-colors duration-200 hover:text-foreground"
+            >
+              Open library →
+            </Link>
+          </div>
+          <ul className="divide-y rounded-lg border bg-card">
+            {sources.map((s, i) => (
+              <li
+                key={s.source_id}
+                className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm transition-colors duration-200 hover:bg-muted/30"
+              >
+                <Link
+                  href={`/sources/${s.source_id}`}
+                  className="flex min-w-0 items-center gap-2.5 hover:underline"
+                >
+                  <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-muted text-[10px] font-medium tabular-nums text-muted-foreground">
+                    {i + 1}
+                  </span>
+                  <span className="truncate font-medium">{s.title}</span>
+                </Link>
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  {(s.avg_engagement_rate * 100).toFixed(2)}% · {s.posts}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </div>
   );
 }

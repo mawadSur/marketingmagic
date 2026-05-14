@@ -61,16 +61,16 @@ One "post idea" → channel-tuned variants. One approval cascades.
 
 **Added 2026-05-13 (10x Expansion #2).** Customer pastes a URL or uploads a file; we extract themes/quotes and generate a content cluster anchored to that source.
 
-- [TODO] **`sources` table** — `id`, `workspace_id`, `source_url` or `file_path`, `kind` (html/youtube/podcast/pdf/transcript), `extracted_summary`, `extracted_quotes` JSONB, `created_at`. Migration `009_sources.sql`.
-- [TODO] **`/sources` UI** — paste URL or upload file; show ingestion progress + extracted summary preview.
-- [TODO] **URL fetcher + readability** — Mozilla Readability or trafilatura for HTML; respect robots.txt + paywall detection.
-- [TODO] **YouTube/podcast transcript** — Whisper via Groq (already on roadmap for video captions in Phase 3 — share infra).
-- [TODO] **PDF parsing** — pdf-parse or similar; handle multi-column / image-heavy edge cases.
-- [TODO] **Extraction prompt** — Claude call returns structured themes + key quotes + facts JSON.
-- [TODO] **Source-anchored generator** — variant of plan generator that takes `source_id` + voice profile + channels → post cluster. Each post stores `source_id` FK.
-- [TODO] **Dashboard: source-attribution** — which sources produced highest-engagement posts.
-- [TODO] **"You own/have rights" checkbox** + ToS update — legal hedge on copyright.
-- [TODO] **Cold-source fallback** — short input (<200 words) → graceful UI ("paste more or try a different source").
+- [DONE 2026-05-14] **`sources` table** — `id`, `workspace_id`, `source_url` or `file_path`, `kind` (html/youtube/podcast/pdf/transcript), `extracted_summary`, `extracted_quotes` JSONB, `created_at`. Migration `009_sources.sql`. Adds `posts.source_id` FK so analytics can roll engagement up to the source.
+- [DONE 2026-05-14] **`/sources` UI** — paste URL or paste text; list view + detail view show extracted summary/themes/quotes/facts; "Generate cluster" CTA on detail.
+- [PARTIAL 2026-05-14] **URL fetcher + readability** — Rolled a tiny strip-HTML extractor with SSRF guard (`src/lib/sources/extract-html.ts`); skipped Mozilla Readability + linkedom deps. Flag in commit: marketing-style noisy pages may need the readability dep added later. robots.txt is NOT honored (matches the existing brief extractor behavior); paywall detection limited to "page has <200 chars readable content" fallback.
+- [PARTIAL 2026-05-14] **YouTube/podcast transcript** — Groq Whisper helper shipped at `src/lib/sources/transcribe.ts` behind `GROQ_API_KEY`. Audio-download path (yt-dlp / ffmpeg) is NOT wired — V1 punts YouTube to a "paste the transcript" path. The transcribe helper is ready for Phase 2.6 Founder-Mode file uploads.
+- [PARTIAL 2026-05-14] **PDF parsing** — Punted on adding pdf-parse + pdfjs-dist deps. `.pdf` URLs return a friendly "paste the text instead" message via `src/lib/sources/extract-pdf.ts`. Reachable in Phase 3 video pipeline kick-off.
+- [DONE 2026-05-14] **Extraction prompt** — `src/lib/sources/extract-claude.ts` uses claude-sonnet-4-6 tool-use forcing to return structured themes + verbatim quotes + facts + summary JSON (zod re-validated).
+- [DONE 2026-05-14] **Source-anchored generator** — `src/lib/sources/generate-from-source.ts` wraps the standard plan generator with a `source` field on `PlanGenInputs`; `src/lib/plan/prompt.ts` adds a "## Source material (anchor every idea in this)" block. Each post stores `source_id` FK on insert.
+- [DONE 2026-05-14] **Dashboard: source-attribution** — `getSourceLeaderboard()` + dashboard "Top source-anchored posts (30d)" section. Cold-start (no metrics yet) hides the section entirely.
+- [DONE 2026-05-14] **"You own/have rights" checkbox** + ToS update — required checkbox on `/sources/new`; submission blocked when unchecked. ToS update is a separate doc task left for main thread.
+- [DONE 2026-05-14] **Cold-source fallback** — `ColdSourceError` thrown when text <200 chars; UI surfaces "Paste at least 200 words, or try a different source."
 
 ## Phase 2.6 — Founder Mode (~1 week, stacks on 2.5)
 
