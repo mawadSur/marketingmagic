@@ -114,6 +114,10 @@ function synthBrief(opts: SynthBriefOpts): Brief {
     ],
     reference_links: [],
     reference_posts: opts.referencePosts,
+    voice_profile: null,
+    voice_profile_extracted_at: null,
+    pending_voice_diff: null,
+    pending_voice_diff_at: null,
     created_at: now,
     updated_at: now,
   };
