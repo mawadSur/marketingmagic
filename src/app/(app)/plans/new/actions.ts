@@ -201,7 +201,62 @@ export async function generatePlanAction(
   for (const a of accounts) accountByChannel.set(a.channel, a);
 
   const skipped: string[] = [];
-  const postsPayload = result.plan.posts.flatMap((p) => {
+  // Phase 2: the schema supports either `ideas[]` (new) or `posts[]` (legacy).
+  // - ideas: one idea → N variants; we mint a UUID idea_id per idea and tag
+  //   every variant row with it so the queue can group them.
+  // - posts: legacy single-channel shape — each post stands alone with
+  //   idea_id=NULL (no grouping).
+  //
+  // Trust-mode policy for multi-variant ideas: each variant inherits the
+  // trust state of *its* social_account independently. So you can have the X
+  // variant auto-scheduled (trusted channel) while the LinkedIn variant of
+  // the same idea waits in pending_approval (untrusted channel). This
+  // matches the existing per-channel trust model and keeps the per-variant
+  // approve/edit UX intact.
+  type FlatVariant = {
+    channel: string;
+    text: string;
+    theme: string;
+    suggested_scheduled_at: string;
+    rationale: string;
+    image_prompt?: string;
+    idea_id: string | null;
+    idea_label: string | null;
+    voice_score?: number;
+  };
+  let flatVariants: FlatVariant[];
+  if (result.plan.ideas) {
+    flatVariants = result.plan.ideas.flatMap((idea) => {
+      const ideaId = crypto.randomUUID();
+      return idea.variants
+        .filter((v) => !v.skip)
+        .map((v) => ({
+          channel: v.channel,
+          text: v.text,
+          theme: idea.theme,
+          suggested_scheduled_at: idea.suggested_scheduled_at,
+          rationale: v.rationale,
+          image_prompt: v.image_prompt,
+          idea_id: ideaId,
+          idea_label: idea.idea_label,
+          voice_score: v.voice_score,
+        }));
+    });
+  } else {
+    flatVariants = (result.plan.posts ?? []).map((p) => ({
+      channel: p.channel,
+      text: p.text,
+      theme: p.theme,
+      suggested_scheduled_at: p.suggested_scheduled_at,
+      rationale: p.rationale,
+      image_prompt: p.image_prompt,
+      idea_id: null,
+      idea_label: null,
+      voice_score: p.voice_score,
+    }));
+  }
+
+  const postsPayload = flatVariants.flatMap((p) => {
     const acct = accountByChannel.get(p.channel);
     if (!acct) {
       skipped.push(p.channel);
@@ -232,11 +287,13 @@ export async function generatePlanAction(
         status: (trusted ? "scheduled" : "pending_approval") as "scheduled" | "pending_approval",
         voice_score: voiceScore,
         low_confidence: lowConfidence,
+        idea_id: p.idea_id,
         generation_metadata: {
           rationale: p.rationale,
           cache_read_input_tokens: result.usage.cache_read_input_tokens ?? 0,
           auto_scheduled: trusted,
           image_prompt: p.image_prompt ?? null,
+          idea_label: p.idea_label,
         },
       },
     ];
@@ -277,8 +334,20 @@ export async function generatePlanAction(
 // shouldn't penalise the average for workspaces without voice profiles,
 // and the caller checks hasVoiceProfile before consulting this anyway.
 function averageVoiceScore(result: PlanGenResult): number {
-  const scored = result.plan.posts.filter((p) => typeof p.voice_score === "number");
-  if (scored.length === 0) return 100;
-  const total = scored.reduce((sum, p) => sum + (p.voice_score ?? 0), 0);
-  return total / scored.length;
+  // Plan may use either the new ideas[] shape (variants nested per idea) or
+  // the legacy posts[] shape. Collect voice_scores from whichever is present.
+  const scores: number[] = [];
+  if (result.plan.ideas) {
+    for (const idea of result.plan.ideas) {
+      for (const v of idea.variants) {
+        if (typeof v.voice_score === "number" && !v.skip) scores.push(v.voice_score);
+      }
+    }
+  } else if (result.plan.posts) {
+    for (const p of result.plan.posts) {
+      if (typeof p.voice_score === "number") scores.push(p.voice_score);
+    }
+  }
+  if (scores.length === 0) return 100;
+  return scores.reduce((sum, s) => sum + s, 0) / scores.length;
 }

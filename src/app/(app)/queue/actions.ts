@@ -56,6 +56,63 @@ export async function approvePostAction(postId: string): Promise<ActionResult> {
   return { error: null };
 }
 
+// Phase 2 — approve every pending_approval variant that shares the given
+// idea_id. Per-variant edit/approve still works; this is the bulk action
+// for "the whole idea looks good across all channels".
+export async function approveAllVariantsAction(
+  ideaId: string,
+): Promise<ActionResult & { approved: number }> {
+  // idea_id is text (so the generator could later use stable labels); the
+  // current shape is UUID-as-text. Accept anything 1-120 chars so we don't
+  // brittlely reject future label formats.
+  const ideaIdSchema = z.string().trim().min(1).max(120);
+  if (!ideaIdSchema.safeParse(ideaId).success) {
+    return { error: "Bad idea id.", approved: 0 };
+  }
+
+  const ws = await getActiveWorkspaceOrRedirect();
+  const user = await getAuthedUserOrRedirect();
+  const supabase = await supabaseServer();
+
+  // Load all variants of the idea, scoped to the workspace (RLS belt-and-
+  // suspenders — the policy already enforces this, but the explicit filter
+  // makes the SQL self-documenting).
+  const { data: variants, error: loadErr } = await supabase
+    .from("posts")
+    .select("id, status")
+    .eq("workspace_id", ws.id)
+    .eq("idea_id", ideaId);
+  if (loadErr) return { error: loadErr.message, approved: 0 };
+  if (!variants || variants.length === 0) {
+    return { error: "Idea not found in this workspace.", approved: 0 };
+  }
+
+  const pendingIds = variants.filter((v) => v.status === "pending_approval").map((v) => v.id);
+  if (pendingIds.length === 0) {
+    return { error: null, approved: 0 };
+  }
+
+  const now = new Date().toISOString();
+  const { error: updateErr } = await supabase
+    .from("posts")
+    .update({ status: "scheduled", approved_at: now })
+    .in("id", pendingIds);
+  if (updateErr) return { error: updateErr.message, approved: 0 };
+
+  // Audit row per variant — keeps the per-post audit trail consistent with
+  // single-approval flow, so revoke/history reporting works the same way.
+  const approvals = pendingIds.map((postId) => ({
+    post_id: postId,
+    user_id: user.id,
+    action: "approved" as const,
+    diff: null,
+  }));
+  await supabase.from("approvals").insert(approvals);
+
+  revalidatePath("/queue");
+  return { error: null, approved: pendingIds.length };
+}
+
 // Rejection reasons mirror the CHECK constraint in migration 006 and the
 // radio options in queue-row.tsx. Kept in lockstep with the RejectionReason
 // type in src/lib/db/types.ts.
