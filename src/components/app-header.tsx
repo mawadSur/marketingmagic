@@ -12,6 +12,9 @@ const baseNav = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/analytics", label: "Analytics" },
   { href: "/plans", label: "Plans" },
+  // Phase 2.5 — Source-to-Posts. Sits between Plans and Queue because the
+  // mental model is: paste a source → generate a cluster → approve in queue.
+  { href: "/sources", label: "Sources" },
   { href: "/queue", label: "Queue" },
   { href: "/settings/brief", label: "Brief" },
   { href: "/settings/channels", label: "Channels" },
