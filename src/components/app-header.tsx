@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 
 type Workspace = Database["public"]["Tables"]["workspaces"]["Row"];
 
-const nav = [
+const baseNav = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/analytics", label: "Analytics" },
   { href: "/plans", label: "Plans" },
@@ -18,6 +18,18 @@ const nav = [
   { href: "/settings/events", label: "Events" },
   { href: "/settings/billing", label: "Billing" },
 ];
+
+// Portfolio only makes sense when the user is in ≥2 workspaces. We sneak
+// it in right after Dashboard so the agency-lite users can flip between
+// per-client and roll-up views without hunting.
+function buildNav(showPortfolio: boolean) {
+  if (!showPortfolio) return baseNav;
+  return [
+    baseNav[0],
+    { href: "/portfolio", label: "Portfolio" },
+    ...baseNav.slice(1),
+  ];
+}
 
 function isActive(pathname: string, href: string): boolean {
   // Exact match, or prefix match if the nav item itself is a section root.
@@ -30,6 +42,7 @@ function isActive(pathname: string, href: string): boolean {
 
 export function AppHeader({ active, workspaces }: { active: Workspace; workspaces: Workspace[] }) {
   const pathname = usePathname();
+  const nav = buildNav(workspaces.length >= 2);
 
   return (
     <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
