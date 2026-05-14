@@ -8,8 +8,23 @@
 
 import type { Database } from "@/lib/db/types";
 import { generatePlan } from "@/lib/plan/generate";
-import type { GeneratedPlan } from "@/lib/plan/schema";
 import type { ChannelId } from "@/lib/channels/registry";
+
+// Preview always uses the flat single-channel shape regardless of whether
+// Claude returned ideas[] or posts[]. Decoupled from GeneratedPlan because
+// the union type would force unnecessary narrowing in the UI layer.
+export interface FlatPreviewPlan {
+  plan_name: string;
+  overview: string;
+  posts: Array<{
+    channel: string;
+    text: string;
+    theme: string;
+    suggested_scheduled_at: string;
+    rationale: string;
+    image_prompt?: string;
+  }>;
+}
 
 type Brief = Database["public"]["Tables"]["brand_briefs"]["Row"];
 
@@ -24,7 +39,7 @@ export interface PreviewInputs {
 }
 
 export interface PreviewResult {
-  plan: GeneratedPlan;
+  plan: FlatPreviewPlan;
   voice_summary: string;
 }
 
@@ -70,9 +85,30 @@ export async function previewPlan(inputs: PreviewInputs): Promise<PreviewResult>
     startDate,
   });
 
-  const trimmed: GeneratedPlan = {
-    ...result.plan,
-    posts: result.plan.posts.slice(0, 7),
+  // Plan may use the new ideas[] shape (one idea fans out into variants per
+  // channel) or the legacy posts[] shape. The preview only uses a single
+  // channel anyway, so flatten ideas → first non-skipped variant for the
+  // requested channel before slicing.
+  const flatPosts = result.plan.ideas
+    ? result.plan.ideas.flatMap((idea) => {
+        const variant =
+          idea.variants.find((v) => v.channel === inputs.channel && !v.skip) ??
+          idea.variants.find((v) => !v.skip);
+        if (!variant) return [];
+        return [{
+          channel: variant.channel,
+          text: variant.text,
+          theme: idea.theme,
+          suggested_scheduled_at: idea.suggested_scheduled_at,
+          rationale: variant.rationale,
+          image_prompt: variant.image_prompt,
+        }];
+      })
+    : result.plan.posts ?? [];
+  const trimmed: FlatPreviewPlan = {
+    plan_name: result.plan.plan_name,
+    overview: result.plan.overview,
+    posts: flatPosts.slice(0, 7),
   };
   return {
     plan: trimmed,
