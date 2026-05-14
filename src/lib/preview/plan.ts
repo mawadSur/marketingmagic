@@ -155,6 +155,8 @@ function synthBrief(opts: SynthBriefOpts): Brief {
     pending_voice_diff: null,
     pending_voice_diff_at: null,
     audience_timezone: "UTC",
+    theme_snooze: [],
+    theme_gaps_enabled: true,
     created_at: now,
     updated_at: now,
   };
