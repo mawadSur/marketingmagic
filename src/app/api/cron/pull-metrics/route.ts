@@ -6,6 +6,25 @@ import { dispatchMetrics } from "@/lib/social/dispatch";
 // Hourly Vercel Cron — pulls fresh metrics for posts shipped in the last 7
 // days, across every connected channel. Engagement rate is cached so the
 // dashboard + plan signals can query cheaply.
+//
+// Per-channel notes:
+//   - x         : impressions + engagement; engagement_rate computed.
+//   - linkedin  : likes + comments only on personal posts (w_member_social);
+//                 impressions/shares are 0 until org-page scope lands.
+//   - threads   : views, likes, replies, reposts, quotes.
+//   - instagram : impressions/reach, likes, comments, shares, saves.
+//   - bluesky   : likes, reposts, quotes, replies (no impressions in API).
+//
+// Failures on a single post are logged into `results` but do not abort the
+// batch — every channel helper either returns zeros or throws a typed
+// error and the loop swallows it.
+
+// LinkedIn posts use the URN shape (urn:li:share:... / urn:li:ugcPost:...).
+// Anything else stored as external_id is a leftover from a pre-URN code
+// path; skip rather than 400 against the metrics endpoint.
+function looksLikeLinkedInUrn(id: string): boolean {
+  return id.startsWith("urn:li:");
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,6 +61,14 @@ async function handle(req: NextRequest) {
 
   for (const post of posts ?? []) {
     if (!post.external_id) continue;
+
+    // Defensive: LinkedIn external_ids must be URNs; the metrics endpoint
+    // returns 400 on anything else. Skip with a reason instead of letting
+    // the dispatcher throw a noisy error.
+    if (post.channel === "linkedin" && !looksLikeLinkedInUrn(post.external_id)) {
+      results.push({ id: post.id, ok: false, reason: "linkedin external_id not a URN" });
+      continue;
+    }
 
     const { data: account } = await svc
       .from("social_accounts")
