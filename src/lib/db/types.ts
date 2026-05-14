@@ -457,6 +457,39 @@ export interface Database {
         }>;
         Relationships: [];
       };
+      workspace_invitations: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          email: string;
+          role: "editor" | "viewer";
+          invited_by: string;
+          token: string;
+          expires_at: string;
+          accepted_at: string | null;
+          accepted_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          email: string;
+          role: "editor" | "viewer";
+          invited_by: string;
+          token: string;
+          expires_at: string;
+          accepted_at?: string | null;
+          accepted_by?: string | null;
+        };
+        Update: Partial<{
+          email: string;
+          role: "editor" | "viewer";
+          expires_at: string;
+          accepted_at: string | null;
+          accepted_by: string | null;
+        }>;
+        Relationships: [];
+      };
       ai_reviews: {
         Row: {
           id: string;
