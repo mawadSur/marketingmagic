@@ -87,6 +87,15 @@ export interface DiscordEventFilters {
   alerts_only: boolean;  // reserved: high-priority alerts only (errors, billing)
 }
 
+// Phase 6.9 (Theme-aware calendar gaps): per-theme preferences stored on
+// brand_briefs.theme_snooze as a jsonb array. Each entry is either a snooze
+// (theme + snoozed_until ISO timestamp) or an archive (theme + archived:true).
+// Both forms filter the theme out of gap-detection. Snoozes auto-expire when
+// snoozed_until elapses; archives are permanent until the user unarchives.
+export type ThemeSnoozeEntry =
+  | { theme: string; snoozed_until: string; archived?: false }
+  | { theme: string; archived: true; snoozed_until?: null };
+
 export interface Database {
   public: {
     Tables: {
@@ -175,6 +184,10 @@ export interface Database {
           // preference. Used by smart-timing analysis to bucket post_metrics
           // into day-of-week × 2-hour windows in the right frame.
           audience_timezone: string;
+          // Phase 6.9: per-theme snooze/archive entries; opt-out toggle for
+          // gap detection. See migration 013_theme_snooze.sql.
+          theme_snooze: ThemeSnoozeEntry[];
+          theme_gaps_enabled: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -192,6 +205,8 @@ export interface Database {
           pending_voice_diff?: VoiceProfileDiff | null;
           pending_voice_diff_at?: string | null;
           audience_timezone?: string;
+          theme_snooze?: ThemeSnoozeEntry[];
+          theme_gaps_enabled?: boolean;
         };
         Update: Partial<{
           product_description: string;
@@ -205,6 +220,8 @@ export interface Database {
           pending_voice_diff: VoiceProfileDiff | null;
           pending_voice_diff_at: string | null;
           audience_timezone: string;
+          theme_snooze: ThemeSnoozeEntry[];
+          theme_gaps_enabled: boolean;
         }>;
         Relationships: [];
       };
