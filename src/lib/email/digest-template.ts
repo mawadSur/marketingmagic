@@ -14,6 +14,14 @@ export interface DigestPost {
   scheduledAt: string | null;
 }
 
+// Phase 6.9: neglected-theme surfacing on the digest. The cron passes
+// at most 2 entries — we render a compact card with a queue/regen link.
+export interface DigestNeglectedTheme {
+  theme: string;
+  engagement_rate_30d: number;
+  days_since_last_post: number;
+}
+
 export interface DigestTemplateInput {
   workspaceName: string;
   posts: DigestPost[];
@@ -21,6 +29,12 @@ export interface DigestTemplateInput {
   approveLinkFor: (postId: string) => string;
   rejectLinkFor: (postId: string) => string;
   queueUrl: string;
+  // When present + non-empty, the digest renders a "neglected themes" card
+  // above the approval cards. Suppressed entirely when undefined or empty.
+  neglectedThemes?: DigestNeglectedTheme[];
+  // Dashboard URL — landing page for the regen affordance. Optional so
+  // callers that don't care can omit it; falls back to queueUrl.
+  dashboardUrl?: string;
 }
 
 // Minimal HTML-escape. We only render trusted-ish strings (workspace name,
@@ -100,12 +114,63 @@ function postCard(post: DigestPost, approveUrl: string, rejectUrl: string): stri
   </tr>`;
 }
 
+function neglectedThemesCard(themes: DigestNeglectedTheme[], dashboardUrl: string): string {
+  if (themes.length === 0) return "";
+  const rows = themes
+    .slice(0, 2)
+    .map((t) => {
+      const engagement = (t.engagement_rate_30d * 100).toFixed(2);
+      return `
+      <tr>
+        <td style="padding:8px 0;border-bottom:1px solid #fef3c7;">
+          <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;color:#92400e;font-weight:600;">#${esc(t.theme)}</span>
+          <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:12px;color:#92400e;opacity:0.75;"> · ${engagement}% engagement · last posted ${t.days_since_last_post}d ago</span>
+        </td>
+      </tr>`;
+    })
+    .join("");
+  return `
+  <tr>
+    <td style="padding:0 0 20px 0;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;">
+        <tr>
+          <td style="padding:18px 22px 14px 22px;">
+            <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:11px;color:#92400e;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:6px;">Neglected themes</div>
+            <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:14px;color:#78350f;line-height:1.5;margin-bottom:10px;">
+              These top-quartile themes have gone quiet. Regenerate from the dashboard to keep the calendar balanced.
+            </div>
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+              ${rows}
+            </table>
+            <div style="padding-top:12px;">
+              <a href="${esc(dashboardUrl)}" style="display:inline-block;background:#f59e0b;color:#ffffff;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px;font-weight:600;padding:8px 16px;border-radius:8px;">Open dashboard</a>
+            </div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>`;
+}
+
 export function renderDigestEmail(input: DigestTemplateInput): string {
-  const { workspaceName, posts, totalPending, approveLinkFor, rejectLinkFor, queueUrl } = input;
+  const {
+    workspaceName,
+    posts,
+    totalPending,
+    approveLinkFor,
+    rejectLinkFor,
+    queueUrl,
+    neglectedThemes,
+    dashboardUrl,
+  } = input;
   const cards = posts.map((p) => postCard(p, approveLinkFor(p.id), rejectLinkFor(p.id))).join("");
   const overflowNote =
     totalPending > posts.length
       ? `<tr><td style="padding:4px 0 16px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px;color:#64748b;text-align:center;">+ ${totalPending - posts.length} more waiting in the queue.</td></tr>`
+      : "";
+  const neglectedCard =
+    neglectedThemes && neglectedThemes.length > 0
+      ? neglectedThemesCard(neglectedThemes, dashboardUrl ?? queueUrl)
       : "";
 
   return `<!DOCTYPE html>
@@ -133,6 +198,7 @@ export function renderDigestEmail(input: DigestTemplateInput): string {
               You have <strong style="color:#0f172a;">${totalPending} post${totalPending === 1 ? "" : "s"}</strong> waiting for approval. Approve or reject right from this email — no login required.
             </td>
           </tr>
+          ${neglectedCard}
           ${cards}
           ${overflowNote}
           <tr>

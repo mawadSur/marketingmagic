@@ -4,6 +4,12 @@ import { supabaseService } from "@/lib/supabase/service";
 import { signLinkToken } from "@/lib/email/sign";
 import { renderDigestEmail, type DigestPost } from "@/lib/email/digest-template";
 import { dispatchDigest, type DispatchResult } from "@/lib/integrations/dispatch";
+import { findNeglectedThemes } from "@/lib/themes/gaps";
+import {
+  dispatchNeglectedThemesNotice,
+  DIGEST_NEGLECTED_LIMIT,
+  type NeglectedNoticeResult,
+} from "@/lib/themes/digest-notice";
 
 // Daily approval digest. Runs 14:00 UTC from .github/workflows/cron-email-digest.yml.
 // Auth: Bearer CRON_SECRET (same shape as the other cron routes). Service-role
@@ -31,6 +37,12 @@ interface EmailResult {
   // Email + Discord are independent; either failing does not affect the
   // other. Absent (undefined) for workspaces with no Discord integration.
   discord?: DispatchResult[];
+  // Phase 6.9: neglected-themes notice (separate Discord embed +
+  // surfaced on the email template). Present only when the workspace has
+  // at least one theme flagged; absent otherwise so the report shows
+  // the suppression cleanly.
+  neglectedThemesDiscord?: NeglectedNoticeResult[];
+  neglectedThemesCount?: number;
 }
 
 export async function GET(req: NextRequest) {
@@ -131,6 +143,20 @@ async function handle(req: NextRequest) {
       scheduledAt: p.scheduled_at,
     }));
 
+    // Phase 6.9 — pull neglected themes for this workspace. Bounded to
+    // DIGEST_NEGLECTED_LIMIT entries in the email + Discord transports.
+    // findNeglectedThemes short-circuits when theme_gaps_enabled=false,
+    // so no extra opt-out plumbing needed here.
+    let neglectedThemes: Awaited<ReturnType<typeof findNeglectedThemes>> = [];
+    try {
+      neglectedThemes = await findNeglectedThemes(ws.id);
+    } catch (err) {
+      // Detection failure is non-fatal — keep shipping the digest.
+      console.warn(`Neglected-theme detection failed for ${ws.id}:`, err);
+    }
+    result.neglectedThemesCount = neglectedThemes.length;
+    const neglectedForDigest = neglectedThemes.slice(0, DIGEST_NEGLECTED_LIMIT);
+
     // ── Discord transport ──────────────────────────────────────────────
     // Independent of email. dispatchDigest looks up the workspace's
     // Discord integrations and fans out; returns [] when none configured
@@ -153,6 +179,28 @@ async function handle(req: NextRequest) {
             reason: err instanceof Error ? err.message : "dispatch_failed",
           },
         ];
+      }
+
+      // Phase 6.9 — separate neglected-themes embed. Suppressed when no
+      // themes are flagged; never fails the digest itself.
+      if (neglectedForDigest.length > 0) {
+        try {
+          const notice = await dispatchNeglectedThemesNotice({
+            workspaceId: ws.id,
+            workspaceName: ws.name,
+            themes: neglectedForDigest,
+          });
+          if (notice.length > 0) result.neglectedThemesDiscord = notice;
+        } catch (err) {
+          result.neglectedThemesDiscord = [
+            {
+              integrationId: "",
+              channelId: "",
+              status: "failed",
+              reason: err instanceof Error ? err.message : "dispatch_failed",
+            },
+          ];
+        }
       }
     }
 
@@ -202,6 +250,12 @@ async function handle(req: NextRequest) {
           signLinkToken({ postId, action: "reject" }, linkSecret),
         )}`,
       queueUrl: `${base}/queue`,
+      dashboardUrl: `${base}/dashboard`,
+      neglectedThemes: neglectedForDigest.map((t) => ({
+        theme: t.theme,
+        engagement_rate_30d: t.engagement_rate_30d,
+        days_since_last_post: t.days_since_last_post,
+      })),
     });
 
     const subject =
