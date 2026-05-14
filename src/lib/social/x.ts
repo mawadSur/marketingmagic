@@ -61,12 +61,20 @@ export async function xPost(
   creds: XCredentials,
   text: string,
   mediaIds?: string[],
+  inReplyToTweetId?: string,
 ): Promise<XPostResult> {
   const url = `${BASE_URL}/2/tweets`;
   const auth = authorize(creds, url, "POST");
-  const body: { text: string; media?: { media_ids: string[] } } = { text };
+  const body: {
+    text: string;
+    media?: { media_ids: string[] };
+    reply?: { in_reply_to_tweet_id: string };
+  } = { text };
   if (mediaIds && mediaIds.length > 0) {
     body.media = { media_ids: mediaIds };
+  }
+  if (inReplyToTweetId) {
+    body.reply = { in_reply_to_tweet_id: inReplyToTweetId };
   }
   const res = await fetch(url, {
     method: "POST",
@@ -78,6 +86,62 @@ export async function xPost(
     throw new Error(`X post failed (${res.status}): ${JSON.stringify(json)}`);
   }
   return json.data;
+}
+
+// ─── Phase 6.8 — sequential thread posting ─────────────────────────────────
+//
+// `xPostThread` posts a thread by chaining `in_reply_to_tweet_id` on each
+// subsequent tweet. Sequential with a 1.2s delay between tweets so we
+// don't trip per-second rate caps, and so that the previous tweet has
+// time to settle before the next one references it.
+//
+// Partial-failure shape: on first failure, we return the tweet IDs we
+// did manage to post + a `lastError` describing the failing tweet index
+// (0-based). The caller is responsible for persisting partial state
+// (per-tweet `external_id`) and surfacing a retry affordance.
+//
+// `startInReplyTo` lets the caller resume a partially-published thread:
+// pass the last successfully-posted tweet id + slice `tweets[]` to the
+// unpublished tail. Idempotency itself sits one level up in the cron
+// (social_posts_ledger keyed by `post:<tweet-row-id>`).
+export interface XPostThreadResult {
+  tweetIds: string[]; // newly-posted tweet IDs in order
+  lastError?: { tweetIndex: number; error: string };
+}
+
+export async function xPostThread(
+  creds: XCredentials,
+  tweets: string[],
+  opts: { startInReplyTo?: string; delayMs?: number } = {},
+): Promise<XPostThreadResult> {
+  if (tweets.length === 0) {
+    throw new Error("xPostThread called with no tweets");
+  }
+  const delayMs = Math.max(800, Math.min(opts.delayMs ?? 1200, 5000));
+  const tweetIds: string[] = [];
+  let inReplyTo = opts.startInReplyTo;
+
+  for (let i = 0; i < tweets.length; i++) {
+    const text = tweets[i];
+    try {
+      const sent = await xPost(creds, text, undefined, inReplyTo);
+      tweetIds.push(sent.id);
+      inReplyTo = sent.id;
+    } catch (err) {
+      return {
+        tweetIds,
+        lastError: {
+          tweetIndex: i,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
+    // Inter-tweet delay — skip after the last tweet.
+    if (i < tweets.length - 1) {
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  return { tweetIds };
 }
 
 // Single-shot media upload via v1.1 (v2 still has no media-upload endpoint as
