@@ -7,6 +7,7 @@ import { supabaseService } from "@/lib/supabase/service";
 import { getActiveWorkspaceOrRedirect, getAuthedUserOrRedirect } from "@/lib/workspace";
 import { defaultImageProvider } from "@/lib/images";
 import { maxCharsFor } from "@/lib/channels/registry";
+import { applyHashtagsToText, extractHashtags } from "@/lib/hashtags/extract";
 import { assertWithinImageQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementImagesGenerated } from "@/lib/billing/usage";
 import type { RejectionReason } from "@/lib/db/types";
@@ -419,6 +420,111 @@ export async function clearPostImageAction(postId: string): Promise<ActionResult
     .update({ media: [] as never })
     .eq("id", postId);
   if (updateErr) return { error: updateErr.message };
+
+  revalidatePath("/queue");
+  return { error: null };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Phase 6.10 — setPostHashtagsAction
+// ─────────────────────────────────────────────────────────────
+//
+// Rewrites a pending post's body with the given tag set, appending the
+// tags as a trailing block (or none, if `tags` is empty). The action
+// also logs the new tag set into hashtag_usage so the recommender
+// learns from explicit user toggles — including the negative signal of
+// the user *unchecking* a tag (we still record the post's final tag
+// set, which is the strongest signal of intent).
+//
+// Validation:
+// - workspace + status checks via loadPostForWorkspace
+// - tag normalization (lowercase, no leading #, ASCII only) via
+//   extract.ts; anything that fails the regex is silently dropped
+// - hard cap from the channel policy
+// - resulting body must fit the channel's char cap (truncated if not,
+//   matching the editPostAction policy)
+const hashtagListSchema = z.array(z.string().trim().min(1).max(100)).max(30);
+
+export async function setPostHashtagsAction(
+  postId: string,
+  tags: string[],
+): Promise<ActionResult> {
+  if (!uuid.safeParse(postId).success) return { error: "Bad post id." };
+  const parsed = hashtagListSchema.safeParse(tags);
+  if (!parsed.success) return { error: "Bad tag list." };
+
+  const { error, post, user, supabase } = await loadPostForWorkspace(postId);
+  if (error || !post) return { error };
+  if (post.status !== "pending_approval") {
+    return { error: `Cannot edit tags from ${post.status}.` };
+  }
+
+  // Normalize: lowercase, strip leading #, drop empties + dupes.
+  const normalized = Array.from(
+    new Set(
+      parsed.data
+        .map((t) => t.trim().replace(/^#+/, "").toLowerCase())
+        .filter((t) => /^[a-z0-9_]+$/.test(t)),
+    ),
+  );
+
+  // Enforce channel cap on the way in — UI cap is a guard rail, server
+  // is the binding rule.
+  const { getChannelHashtagPolicy } = await import("@/lib/hashtags/rules");
+  const policy = getChannelHashtagPolicy(post.channel as Parameters<typeof getChannelHashtagPolicy>[0]);
+  if (normalized.length > policy.recommendedCount[1]) {
+    return { error: `${post.channel.toUpperCase()} caps at ${policy.recommendedCount[1]} tag${policy.recommendedCount[1] === 1 ? "" : "s"}.` };
+  }
+
+  const newText = applyHashtagsToText(post.text, normalized);
+  const max = maxCharsFor(post.channel);
+  const finalText = newText.length > max ? newText.slice(0, max - 1) + "…" : newText;
+  if (finalText === post.text) return { error: null };
+
+  const { error: updateErr } = await supabase
+    .from("posts")
+    .update({ text: finalText })
+    .eq("id", postId);
+  if (updateErr) return { error: updateErr.message };
+
+  // Audit trail — same shape as editPostAction so /history reads consistently.
+  await supabase.from("approvals").insert({
+    post_id: postId,
+    user_id: user.id,
+    action: "edited",
+    diff: `tags: ${normalized.map((t) => `#${t}`).join(" ") || "(none)"}`,
+  });
+
+  // Log the new tag set to hashtag_usage. Re-fetch the latest metrics
+  // (cheap) so we capture the at-the-time engagement; the unique index
+  // makes the upsert idempotent against prior records.
+  try {
+    const svc = supabaseService();
+    const { data: latestMetric } = await svc
+      .from("post_metrics")
+      .select("engagement_rate")
+      .eq("post_id", postId)
+      .order("fetched_at", { ascending: false })
+      .limit(1);
+    const engagement = latestMetric?.[0]?.engagement_rate ?? null;
+    const rows = extractHashtags(finalText).map((tag) => ({
+      workspace_id: post.workspace_id,
+      channel: post.channel,
+      tag,
+      post_id: postId,
+      engagement_at_post: engagement,
+    }));
+    if (rows.length > 0) {
+      await svc.from("hashtag_usage").upsert(rows, {
+        onConflict: "post_id,tag",
+        ignoreDuplicates: true,
+      });
+    }
+  } catch (err) {
+    // Best-effort — the post update is the user-visible change. A failed
+    // hashtag_usage write only means the recommender misses one signal.
+    console.warn("hashtag_usage upsert failed:", err);
+  }
 
   revalidatePath("/queue");
   return { error: null };

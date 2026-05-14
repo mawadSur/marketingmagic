@@ -41,6 +41,13 @@ interface PostRow {
   low_confidence: boolean;
 }
 
+// Phase 6.10: server-rendered hashtag chip row, passed in as a slot so
+// the QueueRow client component stays free of async data fetching. The
+// parent server page is responsible for constructing the node.
+export interface QueueRowSlots {
+  hashtagRow?: React.ReactNode;
+}
+
 const REJECTION_REASONS: Array<{ value: RejectionReason; label: string; helper: string }> = [
   { value: "off_voice", label: "Off-voice", helper: "Didn't sound like the brand." },
   { value: "wrong_theme", label: "Wrong theme", helper: "Off-strategy for this audience." },
@@ -48,7 +55,12 @@ const REJECTION_REASONS: Array<{ value: RejectionReason; label: string; helper: 
   { value: "other", label: "Other", helper: "Use the note to explain." },
 ];
 
-export function QueueRow({ post }: { post: PostRow }) {
+export function QueueRow({
+  post,
+  hashtagRow,
+}: {
+  post: PostRow;
+} & QueueRowSlots) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [editing, setEditing] = useState(false);
@@ -168,6 +180,10 @@ export function QueueRow({ post }: { post: PostRow }) {
       ) : (
         <p className="whitespace-pre-wrap">{post.text}</p>
       )}
+
+      {/* Phase 6.10: hashtag chip row, only in pending state and only
+          when the parent passed a slot (so legacy renders stay clean). */}
+      {isPending && hashtagRow ? hashtagRow : null}
 
       {/* Image block — only show in pending state (post-approval edits frozen). */}
       {isPending ? (
@@ -417,9 +433,14 @@ export function QueueRow({ post }: { post: PostRow }) {
 export function QueueIdeaRow({
   ideaId,
   variants,
+  hashtagSlots,
 }: {
   ideaId: string;
   variants: PostRow[];
+  // Phase 6.10: per-variant hashtag chip row slot, keyed by post id.
+  // The parent server page builds this map; the client component just
+  // forwards each slot into its matching QueueRow.
+  hashtagSlots?: Map<string, React.ReactNode>;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(true);
@@ -496,7 +517,7 @@ export function QueueIdeaRow({
       {open ? (
         <ul className="divide-y rounded-md border bg-muted/20">
           {variants.map((v) => (
-            <QueueRow key={v.id} post={v} />
+            <QueueRow key={v.id} post={v} hashtagRow={hashtagSlots?.get(v.id)} />
           ))}
         </ul>
       ) : null}
