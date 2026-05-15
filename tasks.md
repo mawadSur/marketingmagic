@@ -167,17 +167,17 @@ Unblock onboarding so customers can sign up without manual hand-holding.
 **Decision (2026-05-13):** Option D — theme-level cohort analysis as the honest centerpiece, "Quick Experiments" sequential variants as a lighter labeled-as-directional feature. Cross-workspace experimentation deferred until agency customers exist.
 
 ### 6A — Theme-level (honest, slow signal)
-- [TODO] **`/analytics/themes` page** — engagement-rate distribution per theme over rolling 28-day window, vs workspace baseline.
-- [TODO] **"Winning themes" report** — surfaces themes with statistically meaningful lift (Bayesian credible interval over per-post engagement rate).
-- [TODO] **KPI-weighted regen integration** — plan regen pulls top/bottom theme list (already exists in primitive form; promote to first-class).
-- [TODO] **Decay-aware ranking** — recent post performance weighted higher than 6-week-old data.
+- [DONE 2026-05-15] **`/analytics/themes` page** — engagement-rate distribution per theme over rolling 28-day window, vs workspace baseline. `src/app/(app)/analytics/themes/page.tsx:1-138`; computation in `src/lib/analytics/themes.ts:43-228`.
+- [DONE 2026-05-15] **"Winning themes" report** — surfaces themes with statistically meaningful lift (Bayesian Beta-Binomial shrinkage with 50-effective-sample prior; 80% credible interval verdict in `src/lib/analytics/themes.ts:188-216`). Winner/loser badges in the table rendered by `src/app/(app)/analytics/themes/page.tsx:121-138`.
+- [DONE 2026-05-15] **KPI-weighted regen integration** — `loadThemeWinners()` in `src/lib/analytics/themes.ts:339` feeds the new `themeWinners` field on `PlanGenInputs` (`src/lib/plan/prompt.ts:75`); rendered as a "## Themes that have been working" block via `themeWinnersBlock` (`src/lib/plan/prompt.ts:121-137`), wired into the system prompt at `src/lib/plan/prompt.ts:296`. Wired into all four generator call sites: `src/app/(app)/plans/new/actions.ts:117-125` + 173, `src/app/(app)/dashboard/actions.ts:108-113` + 133, `src/app/(app)/goals/[id]/actions.ts:171-176` + 193, `src/app/(app)/sources/[id]/actions.ts:118-123` + 141.
+- [DONE 2026-05-15] **Decay-aware ranking** — `src/lib/analytics/themes.ts` imports `decayWeightFor` from `src/lib/timing/decay.ts:25`; both engagement and impressions are decay-weighted before posterior computation (`themes.ts:120-145`). 30-day half-life shared with Smart Timing.
 
 ### 6B — Quick Experiments (sequential variants, directional labeling)
-- [TODO] **`post_variants` table** — `variant_id`, `parent_post_id`, `experiment_id`, `allocation_weight`. Migration `008_experiments.sql`.
-- [TODO] **Variant generation UI** — `/queue` item gets "Run Quick Experiment" action; plan generator produces 2-3 variants for the flagged idea.
-- [TODO] **Sequential scheduling** — variants posted across distinct time slots (≥48h apart, same day-of-week ideally).
-- [TODO] **Winner declaration** — after both variants have ≥48h of metrics, show observed lift with explicit **"directional, not statistically rigorous"** banner.
-- [TODO] **Quick Experiments dashboard card** — active experiments + completed-with-winner list.
+- [DONE 2026-05-15] **`post_variants` table** — `supabase/migrations/019_post_variants.sql` (note: the spec text referred to `008_experiments.sql` — actual filename is 019, since 008 was already taken by Phase 6.7 `playbook_patterns`). Creates `experiments` + `post_variants` with RLS via `is_workspace_member`. Types added to `src/lib/db/types.ts:788-844`.
+- [DONE 2026-05-15] **Variant generation UI** — "Run Quick Experiment" button in `src/app/(app)/queue/queue-row.tsx:448-460` (scheduled rows only, suppressed on experiment variants). Server action `runQuickExperimentAction` in `src/app/(app)/queue/actions.ts:450-510`. Variant generator: `src/lib/experiments/generate.ts:175-225` (Claude tool call producing N variants with hook + rationale).
+- [DONE 2026-05-15] **Sequential scheduling** — `pickSlots()` in `src/lib/experiments/run.ts:148-184` uses `getOptimalWindows()` + `nextOptimalSlotIso()` with a hard 48h cursor spacing; falls back to +48/+96/+144h offsets when no Smart Timing data. Variants land as `pending_approval` so the user reviews each in the queue before they ship.
+- [DONE 2026-05-15] **Winner declaration** — `evaluateExperiment()` in `src/lib/experiments/winner.ts:96-181`; gates on every variant having ≥48h of `posted_at` age, requires ≥10% lift over the parent to declare. Always returns `directional: true` + the `DIRECTIONAL_BANNER` copy (`src/lib/experiments/winner.ts:28-29`).
+- [DONE 2026-05-15] **Quick Experiments dashboard card** — `src/app/(app)/dashboard/quick-experiments-widget.tsx:36-58` (server component; caps at 5 active + completed-with-winner rows; hides entirely when empty). Wired into `src/app/(app)/dashboard/page.tsx:194` between the Neglected Themes and Best Windows widgets.
 
 ### 6C — Cross-workspace (deferred)
 - [DEFERRED] **Cross-workspace experiments** — revisit once Phase 4 ships *and* we have agency users running ≥5 comparable accounts.

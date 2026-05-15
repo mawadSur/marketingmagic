@@ -11,6 +11,8 @@ import { applyHashtagsToText, extractHashtags } from "@/lib/hashtags/extract";
 import { assertWithinImageQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementImagesGenerated } from "@/lib/billing/usage";
 import type { RejectionReason } from "@/lib/db/types";
+import { runQuickExperiment } from "@/lib/experiments/run";
+import { MAX_VARIANT_COUNT, MIN_VARIANT_COUNT } from "@/lib/experiments/generate";
 
 type ActionResult = { error: string | null };
 type GenerateImageResult = { error: string | null; publicUrl: string | null };
@@ -423,6 +425,87 @@ export async function clearPostImageAction(postId: string): Promise<ActionResult
 
   revalidatePath("/queue");
   return { error: null };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Phase 6B — runQuickExperimentAction
+// ─────────────────────────────────────────────────────────────
+//
+// Spawn a Quick Experiment from a single approved-or-pending post. We
+// generate N variants and queue them as pending_approval drafts in the
+// queue (one row per variant, spaced ≥48h apart). The user reviews
+// each variant before approval — trust-mode auto-publish is explicitly
+// bypassed for experiment variants since the whole point is to compare
+// distinct hooks.
+//
+// Why pending_approval and not scheduled-and-trusted: the parent post
+// already shipped; comparing N more drafts that auto-fire feels
+// premature. The user explicitly opts into each variant.
+const variantCountSchema = z
+  .number()
+  .int()
+  .min(MIN_VARIANT_COUNT)
+  .max(MAX_VARIANT_COUNT);
+
+export async function runQuickExperimentAction(
+  postId: string,
+  variantCount = 3,
+): Promise<ActionResult & { experimentId: string | null }> {
+  if (!uuid.safeParse(postId).success) {
+    return { error: "Bad post id.", experimentId: null };
+  }
+  const countParsed = variantCountSchema.safeParse(variantCount);
+  if (!countParsed.success) {
+    return {
+      error: `Variant count must be ${MIN_VARIANT_COUNT}-${MAX_VARIANT_COUNT}.`,
+      experimentId: null,
+    };
+  }
+
+  const { error, post } = await loadPostForWorkspace(postId);
+  if (error || !post) return { error, experimentId: null };
+
+  // Only run experiments off posts that have actually shipped or are at
+  // minimum scheduled. Spawning variants off a draft we haven't even
+  // committed to is premature; the parent is the directional baseline.
+  if (post.status !== "posted" && post.status !== "scheduled") {
+    return {
+      error: `Quick Experiments need a scheduled or posted parent (got ${post.status}).`,
+      experimentId: null,
+    };
+  }
+
+  // Pull the brief for voice context (best-effort — generation still
+  // works without it, just less voice-faithful).
+  const svc = supabaseService();
+  const { data: brief } = await svc
+    .from("brand_briefs")
+    .select("product_description, voice_profile")
+    .eq("workspace_id", post.workspace_id)
+    .maybeSingle();
+
+  try {
+    const result = await runQuickExperiment({
+      workspaceId: post.workspace_id,
+      parentPost: post,
+      brief: brief
+        ? {
+            product_description: brief.product_description,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            voice_profile: brief.voice_profile as any,
+          }
+        : null,
+      variantCount: countParsed.data,
+    });
+    revalidatePath("/queue");
+    revalidatePath("/dashboard");
+    return { error: null, experimentId: result.experimentId };
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : "Experiment generation failed.",
+      experimentId: null,
+    };
+  }
 }
 
 // ─────────────────────────────────────────────────────────────

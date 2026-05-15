@@ -10,6 +10,7 @@ import { generateFromSource } from "@/lib/sources/generate-from-source";
 import { collectThemeSignals } from "@/lib/plan/signals";
 import { collectRejectionSignals } from "@/lib/plan/rejection-signals";
 import { loadRecentPatterns } from "@/lib/explain/playbook";
+import { loadThemeWinners } from "@/lib/analytics/themes";
 import {
   channelSpec,
   ENABLED_CHANNELS,
@@ -114,10 +115,11 @@ export async function generateClusterAction(
     throw err;
   }
 
-  const [themeSignals, rejections, savedPatterns] = await Promise.all([
+  const [themeSignals, rejections, savedPatterns, themeWinners] = await Promise.all([
     collectThemeSignals(ws.id),
     collectRejectionSignals(ws.id),
     loadRecentPatterns(ws.id),
+    loadThemeWinners(ws.id, 5),
   ]);
 
   // One-shot generation. We deliberately skip the best-of-3 retry loop
@@ -136,6 +138,7 @@ export async function generateClusterAction(
       losers: themeSignals.losers,
       rejections,
       savedPatterns,
+      themeWinners,
     });
   } catch (err) {
     return {

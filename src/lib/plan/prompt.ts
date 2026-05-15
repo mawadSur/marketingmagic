@@ -65,6 +65,27 @@ export interface PlanGenInputs {
   // hint-only — chips in /queue are the actual recommendation surface.
   // When unset or empty for a channel, the prompt block is skipped.
   hashtagSuggestions?: Map<ChannelId, string[]>;
+  // Phase 6A: themes whose 80% credible interval excludes the workspace
+  // baseline on the upside. Surfaced verbatim in the system prompt
+  // beneath the saved-patterns block. Stronger signal than the
+  // collectThemeSignals() winners (which average raw rates) because
+  // shrinkage filters out themes that look hot on a tiny sample.
+  // Empty array = no statistically-meaningful winners yet — the block
+  // is skipped entirely.
+  themeWinners?: ThemeWinnerSignal[];
+}
+
+// Phase 6A — single row of the "themes that have been working" block.
+// Mirrors `ThemeWinner` from src/lib/analytics/themes.ts but kept as a
+// plain shape here to avoid pulling the analytics module into the
+// shared prompt types.
+export interface ThemeWinnerSignal {
+  tag: string;
+  posterior_mean: number;
+  ci_low: number;
+  ci_high: number;
+  posts: number;
+  lift: number;
 }
 
 // Renders a "Preferred patterns from your saved playbook" block. Each line
@@ -87,6 +108,27 @@ function savedPatternsBlock(patterns: SavedPattern[] | undefined): string {
   for (const [kind, summaries] of grouped.entries()) {
     lines.push(`### ${kind}`);
     for (const s of summaries) lines.push(`- ${s}`);
+  }
+  return lines.join("\n") + "\n";
+}
+
+// Phase 6A: render the "themes that have been working" block. These are
+// themes whose 80% credible interval (Beta-Binomial posterior, 28d
+// window, decay-weighted) excludes the workspace baseline on the
+// upside — i.e. themes shrinkage convinced us are real winners. We hedge
+// the framing so Claude leans toward them without aping every winning
+// theme into every post; the lift number is informational, not a target.
+function themeWinnersBlock(winners: ThemeWinnerSignal[] | undefined): string {
+  if (!winners || winners.length === 0) return "";
+  const lines: string[] = ["## Themes that have been working"];
+  lines.push(
+    "These themes are running above this workspace's own baseline at 80% credible-interval confidence over the last 28 days. Lean into them where the idea fits — do not force every idea into a winning theme.",
+  );
+  for (const w of winners) {
+    const pct = (n: number) => `${(n * 100).toFixed(2)}%`;
+    lines.push(
+      `- ${w.tag} — posterior ${pct(w.posterior_mean)} engagement (${w.lift.toFixed(2)}× baseline, CI ${pct(w.ci_low)}–${pct(w.ci_high)}, ${w.posts} post${w.posts === 1 ? "" : "s"})`,
+    );
   }
   return lines.join("\n") + "\n";
 }
@@ -251,6 +293,7 @@ export function planSystemPrompt(inputs: PlanGenInputs): string {
       : "",
     voiceProfile ? voiceProfileBlock(voiceProfile) : "",
     savedPatternsBlock(inputs.savedPatterns),
+    themeWinnersBlock(inputs.themeWinners),
     sourceBlock(inputs.source),
     recommendedHashtagsBlock(inputs.hashtagSuggestions, activeChannels),
     "## Channel constraints",

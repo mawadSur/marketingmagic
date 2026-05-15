@@ -13,6 +13,7 @@ import { TrustNudge } from "@/components/trust-nudge";
 import { ExplainSection } from "./explain-section";
 import { BestWindowsWidget } from "./best-windows-widget";
 import { NeglectedThemesWidget } from "./neglected-themes-widget";
+import { QuickExperimentsWidget } from "./quick-experiments-widget";
 import { isInRecommendedWindow } from "@/lib/channels/best-times";
 import { findNeglectedThemes } from "@/lib/themes/gaps";
 
@@ -189,6 +190,8 @@ export default async function DashboardPage() {
       </div>
 
       {neglected.length > 0 ? <NeglectedThemesWidget themes={neglected} /> : null}
+
+      <QuickExperimentsWidget workspaceId={ws.id} />
 
       <BestWindowsWidget workspaceId={ws.id} />
 

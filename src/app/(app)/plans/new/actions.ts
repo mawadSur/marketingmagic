@@ -10,6 +10,7 @@ import { generatePlan, type PlanGenResult } from "@/lib/plan/generate";
 import { collectThemeSignals } from "@/lib/plan/signals";
 import { collectRejectionSignals } from "@/lib/plan/rejection-signals";
 import { loadRecentPatterns } from "@/lib/explain/playbook";
+import { loadThemeWinners } from "@/lib/analytics/themes";
 import { recommendHashtagsForChannels } from "@/lib/hashtags/recommend";
 import { backfillHashtagsForPosts } from "@/lib/hashtags/backfill";
 import { channelSpec, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
@@ -113,11 +114,15 @@ export async function generatePlanAction(
   // workspace's own tag history (free, no LLM call). The generator
   // weaves them in as soft hints; the /queue chip row is the binding UI.
   const channelsToScan = Array.from(new Set(channelMix.map((c) => c.channel)));
-  const [themeSignals, rejections, savedPatterns, hashtagSuggestions] = await Promise.all([
+  const [themeSignals, rejections, savedPatterns, hashtagSuggestions, themeWinners] = await Promise.all([
     collectThemeSignals(ws.id),
     collectRejectionSignals(ws.id),
     loadRecentPatterns(ws.id),
     recommendHashtagsForChannels(ws.id, channelsToScan),
+    // Phase 6A: themes whose Bayesian-shrinkage posterior excludes the
+    // workspace baseline on the upside. Surfaced as a "themes that have
+    // been working" block in the system prompt. Universal — not Founder-tier.
+    loadThemeWinners(ws.id, 5),
   ]);
   const { winners, losers, parent_plan_id } = themeSignals;
 
@@ -167,6 +172,7 @@ export async function generatePlanAction(
         savedPatterns,
         retryNote,
         hashtagSuggestions,
+        themeWinners,
       });
 
       const avgVoice = averageVoiceScore(attemptResult);

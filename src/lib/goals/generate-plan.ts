@@ -19,6 +19,7 @@ import { generatePlan, type PlanGenResult } from "@/lib/plan/generate";
 import type {
   PlanGenInputs,
   ThemeSignal,
+  ThemeWinnerSignal,
   RejectionSignal,
 } from "@/lib/plan/prompt";
 import type { SavedPattern } from "@/lib/explain/playbook";
@@ -42,6 +43,11 @@ export interface GeneratePostsFromGoalInputs {
   losers?: ThemeSignal[];
   rejections?: RejectionSignal[];
   savedPatterns?: SavedPattern[];
+  // Phase 6A — themes whose Bayesian-shrinkage posterior excludes the
+  // workspace baseline on the upside. Forwarded straight through to
+  // generatePlan(); the goal strategy's theme_weights still take
+  // precedence as the planning anchor.
+  themeWinners?: ThemeWinnerSignal[];
   retryNote?: string;
 }
 
@@ -119,6 +125,7 @@ export async function generatePostsFromGoal(
     losers: inputs.losers,
     rejections: inputs.rejections,
     savedPatterns: inputs.savedPatterns,
+    themeWinners: inputs.themeWinners,
     retryNote,
   };
   return generatePlan(planInputs);
