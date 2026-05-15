@@ -35,9 +35,9 @@ export async function createWorkspaceAction(
   if (error) return { error: error.message };
 
   await setActiveWorkspaceCookie(slug);
-  // First-time setup: walk the user through brief → channel → plan instead
-  // of dumping them on an empty dashboard.
-  redirect("/onboarding/wizard?step=1");
+  // First-time setup: channels come before brief — without a connected
+  // channel the rest of the wizard (brief, plan) has nothing to publish to.
+  redirect("/onboarding/wizard?step=2");
 }
 
 async function uniqueSlug(base: string): Promise<string> {
