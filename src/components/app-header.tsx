@@ -12,6 +12,10 @@ const baseNav = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/analytics", label: "Analytics" },
   { href: "/plans", label: "Plans" },
+  // Phase 2.1 — Reverse-Plan from a Goal. Sits before Sources because a
+  // goal is a higher-level frame ("I want X by Y"); sources are inputs to
+  // a cluster, goals are inputs to a multi-week plan.
+  { href: "/goals", label: "Goals" },
   // Phase 2.5 — Source-to-Posts. Sits between Plans and Queue because the
   // mental model is: paste a source → generate a cluster → approve in queue.
   { href: "/sources", label: "Sources" },
