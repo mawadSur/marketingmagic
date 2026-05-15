@@ -1,26 +1,20 @@
 // HTML extractor for the Phase 2.5 source ingestion path.
 //
-// We deliberately roll a tiny extractor here rather than pulling in
-// @mozilla/readability + linkedom. Rationale:
-//
-//   - Readability is excellent for news/blog articles but adds ~120kB of
-//     dependencies plus a DOM shim. We already ship a strip-HTML pipeline
-//     in src/app/(app)/settings/brief/actions.ts that handles marketing
-//     pages reasonably well; Claude downstream picks the load-bearing
-//     content out of the stripped text. The summary/quote/theme extraction
-//     prompt is the real signal — the HTML extractor only has to give it
-//     readable plain text.
-//
-//   - If we hit a class of pages where the tiny extractor produces obvious
-//     garbage (heavy JS shells, image-only landing pages), the right
-//     follow-up is to add the Readability dep behind a flag, not to fight
-//     it here. Flag this in the final summary so the main thread can make
-//     the call.
+// Two-tier extraction: Mozilla Readability (via linkedom DOM shim) is the
+// primary path because it understands article structure on news/blog/
+// long-form content. If Readability returns nothing usable (heavy JS
+// shells, image-only landing pages, oddly-marked-up sites), we fall back
+// to the regex stripHtml() pipeline below, which handles most marketing
+// pages well enough for Claude downstream to pick out the load-bearing
+// content. The summary/quote/theme extraction prompt is the real signal —
+// this module only has to deliver readable plain text.
 //
 // SSRF guard mirrors src/app/(app)/settings/brief/actions.ts:urlSchema —
 // any new public-URL fetch path in the app should grow this same check.
 
 import { z } from "zod";
+import { Readability } from "@mozilla/readability";
+import { parseHTML } from "linkedom";
 
 const MAX_HTML_BYTES = 600_000; // ~600kB of raw HTML; enough for a long blog
 const FETCH_TIMEOUT_MS = 12_000;
@@ -150,15 +144,54 @@ export async function fetchHtmlSource(url: string): Promise<FetchedHtml> {
     throw new HtmlFetchError(`Could not fetch URL: ${reason}`);
   }
 
-  const text = stripHtml(html).slice(0, MAX_TEXT_CHARS);
+  const viaReadability = extractWithReadability(html, finalUrl);
+  const text = (viaReadability?.text.length ?? 0) >= 200
+    ? viaReadability!.text.slice(0, MAX_TEXT_CHARS)
+    : stripHtml(html).slice(0, MAX_TEXT_CHARS);
+
   if (text.length < 200) {
     throw new HtmlFetchError(
       "Page has too little readable content. Paywall or JS-only page? Paste the text instead.",
     );
   }
 
-  const title = extractTitle(html) ?? deriveTitleFromUrl(finalUrl);
+  const title =
+    viaReadability?.title ?? extractTitle(html) ?? deriveTitleFromUrl(finalUrl);
   return { text, title, finalUrl };
+}
+
+// Readability primary path. Wrapped in try/catch because linkedom's DOM
+// shim occasionally chokes on malformed markup the regex pipeline tolerates
+// (mismatched tags, embedded CDATA). Any throw → caller falls back.
+function extractWithReadability(
+  html: string,
+  url: string,
+): { text: string; title: string | null } | null {
+  try {
+    const { document } = parseHTML(html);
+    try {
+      Object.defineProperty(document, "documentURI", { value: url, configurable: true });
+    } catch {
+      // documentURI may be read-only on some shims — Readability degrades gracefully.
+    }
+    const reader = new Readability(document as unknown as Document, {
+      // Default char-threshold (500) is too aggressive for shorter marketing
+      // posts; 200 matches our downstream ColdSourceError gate.
+      charThreshold: 200,
+    });
+    const article = reader.parse();
+    if (!article) return null;
+    const textContent = (article.textContent ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (textContent.length === 0) return null;
+    return {
+      text: textContent,
+      title: article.title?.trim() ? article.title.trim().slice(0, 280) : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function deriveTitleFromUrl(url: string): string {

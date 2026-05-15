@@ -14,8 +14,7 @@
 //     captions without yt-dlp or a Groq audio path). Otherwise we return
 //     an UnsupportedSourceError instructing the user to paste.
 //
-//   - mode=url + .pdf path → UnsupportedSourceError ("PDF coming soon").
-//     See extract-pdf.ts for the rationale.
+//   - mode=url + .pdf path → fetchPdfSource() and emit kind="pdf".
 //
 //   - mode=url + everything else → fetchHtmlSource() and emit kind="html".
 
@@ -28,7 +27,11 @@ import {
   detectYoutubeUrl,
   fetchYoutubeTitle,
 } from "@/lib/sources/extract-youtube";
-import { detectPdfUrl } from "@/lib/sources/extract-pdf";
+import {
+  detectPdfUrl,
+  fetchPdfSource,
+  PdfFetchError,
+} from "@/lib/sources/extract-pdf";
 import type { RawSource, SourceInput } from "@/lib/sources/schema";
 
 export class UnsupportedSourceError extends Error {
@@ -72,9 +75,21 @@ export async function fetchSource(input: SourceInput): Promise<RawSource> {
   const url = validation.data;
 
   if (detectPdfUrl(url)) {
-    throw new UnsupportedSourceError(
-      "PDF ingestion is coming soon — for now, copy the text out of the PDF and paste it instead.",
-    );
+    let pdf: Awaited<ReturnType<typeof fetchPdfSource>>;
+    try {
+      pdf = await fetchPdfSource(url);
+    } catch (err) {
+      if (err instanceof PdfFetchError) throw new UnsupportedSourceError(err.message);
+      throw err;
+    }
+    if (pdf.text.length < MIN_TEXT_CHARS) throw new ColdSourceError();
+    return {
+      kind: "pdf",
+      text: pdf.text,
+      title: input.title?.trim() || pdf.title,
+      sourceUrl: pdf.finalUrl,
+      filePath: null,
+    };
   }
 
   if (detectYoutubeUrl(url)) {
