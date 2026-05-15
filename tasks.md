@@ -218,6 +218,8 @@ Unblock onboarding so customers can sign up without manual hand-holding.
 
 **Added 2026-05-13 (10x Expansion #8).** Per-workspace watch list of competitor handles. Daily pulls + weekly pattern digest. High-performing competitor posts feed Phase 2.5 source pipeline as opt-in inspiration. Premium-gated to manage API rate exposure + anchor pricing.
 
+> **MERGE NOTE (2026-05-15):** the unmerged `phase-6.6-competitor-watch` branch contains `016_competitor_watch.sql` and is missing `015_founder_audio.sql` entirely. On main, `015_founder_audio.sql` and `016_fix_rls_recursion.sql` are both applied to remote. When this branch is rebased onto main, the competitor-watch migration must be **renumbered to the next available slot** (currently 018 after the upcoming `017_discord_links.sql`) — DO NOT rename our applied 015/016. Verify with `supabase migration list --linked` before pushing the rebase.
+
 - [TODO] **`watch_handles` table** — `workspace_id`, `channel`, `handle`, `added_at`, `last_pulled_at`, `status` (active / failed / rate_limited). Migration `012_competitor_watch.sql`.
 - [TODO] **`/competitors` UI** — add/remove handles, recent winners feed, "use as source" action per post.
 - [TODO] **Daily pull cron** — extends `/api/cron/pull-metrics`; per-workspace competitor sync; rate-budget-aware (queue + backoff).

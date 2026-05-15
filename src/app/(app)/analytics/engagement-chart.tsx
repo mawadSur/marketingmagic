@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 
 interface DayBucket {
   day: string;
@@ -19,6 +19,17 @@ const MODES: Array<{ id: Mode; label: string }> = [
 ];
 
 export function EngagementChart({ data }: { data: DayBucket[] }) {
+  // Render-after-mount: the SVG renders SVG <title> hover tooltips whose
+  // text varies with the day-bucket data. Server SSR vs client hydration
+  // can disagree if a UTC day rolls over between the two, surfacing as a
+  // hydration mismatch warning on the analytics page. Skipping SSR here
+  // is cheap (the chart isn't SEO-relevant) and stops the warning at the
+  // root rather than spot-suppressing each <title> node.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const [mode, setMode] = useState<Mode>("engagement_rate");
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   // Stable per-instance id so multiple charts on a page don't collide
@@ -78,6 +89,15 @@ export function EngagementChart({ data }: { data: DayBucket[] }) {
   }
 
   const hover = hoverIdx !== null ? points[hoverIdx] ?? null : null;
+
+  if (!mounted) {
+    return (
+      <div
+        className="h-[260px] w-full animate-pulse rounded-md bg-muted/30"
+        aria-label="Loading chart"
+      />
+    );
+  }
 
   return (
     <div className="space-y-3">
