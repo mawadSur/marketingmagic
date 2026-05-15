@@ -20,7 +20,7 @@ test.describe("onboarding flow", () => {
     // The fix in createWorkspaceAction sends users to channels first, not
     // brief. If this assertion ever flips back to step=1, we lost the
     // "you need somewhere to publish before anything else matters" UX.
-    await page.waitForURL(/\/onboarding\/wizard\?step=2/, { timeout: 15_000 });
+    await page.waitForURL(/\/onboarding\/wizard\?step=2/, { timeout: 45_000 });
     await expect(
       page.getByRole("heading", { name: /where do you want to post/i }),
     ).toBeVisible();
@@ -39,7 +39,7 @@ test.describe("onboarding flow", () => {
     // navigation either hangs on /onboarding/workspace forever or surfaces
     // the "infinite recursion" error. Either way, the URL never reaches
     // a wizard step.
-    await page.waitForURL(/\/onboarding\/wizard/, { timeout: 15_000 });
+    await page.waitForURL(/\/onboarding\/wizard/, { timeout: 45_000 });
 
     // Belt-and-suspenders: hit the dashboard directly to prove the
     // workspace is selectable post-insert.

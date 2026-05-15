@@ -9,7 +9,7 @@ test.describe("no-channels warning banner", () => {
   async function bootstrapWorkspace(page: import("@playwright/test").Page) {
     await page.getByLabel(/workspace name/i).fill("Banner Test WS");
     await page.getByRole("button", { name: /create workspace/i }).click();
-    await page.waitForURL(/\/onboarding\/wizard/, { timeout: 15_000 });
+    await page.waitForURL(/\/onboarding\/wizard/, { timeout: 45_000 });
   }
 
   // The banner is a top-level role="status" region. Several pages (e.g.

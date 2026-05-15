@@ -62,7 +62,9 @@ export async function loginViaUI(page: Page, user: TestUser): Promise<void> {
   await page.getByRole("button", { name: /log in/i }).click();
   // The action redirects to /dashboard on success; with no workspace yet
   // the (app) layout bounces to /onboarding/workspace. Either is fine.
-  await page.waitForURL(/\/(dashboard|onboarding\/workspace)/, { timeout: 15_000 });
+  // Generous timeout: Next.js dev compiles routes JIT on first hit, which
+  // can chew 20+ seconds on a cold cache.
+  await page.waitForURL(/\/(dashboard|onboarding\/workspace)/, { timeout: 45_000 });
 }
 
 interface Fixtures {
