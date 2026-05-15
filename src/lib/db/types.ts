@@ -24,6 +24,29 @@ export type IdeaId = string;
 // fetch/extract routing in src/lib/sources/fetch.ts.
 export type SourceKind = "html" | "youtube" | "podcast" | "pdf" | "transcript";
 
+// Phase 2.1 (Reverse-Plan from a Content Goal): the metric a goal is
+// measured against. Mirrors the CHECK constraint in migration 018 and the
+// Zod enum in src/lib/goals/schema.ts. `custom` is the catch-all so the
+// questionnaire never forces the wrong bucket.
+export type GoalMetric =
+  | "followers"
+  | "inbound"
+  | "launch_date"
+  | "credibility"
+  | "recovery"
+  | "custom";
+
+// Phase 2.1: lifecycle of a content_goals row. `draft` = strategy proposed
+// but user hasn't approved yet; `active` = strategy approved AND posts
+// generated; `paused` = cron-skip but posts stay scheduled; `achieved` /
+// `abandoned` are terminal.
+export type GoalStatus =
+  | "draft"
+  | "active"
+  | "paused"
+  | "achieved"
+  | "abandoned";
+
 // Structured extraction result. Stored verbatim on sources.extracted_*
 // columns. The shape is the source of truth — zod schema in
 // src/lib/sources/schema.ts mirrors it.
@@ -331,6 +354,11 @@ export interface Database {
           // engagement up via this FK; deleting the source ON DELETE SET NULL
           // preserves the audit trail without resurrecting the source row.
           source_id: string | null;
+          // Phase 2.1: the content goal that produced this post. NULL for
+          // posts not generated from a goal. Same ON DELETE SET NULL
+          // semantics as source_id — goal-attribution dashboards filter on
+          // non-null.
+          goal_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -352,6 +380,7 @@ export interface Database {
           explainer?: Json | null;
           idea_id?: IdeaId | null;
           source_id?: string | null;
+          goal_id?: string | null;
         };
         Update: Partial<{
           text: string;
@@ -369,6 +398,47 @@ export interface Database {
           explainer: Json | null;
           idea_id: IdeaId | null;
           source_id: string | null;
+          goal_id: string | null;
+        }>;
+        Relationships: [];
+      };
+      // Phase 2.1 — Reverse-Plan from a Content Goal.
+      // The questionnaire on /goals/new creates a draft row; the strategy
+      // preview screen flips status to 'active' after the user approves and
+      // generatePostsFromGoal() runs. Mirrors migration 018.
+      content_goals: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          goal_text: string;
+          goal_metric: GoalMetric;
+          target_value: number | null;
+          target_date: string | null;
+          status: GoalStatus;
+          baseline_snapshot: Json | null;
+          strategy: Json | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          goal_text: string;
+          goal_metric: GoalMetric;
+          target_value?: number | null;
+          target_date?: string | null;
+          status?: GoalStatus;
+          baseline_snapshot?: Json | null;
+          strategy?: Json | null;
+        };
+        Update: Partial<{
+          goal_text: string;
+          goal_metric: GoalMetric;
+          target_value: number | null;
+          target_date: string | null;
+          status: GoalStatus;
+          baseline_snapshot: Json | null;
+          strategy: Json | null;
         }>;
         Relationships: [];
       };
