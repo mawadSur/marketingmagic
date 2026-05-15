@@ -280,6 +280,10 @@ Unblock onboarding so customers can sign up without manual hand-holding.
 - [DONE 2026-05-14] **Channel-aware UI copy** — every channel's policy returns a `notes` string explaining the rule. X: "0–1 hashtags — the algorithm penalizes spammy tag stacks. Default is no tag." Bluesky: chips hidden, replaced with "Hashtags off: Bluesky's culture and algorithm both reward plain prose." X also forces zero pre-checked tags regardless of suggestions.
 - [DONE 2026-05-14] **Cold-start blend** — workspaces with <20 historical posts × channel blend in `COLD_START_SEEDS` at neutral confidence. Reason badge `channel_default` distinguishes seeds from observed winners in the chip tooltip.
 
+## Cleanup notes
+
+- [DEFERRED 2026-05-15] **Ghost workspaces from RLS-recursion era** — 8 `pitch-pit*` rows accumulated in the user's account when migration 010 broke `listWorkspaces()` (inserts succeeded but SELECT silently failed). Migration 016 unblocked visibility; they now show in the switcher. Need either a one-off cleanup script or a UI delete-workspace affordance (cascades through brand_briefs, posts, social_accounts via FK ON DELETE CASCADE). Defer until either (a) a real customer asks for workspace deletion, or (b) the cosmetic clutter motivates a 30-minute Supabase Studio cleanup.
+
 ## Open Decisions
 
 - [RESOLVED 2026-05-13] LinkedIn surface — personal-first via `w_member_social`; company-page via parallel application.
