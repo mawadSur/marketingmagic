@@ -8,6 +8,7 @@ import { generatePlan, type PlanGenResult } from "@/lib/plan/generate";
 import { collectThemeSignals } from "@/lib/plan/signals";
 import { collectRejectionSignals } from "@/lib/plan/rejection-signals";
 import { loadRecentPatterns } from "@/lib/explain/playbook";
+import { loadThemeWinners } from "@/lib/analytics/themes";
 import { channelSpec, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
 import type { Channel } from "@/lib/db/types";
 import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits";
@@ -104,10 +105,11 @@ export async function regenerateThemeAction(
   // synthesize an extra retryNote that locks the model to the requested
   // theme. We don't add a new schema field — the existing retryNote pipe
   // is the cheapest carrier for this one-shot instruction.
-  const [themeSignals, rejections, savedPatterns] = await Promise.all([
+  const [themeSignals, rejections, savedPatterns, themeWinners] = await Promise.all([
     collectThemeSignals(ws.id),
     collectRejectionSignals(ws.id),
     loadRecentPatterns(ws.id),
+    loadThemeWinners(ws.id, 5),
   ]);
   const { winners, losers, parent_plan_id } = themeSignals;
 
@@ -127,6 +129,7 @@ export async function regenerateThemeAction(
       losers,
       rejections,
       savedPatterns,
+      themeWinners,
       retryNote: themeNote,
     });
   } catch (err) {

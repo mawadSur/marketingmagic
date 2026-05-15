@@ -24,6 +24,7 @@ import type {
   PlanGenInputs,
   SourceContext,
   ThemeSignal,
+  ThemeWinnerSignal,
   RejectionSignal,
 } from "@/lib/plan/prompt";
 import type { SavedPattern } from "@/lib/explain/playbook";
@@ -41,6 +42,10 @@ export interface GenerateFromSourceInputs {
   losers?: ThemeSignal[];
   rejections?: RejectionSignal[];
   savedPatterns?: SavedPattern[];
+  // Phase 6A — themes whose Bayesian-shrinkage posterior excludes the
+  // workspace baseline on the upside. Forwarded straight through; the
+  // source's own themes still anchor the cluster.
+  themeWinners?: ThemeWinnerSignal[];
   retryNote?: string;
 }
 
@@ -76,6 +81,7 @@ export async function generateFromSource(
     losers: inputs.losers,
     rejections: inputs.rejections,
     savedPatterns: inputs.savedPatterns,
+    themeWinners: inputs.themeWinners,
     retryNote: inputs.retryNote,
     source,
   };

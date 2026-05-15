@@ -785,6 +785,62 @@ export interface Database {
         }>;
         Relationships: [];
       };
+      // Phase 6B — Quick Experiments. Sequential variants of a parent
+      // post, scheduled across distinct time slots. Verdict is always
+      // labelled "directional, not statistically rigorous" — see
+      // src/lib/experiments/winner.ts for the eval logic.
+      experiments: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          parent_post_id: string;
+          status: "active" | "complete" | "cancelled";
+          variant_count: number;
+          created_at: string;
+          completed_at: string | null;
+          winner_variant_id: string | null;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          parent_post_id: string;
+          status?: "active" | "complete" | "cancelled";
+          variant_count: number;
+          winner_variant_id?: string | null;
+        };
+        Update: Partial<{
+          status: "active" | "complete" | "cancelled";
+          completed_at: string | null;
+          winner_variant_id: string | null;
+        }>;
+        Relationships: [];
+      };
+      post_variants: {
+        Row: {
+          id: string;
+          experiment_id: string;
+          parent_post_id: string;
+          workspace_id: string;
+          allocation_weight: number;
+          posted_at: string | null;
+          metrics_snapshot: Json | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          experiment_id: string;
+          parent_post_id: string;
+          workspace_id: string;
+          allocation_weight?: number;
+          posted_at?: string | null;
+          metrics_snapshot?: Json | null;
+        };
+        Update: Partial<{
+          posted_at: string | null;
+          metrics_snapshot: Json | null;
+        }>;
+        Relationships: [];
+      };
     };
     Views: {
       social_accounts_safe: {

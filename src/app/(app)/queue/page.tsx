@@ -41,6 +41,10 @@ interface QueueDisplayRow {
   external_id: string | null;
   failure_reason: string | null;
   generation_metadata: unknown;
+  // Phase 6B — set when this row is the parent of an active experiment
+  // or is itself a variant inside one. Drives both the badge and the
+  // suppression of the "Run Quick Experiment" CTA (no recursion).
+  experiment_status: "parent" | "variant" | null;
 }
 
 export default async function QueuePage() {
@@ -92,9 +96,40 @@ export default async function QueuePage() {
     deduped.push(r);
   }
 
+  // Phase 6B — pre-load experiment relationships for every post in the
+  // queue, in one pass. We use these to flag rows as parent/variant for
+  // the badge + the "Run Quick Experiment" CTA suppression. Best-effort:
+  // if either query fails we just render the queue without experiment
+  // metadata — no surfaces break.
+  const allPostIds = deduped.map((p) => p.id);
+  const experimentVariantPostIds = new Set<string>();
+  const experimentParentPostIds = new Set<string>();
+  if (allPostIds.length > 0) {
+    const [variantRes, parentRes] = await Promise.all([
+      supabase
+        .from("post_variants")
+        .select("parent_post_id")
+        .in("parent_post_id", allPostIds),
+      supabase
+        .from("experiments")
+        .select("parent_post_id, status")
+        .in("parent_post_id", allPostIds)
+        .neq("status", "cancelled"),
+    ]);
+    for (const row of variantRes.data ?? []) {
+      if (row.parent_post_id) experimentVariantPostIds.add(row.parent_post_id);
+    }
+    for (const row of parentRes.data ?? []) {
+      if (row.parent_post_id) experimentParentPostIds.add(row.parent_post_id);
+    }
+  }
+
   const rows: QueueDisplayRow[] = deduped.map((p) => {
     const media = Array.isArray(p.media) ? (p.media as QueueMediaItem[]) : [];
     const meta = (p.generation_metadata ?? {}) as { image_prompt?: string | null };
+    let experimentStatus: "parent" | "variant" | null = null;
+    if (experimentVariantPostIds.has(p.id)) experimentStatus = "variant";
+    else if (experimentParentPostIds.has(p.id)) experimentStatus = "parent";
     return {
       id: p.id,
       text: p.text,
@@ -113,6 +148,7 @@ export default async function QueuePage() {
       external_id: p.external_id,
       failure_reason: p.failure_reason,
       generation_metadata: p.generation_metadata,
+      experiment_status: experimentStatus,
     };
   });
 

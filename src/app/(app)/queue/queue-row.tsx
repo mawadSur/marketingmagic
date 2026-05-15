@@ -15,6 +15,7 @@ import {
   generatePostImageAction,
   rejectPostAction,
   revokePostAction,
+  runQuickExperimentAction,
   uploadPostImageAction,
 } from "./actions";
 
@@ -39,6 +40,11 @@ interface PostRow {
   mediaPublicUrl: string | null;
   voice_score: number | null;
   low_confidence: boolean;
+  // Phase 6B — when true, this row already belongs to an experiment
+  // (it's a variant of someone else's parent OR it IS the parent of
+  // an active experiment). Suppresses the "Run Quick Experiment"
+  // button so we don't recursively spawn experiments-of-experiments.
+  experiment_status?: "parent" | "variant" | null;
 }
 
 // Phase 6.10: server-rendered hashtag chip row, passed in as a slot so
@@ -78,6 +84,13 @@ export function QueueRow({
   const [imageBusy, imageStart] = useTransition();
   const [imageError, setImageError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Phase 6B — Quick Experiment spawn state. Sits on its own transition
+  // so kicking off a (slow) Claude call doesn't block the approve/edit
+  // buttons. Result message persists in-row until the user navigates
+  // away or hits the queue refresh.
+  const [expBusy, expStart] = useTransition();
+  const [expFlash, setExpFlash] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
 
   function run(action: () => Promise<{ error: string | null }>) {
     start(async () => {
@@ -137,6 +150,28 @@ export function QueueRow({
   const isPending = post.status === "pending_approval";
   const isScheduled = post.status === "scheduled";
   const hasImage = post.mediaPublicUrl !== null;
+  // Phase 6B — show the experiment CTA on scheduled posts that aren't
+  // themselves variants of another experiment. Spec says "per row", and
+  // the only rows that are eligible parents are scheduled ones (the
+  // pending parent might still be edited / rejected; posted parents
+  // don't show in the queue at all).
+  const canRunExperiment = isScheduled && !post.experiment_status;
+
+  function runExperiment() {
+    setExpFlash(null);
+    expStart(async () => {
+      const r = await runQuickExperimentAction(post.id, 3);
+      if (r.error) {
+        setExpFlash({ kind: "err", msg: r.error });
+        return;
+      }
+      setExpFlash({
+        kind: "ok",
+        msg: "Generated 3 variants. Find them in pending approval.",
+      });
+      router.refresh();
+    });
+  }
 
   return (
     <li className="space-y-3 px-4 py-4 text-sm">
@@ -412,6 +447,42 @@ export function QueueRow({
           >
             Revoke
           </Button>
+        ) : null}
+
+        {canRunExperiment ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={expBusy}
+            onClick={runExperiment}
+            title="Generate 3 variants of this post and schedule them ≥48h apart. Directional, not statistically rigorous."
+          >
+            {expBusy ? "Generating variants…" : "Run Quick Experiment"}
+          </Button>
+        ) : null}
+
+        {post.experiment_status === "variant" ? (
+          <Badge variant="info" title="This post belongs to a Quick Experiment.">
+            Experiment variant
+          </Badge>
+        ) : null}
+        {post.experiment_status === "parent" ? (
+          <Badge variant="info" title="A Quick Experiment is running off this post.">
+            Experiment parent
+          </Badge>
+        ) : null}
+
+        {expFlash ? (
+          <span
+            className={
+              "text-xs " +
+              (expFlash.kind === "err"
+                ? "text-destructive"
+                : "text-emerald-600 dark:text-emerald-400")
+            }
+          >
+            {expFlash.msg}
+          </span>
         ) : null}
 
         {error ? <span className="text-xs text-destructive">{error}</span> : null}
