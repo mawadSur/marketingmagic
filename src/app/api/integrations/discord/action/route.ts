@@ -2,8 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { serverEnv, siteUrl } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { verifyDiscordSignature } from "@/lib/integrations/verify";
-import { verifyCustomId } from "@/lib/integrations/sign";
-import { editInteractionResponse } from "@/lib/integrations/discord";
+import { verifyCustomId, signLinkClaimToken } from "@/lib/integrations/sign";
+import { editInteractionResponse, createInteractionFollowup } from "@/lib/integrations/discord";
 import { buildActionedEmbed, type DigestPostSummary } from "@/lib/integrations/embeds";
 
 // Discord Interactions Endpoint.
@@ -210,22 +210,71 @@ async function handleComponent(p: InteractionPayload): Promise<NextResponse> {
     return ephemeral(`Couldn't update post: ${upErr.message}`);
   }
 
-  // Audit trail. We don't have a Supabase user id for the Discord actor, so
-  // we attribute to the workspace owner and stash the Discord username in
-  // diff for traceability. Future work: map Discord users → workspace
-  // members via a join table.
+  // Audit trail. Phase 4.7 multi-member attribution: look up the Discord
+  // actor in discord_links; on hit use the linked Supabase user, else fall
+  // back to the workspace owner (and prompt the actor to link, below).
   const { data: ws } = await svc
     .from("workspaces")
     .select("name, owner_id")
     .eq("id", post.workspace_id)
     .maybeSingle();
+
+  let linkedUserId: string | null = null;
+  if (actor?.id) {
+    const { data: link } = await svc
+      .from("discord_links")
+      .select("member_user_id")
+      .eq("workspace_id", post.workspace_id)
+      .eq("discord_user_id", actor.id)
+      .maybeSingle();
+    linkedUserId = link?.member_user_id ?? null;
+  }
+
   if (ws) {
+    const attributedUserId = linkedUserId ?? ws.owner_id;
     await svc.from("approvals").insert({
       post_id: post.id,
-      user_id: ws.owner_id,
+      user_id: attributedUserId,
       action: isApprove ? "approved" : "rejected",
+      // Keep the Discord breadcrumb either way — handy for forensics when
+      // the link was claimed mid-session or the user later unlinks.
       diff: `discord:${actor?.id ?? "unknown"}:${actorLabel}`,
     });
+  }
+
+  // If the actor wasn't linked, send them a private nudge with a signed
+  // link-claim URL. Rate-limited per-discord-id so we don't spam them on
+  // every click during a digest review.
+  if (
+    ws &&
+    !linkedUserId &&
+    actor?.id &&
+    p.token &&
+    env.EMAIL_LINK_SECRET &&
+    shouldSendLinkPrompt(actor.id)
+  ) {
+    const token = signLinkClaimToken(
+      {
+        workspace_id: post.workspace_id,
+        discord_user_id: actor.id,
+        discord_username: actorLabel,
+      },
+      env.EMAIL_LINK_SECRET,
+    );
+    const linkUrl = `${siteUrl()}/integrations/discord/link?token=${encodeURIComponent(token)}`;
+    // Fire-and-await — Discord API is fast and we're well inside the 3s
+    // budget. Swallow errors so a flaky follow-up never breaks the primary
+    // approve/reject UX.
+    try {
+      await createInteractionFollowup(p.token, {
+        content:
+          `Link your Discord account so future approvals attribute to you: ${linkUrl}` +
+          ` (expires in 7 days).`,
+        flags: FLAG_EPHEMERAL,
+      });
+    } catch (e) {
+      console.log("[discord] link-prompt follow-up failed:", (e as Error).message);
+    }
   }
 
   // Respond to Discord with UPDATE_MESSAGE so the original embed gets
@@ -347,3 +396,32 @@ function ephemeral(content: string): NextResponse {
 // doesn't whine. (Removing the helper from the import list would be a
 // regression the moment we ever defer.)
 void editInteractionResponse;
+
+// ─────────────────────────────────────────────────────────────
+// Link-prompt rate limiter
+// ─────────────────────────────────────────────────────────────
+// Process-local map of `discord_user_id → last-prompt timestamp`. Keeps a
+// user from getting nudged on every button click while they're working
+// through a digest. Map is intentionally in-memory: on Vercel each
+// instance gets its own, and the worst case is one extra prompt per cold
+// start — which is better than the engineering cost of a per-user
+// throttle row in the DB for a UX-only concern.
+const LINK_PROMPT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+const linkPromptLastSent = new Map<string, number>();
+
+function shouldSendLinkPrompt(discordUserId: string): boolean {
+  const now = Date.now();
+  const last = linkPromptLastSent.get(discordUserId);
+  if (last && now - last < LINK_PROMPT_WINDOW_MS) {
+    return false;
+  }
+  linkPromptLastSent.set(discordUserId, now);
+  // Hard cap the map size — prevents unbounded growth across many actors.
+  // 500 is way over normal traffic; LRU-style purge by deleting the oldest
+  // is fine since the timestamps are monotonic in insertion order.
+  if (linkPromptLastSent.size > 500) {
+    const firstKey = linkPromptLastSent.keys().next().value;
+    if (firstKey !== undefined) linkPromptLastSent.delete(firstKey);
+  }
+  return true;
+}

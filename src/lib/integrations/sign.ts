@@ -102,3 +102,97 @@ function timingSafeEqualHex(a: string, b: string): boolean {
   if (ab.length !== bb.length) return false;
   return crypto.timingSafeEqual(ab, bb);
 }
+
+// ─────────────────────────────────────────────────────────────
+// Link-claim tokens (Phase 4.7 — multi-member attribution)
+// ─────────────────────────────────────────────────────────────
+// The Discord action handler issues these when an actor hits a button but
+// hasn't been linked yet. The URL `/integrations/discord/link?token=…`
+// verifies the token, then writes a discord_links row binding that Discord
+// id to the now-authed Supabase user.
+//
+// Format mirrors src/lib/email/sign.ts on purpose — same secret
+// (EMAIL_LINK_SECRET), same b64url(JSON).hmac shape, same constant-time
+// compare. The two helpers live separately because the payload shape is
+// different and conflating them would invite cross-token confusion.
+// The Discord button helpers above are NOT reused here: they're shrunk to
+// fit a 100-char custom_id and can't carry a structured payload.
+
+const LINK_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+export interface LinkClaimPayload {
+  workspace_id: string;
+  discord_user_id: string;
+  discord_username: string;
+  exp: number; // unix ms
+}
+
+function b64urlEncode(buf: Buffer): string {
+  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function b64urlDecode(s: string): Buffer {
+  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
+  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/") + pad, "base64");
+}
+
+function hmacB64(payload: string, secret: string): string {
+  return b64urlEncode(crypto.createHmac("sha256", secret).update(payload).digest());
+}
+
+export function signLinkClaimToken(
+  payload: Omit<LinkClaimPayload, "exp"> & { exp?: number },
+  secret: string,
+  now: number = Date.now(),
+): string {
+  const body: LinkClaimPayload = {
+    workspace_id: payload.workspace_id,
+    discord_user_id: payload.discord_user_id,
+    discord_username: payload.discord_username,
+    exp: payload.exp ?? now + LINK_TOKEN_TTL_MS,
+  };
+  const encoded = b64urlEncode(Buffer.from(JSON.stringify(body), "utf8"));
+  const sig = hmacB64(encoded, secret);
+  return `${encoded}.${sig}`;
+}
+
+export type LinkClaimVerifyResult =
+  | { ok: true; payload: LinkClaimPayload }
+  | { ok: false; reason: "malformed" | "bad-signature" | "expired" | "bad-payload" };
+
+export function verifyLinkClaimToken(token: string, secret: string): LinkClaimVerifyResult {
+  if (typeof token !== "string" || !token.includes(".")) {
+    return { ok: false, reason: "malformed" };
+  }
+  const dot = token.indexOf(".");
+  const encoded = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  if (!encoded || !sig) return { ok: false, reason: "malformed" };
+
+  const expected = hmacB64(encoded, secret);
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return { ok: false, reason: "bad-signature" };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(b64urlDecode(encoded).toString("utf8"));
+  } catch {
+    return { ok: false, reason: "bad-payload" };
+  }
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    typeof (parsed as { workspace_id?: unknown }).workspace_id !== "string" ||
+    typeof (parsed as { discord_user_id?: unknown }).discord_user_id !== "string" ||
+    typeof (parsed as { discord_username?: unknown }).discord_username !== "string" ||
+    typeof (parsed as { exp?: unknown }).exp !== "number"
+  ) {
+    return { ok: false, reason: "bad-payload" };
+  }
+  const payload = parsed as LinkClaimPayload;
+  if (payload.exp < Date.now()) return { ok: false, reason: "expired" };
+  return { ok: true, payload };
+}

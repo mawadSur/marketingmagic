@@ -196,6 +196,22 @@ export async function editInteractionResponse(
   });
 }
 
+// Follow-up message on an interaction. Used when the synchronous response
+// already returned UPDATE_MESSAGE but we still want to nudge the actor
+// privately (e.g. "click this link to bind your Discord account"). Pass
+// flags: 64 to make the follow-up ephemeral. Same webhook-token auth as
+// editInteractionResponse — no bot token needed.
+export async function createInteractionFollowup(
+  interactionToken: string,
+  payload: DiscordMessagePayload,
+): Promise<void> {
+  await call(`/webhooks/${appId()}/${interactionToken}`, {
+    method: "POST",
+    json: payload,
+    auth: "none",
+  });
+}
+
 // ─────────────────────────────────────────────────────────────
 // Slash command registration
 // ─────────────────────────────────────────────────────────────

@@ -196,7 +196,7 @@ Unblock onboarding so customers can sign up without manual hand-holding.
 - [DONE 2026-05-14] **Action handler endpoint** — `/api/integrations/discord/action`; verify Ed25519 signature (Node built-in crypto.verify, no tweetnacl); perform action; edit message in-place via UPDATE_MESSAGE response.
 - [DONE 2026-05-14] **Threading discipline** — daily digest as one parent message; per-post embeds with buttons in a 24h auto-archive thread. Channel stays quiet.
 - [DONE 2026-05-14] **Per-event configuration UI** — workspace picks digest / realtime / alerts-only via checkbox form on `/integrations/discord`. `alerts_only` reserved (not wired yet).
-- [PARTIAL] **Multi-member attribution** — each Discord-user-action records the Discord username + user id in `approvals.diff`. User_id still maps to workspace owner (no Discord→Supabase membership table yet); follow-up work to link Discord accounts to real members.
+- [DONE 2026-05-15] **Multi-member attribution** — `discord_links` join table (workspace_id, discord_user_id → member_user_id; RLS-guarded self-link). Discord action handler looks up the actor in `discord_links` and attributes `approvals.user_id` to the real Supabase user, falling back to the workspace owner only on miss. First miss per user fires an ephemeral follow-up with a signed 7-day link-claim URL (`/integrations/discord/link?token=…`) so the *next* approval attributes correctly. Migration `017_discord_links.sql`. *Commit hash applied at merge.*
 - [DEFERRED] **Slack integration** — revisit when first agency/marketing-team customer asks.
 
 ## Phase 6.5 — Smart Timing / Optimal Posting Windows (~1 week)
