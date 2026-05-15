@@ -33,15 +33,15 @@ Sharpen the voice fidelity so plan-generated drafts sound like the customer, not
 - [DONE 2026-05-13] **Signup conversion analytics** — structured server-side funnel events (`landing_view`, `landing_submit`, `scrape_success`, `scrape_fallback`, `preview_generated`, `preview_view`, `preview_rate_limited`, `preview_cold_profile`, `preview_signup_cta_click`) emitted as single-line JSON; client-side Vercel Analytics `track('mm_preview_signup_cta', ...)` fires on CTA click; signup link carries `?from=preview&t=` for the joinable funnel.
 - [TODO] **Sequencing gate** — only ship after Phase 1 voice scoring is dogfood-validated; bad preview = brand damage. **(Deployment gate, owned by main thread — left intentionally as TODO.)**
 
-## Phase 2 — Cross-Channel Adaptation (Approach A, ~2 weeks)
+## Phase 2 — Cross-Channel Adaptation (Approach A, ~2 weeks) — DONE
 
 One "post idea" → channel-tuned variants. One approval cascades.
 
-- [TODO] **`idea_id` FK on posts** — nullable, groups variants. Migration `007_post_idea.sql`.
-- [TODO] **Multi-variant generator** — plan generator returns N channel variants per idea with `skip_channels` support for unfit channels.
-- [TODO] **`/queue` idea grouping UI** — collapsible row per idea with per-channel variant inside.
-- [TODO] **"Approve all variants" action** — single click, with per-variant edit/approve still available.
-- [TODO] **Per-channel character/format rules** — enforced at generation time (X 280, LinkedIn 3k, IG caption 2200).
+- [DONE 2026-05-13] **`idea_id` FK on posts** — nullable, groups variants. Migration `007_post_idea.sql:21-28`. Type `IdeaId` at `src/lib/db/types.ts:328`. Commit `b0b27df` (V3-xc-1).
+- [DONE 2026-05-14] **Multi-variant generator** — `planVariantSchema` with explicit `skip` + rationale per variant at `src/lib/plan/schema.ts:18-53`; idea→variants fan-out at `:58-63`; consumed and skip-filtered at `src/app/(app)/plans/new/actions.ts:238-254` (fresh `crypto.randomUUID()` `idea_id` per idea).
+- [DONE 2026-05-14] **`/queue` idea grouping UI** — `byIdea` grouping at `src/app/(app)/queue/page.tsx:238-255`; collapsible `QueueIdeaRow` at `src/app/(app)/queue/queue-row.tsx:424-428`; legacy null-idea rows still render as `QueueRow`.
+- [DONE 2026-05-14] **"Approve all variants" action** — `approveAllVariantsAction(ideaId)` at `src/app/(app)/queue/actions.ts:63-110` (workspace-scoped, only flips `pending_approval`→`scheduled`, per-variant audit rows). Wired at `queue-row.tsx:462-464` with pending-count label; per-variant edit/approve still works alongside it.
+- [DONE 2026-05-14] **Per-channel character/format rules** — caps in `src/lib/channels/registry.ts:37,53,70,88,104` (X 280, LinkedIn 3000, Threads 500, IG 2200, Bluesky 300); enforced via `channelCapsBlock()` prompt block at `src/lib/plan/prompt.ts:204-205`, tool-schema `MAX_TEXT` upper bound at `schema.ts:8`, and `superRefine` per-variant at `schema.ts:42-52`.
 
 ## Phase 2.1 — Reverse-Plan from a Content Goal (~1 week)
 
@@ -76,14 +76,14 @@ One "post idea" → channel-tuned variants. One approval cascades.
 
 **Added 2026-05-13 (10x Expansion #4).** Record a voice memo, get a week of posts in your voice across channels. Mobile-first UX, premium tier anchor.
 
-- [TODO] **`/record` page** — mobile-responsive, big record button, MediaRecorder API; PWA-installable.
-- [TODO] **Whisper transcription** — reuses Phase 2.5 Groq Whisper infra.
-- [TODO] **Tap-to-edit transcript pass** — user fixes mis-heard product names / jargon before generation.
-- [TODO] **"Generate week of posts" templated source flow** — opinionated single-button entry into Phase 2.5 pipeline + Phase 2 cross-channel adaptation.
+- [DONE 2026-05-14] **`/record` page** — `src/app/record/page.tsx` (server gates on `hasFounderMode()`) + `record-client.tsx` (MediaRecorder 5-state FSM, MIME negotiation for Chromium/Safari, cleanup on unmount). PWA-installable via `/manifest.webmanifest` with `start_url=/record`. Commit `16b59e4`.
+- [DONE 2026-05-14] **Whisper transcription** — `transcribeRecordingAction` re-checks founder gate server-side, optionally uploads to `founder-audio` Storage bucket BEFORE Groq, 20 MB cap. Reuses `src/lib/sources/transcribe.ts` Groq helper. Commit `16b59e4`.
+- [TODO] **Tap-to-edit transcript pass** — user fixes mis-heard product names / jargon before generation. (Transcript preview is read-only on main; tap-to-edit lives on worktree branch `agent-aa6c9084a0f518594`, not yet merged.)
+- [TODO] **"Generate week of posts" templated source flow** — opinionated single-button entry into Phase 2.5 pipeline + Phase 2 cross-channel adaptation. (Slice 2.6/3 on worktree branch.)
 - [TODO] **Verbatim-quote preservation** — generator prompt instructed to retain customer's exact phrases as hooks where natural.
-- [TODO] **Privacy policy update** — raw audio retention policy (default delete after transcription); opt-in to keep for voice profile training.
-- [TODO] **New "Founder" pricing tier** — Stripe price + product update; higher post quota, exclusive Founder Mode access, higher monthly price.
-- [TODO] **Pricing page redesign** — three tiers (Solo / Agency / Founder); Founder tier positioning emphasizes "no typing, voice-only workflow."
+- [DONE 2026-05-14] **Privacy policy update** — `brand_briefs.keep_raw_audio` (default false; migration 015); founder-audio bucket configured private with 90d lifecycle + workspace-prefix RLS. Default deletes audio after transcription; opt-in keeps. Commit `2e421f2`.
+- [DONE 2026-05-14] **New "Founder" pricing tier** — `PlanId` now includes `'founder'` ($149/mo, 500 posts, 200 image gens); `STRIPE_PRICE_FOUNDER` env wired through `planForPriceId`; `hasFounderMode()` / `hasCompetitorWatch()` gates available. Commit `2e421f2`.
+- [TODO] **Pricing page redesign** — three tiers (Solo / Agency / Founder); Founder tier positioning emphasizes "no typing, voice-only workflow." (Worktree slice 2.6/3 not yet on main.)
 - [TODO] **Mobile design polish budget** — 2 days reserved; this feature is brand-defining when it looks Granola-grade and brand-damaging when it looks like a dashboard.
 
 ## Phase 3 — Full Video Pipeline (~4 weeks)
