@@ -658,6 +658,26 @@ export interface Database {
         }>;
         Relationships: [];
       };
+      discord_links: {
+        // Phase 4.7 (Multi-member attribution): maps a Discord user
+        // (workspace_id + discord_user_id) → the Supabase auth.users row
+        // they've claimed via the /integrations/discord/link flow. The
+        // Discord action handler reads this to attribute approvals.
+        Row: {
+          workspace_id: string;
+          discord_user_id: string;
+          member_user_id: string;
+          linked_at: string;
+        };
+        Insert: {
+          workspace_id: string;
+          discord_user_id: string;
+          member_user_id: string;
+          linked_at?: string;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
       ai_reviews: {
         Row: {
           id: string;
