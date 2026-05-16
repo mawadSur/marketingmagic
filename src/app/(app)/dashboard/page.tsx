@@ -14,6 +14,7 @@ import { ExplainSection } from "./explain-section";
 import { BestWindowsWidget } from "./best-windows-widget";
 import { NeglectedThemesWidget } from "./neglected-themes-widget";
 import { QuickExperimentsWidget } from "./quick-experiments-widget";
+import { GoalProgressWidget } from "./goal-progress-widget";
 import { isInRecommendedWindow } from "@/lib/channels/best-times";
 import { findNeglectedThemes } from "@/lib/themes/gaps";
 
@@ -192,6 +193,8 @@ export default async function DashboardPage() {
       {neglected.length > 0 ? <NeglectedThemesWidget themes={neglected} /> : null}
 
       <QuickExperimentsWidget workspaceId={ws.id} />
+
+      <GoalProgressWidget workspaceId={ws.id} />
 
       <BestWindowsWidget workspaceId={ws.id} />
 

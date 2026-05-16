@@ -417,6 +417,10 @@ export interface Database {
           status: GoalStatus;
           baseline_snapshot: Json | null;
           strategy: Json | null;
+          // Phase 2.1 follow-up — stamped by the daily replan cron each
+          // time it walks this goal. Throttles proposal generation.
+          // Migration 020.
+          last_replan_check_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -430,6 +434,7 @@ export interface Database {
           status?: GoalStatus;
           baseline_snapshot?: Json | null;
           strategy?: Json | null;
+          last_replan_check_at?: string | null;
         };
         Update: Partial<{
           goal_text: string;
@@ -439,6 +444,37 @@ export interface Database {
           status: GoalStatus;
           baseline_snapshot: Json | null;
           strategy: Json | null;
+          last_replan_check_at: string | null;
+        }>;
+        Relationships: [];
+      };
+      // Phase 2.1 follow-up — replan proposals raised by the daily cron
+      // when a goal falls behind pace. The dashboard widget surfaces
+      // unaccepted proposals as a CTA on the goal card. Migration 020.
+      replan_proposals: {
+        Row: {
+          id: string;
+          goal_id: string;
+          proposed_at: string;
+          proposed_by: "cron" | "user";
+          reason: string;
+          accepted_at: string | null;
+          accepted_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          goal_id: string;
+          proposed_at?: string;
+          proposed_by?: "cron" | "user";
+          reason: string;
+          accepted_at?: string | null;
+          accepted_by?: string | null;
+        };
+        Update: Partial<{
+          reason: string;
+          accepted_at: string | null;
+          accepted_by: string | null;
         }>;
         Relationships: [];
       };
