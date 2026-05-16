@@ -50,3 +50,5 @@ ruvector.db-*
 .ruflo/
 .claude-flow/
 .swarm/
+agentdb.rvf
+agentdb.rvf.lock
