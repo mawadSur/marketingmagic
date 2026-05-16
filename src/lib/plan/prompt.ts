@@ -262,6 +262,28 @@ const CHANNEL_TONE: Record<ChannelId, string> = {
     "Same energy as X but the audience is more tech/skeptical. No hashtags. Reward specificity over hype.",
 };
 
+// LinkedIn long-form guidance — emitted only when LinkedIn is in the active
+// channel mix. Cross-channel variants tend to collapse into "X-with-more-
+// characters" by default: Claude takes the X-shape draft, tacks on a
+// transition phrase + a CTA, and ships that as the LinkedIn variant. The
+// 3000-char cap is then wasted on a 250-char tweet in a suit. This block
+// nudges Claude to use the room when the *idea* has depth, while leaving
+// genuine one-beat ideas alone (the schema stays permissive — guidance
+// lives here, not in zod).
+function linkedinLongFormBlock(active: ChannelId[]): string {
+  if (!active.includes("linkedin")) return "";
+  return [
+    "## LinkedIn long-form guidance",
+    "LinkedIn is NOT 'X with more characters.' Treat it as a different format, not a longer one.",
+    "- When the idea has substance — a thesis, a story, multiple supporting points, a contrarian frame, a teardown — use 800–2500 characters. Develop the argument; LinkedIn rewards depth.",
+    "- Stay under ~600 characters ONLY when the idea is genuinely one-beat: a single quote, a single observation, a single ask. If you stay short, say so in the variant `rationale` (e.g. \"one-beat observation, no padding warranted\").",
+    "- Structure matters: open with a 1–2 line hook, develop with short paragraphs / numbered points / bullets, close with a takeaway or a question that invites a comment.",
+    "- Do NOT pad. If the idea is one beat, do not stretch it with filler transitions, recap sentences, or generic CTAs to hit a length target.",
+    "- Voice rules still apply — voice_profile (formality, openers, signature phrases) carries through. The LinkedIn variant should sound like the same brand, just with more room to breathe.",
+    "",
+  ].join("\n");
+}
+
 export function planSystemPrompt(inputs: PlanGenInputs): string {
   const { brief } = inputs;
   const voiceProfile = brief.voice_profile as VoiceProfile | null;
@@ -313,6 +335,7 @@ export function planSystemPrompt(inputs: PlanGenInputs): string {
     "Tone per channel:",
     ...activeChannels.map((c) => `- ${CHANNELS[c].label}: ${CHANNEL_TONE[c]}`),
     "",
+    linkedinLongFormBlock(activeChannels),
     "### When to skip a channel (set `skip: true` on the variant)",
     "- Long-form essay or 5-paragraph teardown → skip X and Bluesky (too long to compress without losing the argument).",
     "- Single-image visual quote or behind-the-scenes shot → skip LinkedIn (caption-led professional context doesn't fit).",
