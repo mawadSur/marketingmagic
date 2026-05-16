@@ -204,6 +204,131 @@ export async function linkedinUploadImage(
   return regJson.value.asset;
 }
 
+// ─── Phase 4.5 (Reply Inbox + Engagement Assistant) ─────────────────────
+//
+// linkedinComments — pull recent first-level comments on a UGC post URN
+// via /v2/socialActions/{urn}/comments. Tied to the existing
+// `w_member_social` scope (no new scopes needed for our own posts).
+//
+// linkedinReply — post a reply comment on a UGC post via
+// /v2/socialActions/{urn}/comments. Same scope.
+//
+// Bound to "our own posts" in practice: the poller iterates the
+// workspace's recently-posted LinkedIn posts and calls linkedinComments
+// on each one. We don't have a generic mentions / search endpoint on
+// the personal scope, so this is the universe we can see.
+
+export interface LinkedInInboundComment {
+  // Comment URN, e.g. "urn:li:comment:(urn:li:ugcPost:xxx,123)"
+  id: string;
+  // Author URN, e.g. "urn:li:person:abc". Surfaced as the handle in
+  // the inbox; LinkedIn's API returns the URN not the public profile
+  // slug on this scope.
+  authorUrn: string;
+  // Comment body. May be empty when the author replied with media
+  // only — we skip empty bodies in the poller.
+  message: string;
+  // UTC millis. We convert to ISO at the poller boundary.
+  createdAtMillis: number;
+  // The post URN this comment is on. Carried through so the poller
+  // can link to parent_post_id.
+  parentUgcPostUrn: string;
+}
+
+export async function linkedinComments(
+  creds: LinkedInCredentials,
+  ugcPostUrn: string,
+  count = 25,
+): Promise<LinkedInInboundComment[]> {
+  const bounded = Math.max(1, Math.min(100, Math.floor(count)));
+  const url =
+    `${API}/v2/socialActions/${encodeURIComponent(ugcPostUrn)}/comments` +
+    `?count=${bounded}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${creds.accessToken}`,
+      "X-Restli-Protocol-Version": "2.0.0",
+    },
+  });
+  if (res.status === 403 || res.status === 404) {
+    // Same defensive pattern as linkedinMetrics — comments endpoint can
+    // return 403 for posts that haven't been backfilled into the social
+    // actions service yet. Return [] rather than throwing so the cron
+    // walks the next post.
+    return [];
+  }
+  if (!res.ok) {
+    const err = new Error(
+      `LinkedIn comments failed (${res.status}): ${await res.text()}`,
+    );
+    (err as Error & { status?: number }).status = res.status;
+    throw err;
+  }
+  const json = (await res.json()) as {
+    elements?: Array<{
+      $URN?: string;
+      object?: string;
+      actor?: string;
+      created?: { time?: number };
+      message?: { text?: string };
+    }>;
+  };
+  const out: LinkedInInboundComment[] = [];
+  for (const c of json.elements ?? []) {
+    const urn = c.$URN ?? "";
+    const actor = c.actor ?? "";
+    const message = c.message?.text ?? "";
+    const t = c.created?.time;
+    if (!urn || !actor || typeof t !== "number") continue;
+    out.push({
+      id: urn,
+      authorUrn: actor,
+      message,
+      createdAtMillis: t,
+      parentUgcPostUrn: c.object ?? ugcPostUrn,
+    });
+  }
+  return out;
+}
+
+export interface LinkedInReplyResult {
+  id: string;
+}
+
+export async function linkedinReply(
+  creds: LinkedInCredentials,
+  replyText: string,
+  parentUgcPostUrn: string,
+): Promise<LinkedInReplyResult> {
+  if (replyText.length > LINKEDIN_MAX_TEXT) {
+    throw new Error(
+      `LinkedIn reply text exceeds ${LINKEDIN_MAX_TEXT} chars (got ${replyText.length}).`,
+    );
+  }
+  const body = {
+    actor: creds.memberUrn,
+    object: parentUgcPostUrn,
+    message: { text: replyText },
+  };
+  const url = `${API}/v2/socialActions/${encodeURIComponent(parentUgcPostUrn)}/comments`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${creds.accessToken}`,
+      "Content-Type": "application/json",
+      "X-Restli-Protocol-Version": "2.0.0",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(`LinkedIn reply failed (${res.status}): ${await res.text()}`);
+  }
+  const json = (await res.json().catch(() => ({}))) as { $URN?: string };
+  const id = json.$URN ?? res.headers.get("x-restli-id") ?? null;
+  if (!id) throw new Error("LinkedIn reply returned no id.");
+  return { id };
+}
+
 // ─── Metrics ────────────────────────────────────────────────────────────────
 
 export async function linkedinMetrics(

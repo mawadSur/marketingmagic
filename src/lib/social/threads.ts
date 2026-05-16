@@ -4,6 +4,7 @@
 // Auth: long-lived user access token with `threads_basic` + `threads_content_publish`.
 
 import { serverEnv } from "@/lib/env";
+import { MetaAppReviewPendingError } from "@/lib/interactions/errors";
 
 export interface ThreadsCredentials {
   accessToken: string;
@@ -158,4 +159,27 @@ export async function threadsMetrics(
     reposts: map.get("reposts") ?? 0,
     quotes: map.get("quotes") ?? 0,
   };
+}
+
+// ─── Phase 4.5 (Reply Inbox + Engagement Assistant) ─────────────────────
+//
+// Stubs only. The Threads reply + reply-listing endpoints require the
+// `threads_manage_replies` scope, which is gated on Meta App Review.
+// Like the Instagram pair, we expose the helpers so call sites
+// type-check but every call throws MetaAppReviewPendingError.
+
+export async function threadsListReplies(
+  _creds: ThreadsCredentials,
+  _mediaId: string,
+  _count = 25,
+): Promise<never> {
+  throw new MetaAppReviewPendingError("threads_manage_replies");
+}
+
+export async function threadsReply(
+  _creds: ThreadsCredentials,
+  _replyText: string,
+  _parentMediaId: string,
+): Promise<never> {
+  throw new MetaAppReviewPendingError("threads_manage_replies");
 }

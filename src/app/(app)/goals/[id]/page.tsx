@@ -7,11 +7,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { proposeStrategyResultSchema, type GoalStrategy } from "@/lib/goals/schema";
 import type { GoalMetric, GoalStatus } from "@/lib/db/types";
 import { GenerateGoalPlanButton } from "./generate-plan-button";
+import { ReplanBanner } from "./replan-banner";
 
 export const dynamic = "force-dynamic";
 
 interface PageProps {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ replan?: string }>;
 }
 
 // /goals/[id] — strategy preview + approval gate.
@@ -29,8 +31,9 @@ interface PageProps {
 // gate already pushes a closest_achievable alternative, so the edit
 // surface is less load-bearing than it looks. Marked as a follow-up
 // in tasks.md.
-export default async function GoalDetailPage({ params }: PageProps) {
+export default async function GoalDetailPage({ params, searchParams }: PageProps) {
   const { id } = await params;
+  const { replan } = await searchParams;
   const ws = await getActiveWorkspaceOrRedirect();
   const supabase = await supabaseServer();
 
@@ -41,6 +44,25 @@ export default async function GoalDetailPage({ params }: PageProps) {
     .eq("workspace_id", ws.id)
     .maybeSingle();
   if (!goal) notFound();
+
+  // Phase 2.1 replan loop. When the URL carries ?replan=1, look for an
+  // unaccepted replan_proposals row for this goal. If present, render the
+  // banner above the strategy preview. Anything else (no flag, already
+  // accepted, no proposal at all) falls through to the standard preview.
+  let openProposal: { id: string; reason: string } | null = null;
+  if (replan === "1") {
+    const { data: proposalRow } = await supabase
+      .from("replan_proposals")
+      .select("id, reason")
+      .eq("goal_id", id)
+      .is("accepted_at", null)
+      .order("proposed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (proposalRow) {
+      openProposal = { id: proposalRow.id, reason: proposalRow.reason };
+    }
+  }
 
   // Narrow the JSONB. If parsing fails (manually edited row, future schema
   // drift), render a friendly fallback instead of 500ing. We refuse to
@@ -128,6 +150,10 @@ export default async function GoalDetailPage({ params }: PageProps) {
           <h1 className="text-3xl font-semibold tracking-tight">{goal.goal_text}</h1>
         </div>
       </header>
+
+      {openProposal ? (
+        <ReplanBanner proposalId={openProposal.id} reason={openProposal.reason} />
+      ) : null}
 
       {unrealistic ? (
         <Card className="border-amber-500/30 bg-amber-500/5">

@@ -1,9 +1,15 @@
 "use client";
 
 import * as React from "react";
+import { useFormState, useFormStatus } from "react-dom";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { transcribeRecordingAction } from "./actions";
+import type { JargonHint } from "@/lib/sources/transcribe";
+import {
+  generateFromVoiceMemoAction,
+  type GenerateFromVoiceMemoState,
+} from "./generate-action";
 
 // Recording UI for /record. Mobile-first by design — the record button is
 // the dominant surface, everything else is secondary copy. We keep the
@@ -12,9 +18,12 @@ import { transcribeRecordingAction } from "./actions";
 //   idle → recording → stopped → transcribing → ready
 //                              ↘ error (retry returns to idle)
 //
-// The transcribed text is held in client state. The "Generate week of
-// posts" handoff lives in slice 2.6/3; for 2.6/2 we just surface the
-// transcript inline + a placeholder button.
+// The transcribed text is held in client state and rendered in an
+// editable textarea so the user can fix mis-heard product names / jargon
+// before generation. Low-confidence Whisper segments are highlighted with
+// `<mark>` until the user makes their first edit (see EditableTranscript
+// for why the marks are dismissed on edit). The "Generate week of posts"
+// button submits the edited transcript to generateFromVoiceMemoAction.
 
 type Status =
   | "permission"
@@ -33,6 +42,13 @@ interface Props {
 export function RecordClient({ keepRawAudio, transcriptionConfigured }: Props) {
   const [status, setStatus] = React.useState<Status>("idle");
   const [transcript, setTranscript] = React.useState<string>("");
+  // Phase 2.6/2: we keep the raw Whisper output around so the jargon-hint
+  // overlay can decide whether to show itself. The overlay only renders
+  // when `transcript === initialTranscript` (the user hasn't edited yet —
+  // hint character offsets become stale on the first keystroke). Once the
+  // user types, the marks vanish and the textarea is plain text.
+  const [initialTranscript, setInitialTranscript] = React.useState<string>("");
+  const [hints, setHints] = React.useState<JargonHint[]>([]);
   const [errorMessage, setErrorMessage] = React.useState<string>("");
   const [elapsedSec, setElapsedSec] = React.useState<number>(0);
   const [audioStoragePath, setAudioStoragePath] = React.useState<string | null>(null);
@@ -73,6 +89,8 @@ export function RecordClient({ keepRawAudio, transcriptionConfigured }: Props) {
   async function startRecording() {
     setErrorMessage("");
     setTranscript("");
+    setInitialTranscript("");
+    setHints([]);
     setAudioStoragePath(null);
     setStatus("permission");
     try {
@@ -143,6 +161,8 @@ export function RecordClient({ keepRawAudio, transcriptionConfigured }: Props) {
         return;
       }
       setTranscript(res.transcript);
+      setInitialTranscript(res.transcript);
+      setHints(res.hints ?? []);
       setAudioStoragePath(res.audioStoragePath ?? null);
       setStatus("ready");
     } catch (err) {
@@ -155,6 +175,8 @@ export function RecordClient({ keepRawAudio, transcriptionConfigured }: Props) {
     setStatus("idle");
     setErrorMessage("");
     setTranscript("");
+    setInitialTranscript("");
+    setHints([]);
     setElapsedSec(0);
     setAudioStoragePath(null);
   }
@@ -186,7 +208,10 @@ export function RecordClient({ keepRawAudio, transcriptionConfigured }: Props) {
       {status === "ready" && transcript ? (
         <TranscriptPreview
           transcript={transcript}
+          initialTranscript={initialTranscript}
+          hints={hints}
           audioStoragePath={audioStoragePath}
+          onTranscriptChange={setTranscript}
           onRecordAgain={reset}
         />
       ) : null}
@@ -259,36 +284,152 @@ function RecordSurface({
 
 function TranscriptPreview({
   transcript,
+  initialTranscript,
+  hints,
   audioStoragePath,
+  onTranscriptChange,
   onRecordAgain,
 }: {
   transcript: string;
+  initialTranscript: string;
+  hints: JargonHint[];
   audioStoragePath: string | null;
+  onTranscriptChange: (next: string) => void;
   onRecordAgain: () => void;
 }) {
+  const initialState: GenerateFromVoiceMemoState = { error: null, planId: null };
+  const [genState, formAction] = useFormState(generateFromVoiceMemoAction, initialState);
+
+  // Jargon-hint overlay only renders while the textarea matches the
+  // initial Whisper output — character offsets shift the moment the user
+  // edits. After that the marks vanish and the textarea is plain text.
+  const showHints = transcript === initialTranscript && hints.length > 0;
+  const helpCopy = showHints
+    ? "Highlighted words were low-confidence in Whisper. Tap to fix."
+    : "Tap to edit — fix product names or jargon before we generate posts.";
+
   return (
     <section className="space-y-3 rounded-lg border bg-card p-4">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-sm font-medium">Transcript</h2>
-        {audioStoragePath ? (
-          <span className="text-xs text-muted-foreground">Audio saved.</span>
-        ) : (
-          <span className="text-xs text-muted-foreground">Audio discarded.</span>
-        )}
+        <span className="text-xs text-muted-foreground">
+          {audioStoragePath ? "Audio saved." : "Audio discarded."}
+        </span>
       </div>
-      <p className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border bg-background p-3 text-sm leading-relaxed">
-        {transcript}
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" onClick={onRecordAgain}>
-          Record again
-        </Button>
-        {/* Generate-week handoff lands in slice 2.6/3. */}
-        <Button size="sm" disabled title="Coming in the next slice — transcript editor + generate flow.">
-          Generate week of posts
-        </Button>
-      </div>
+      <p className="text-xs text-muted-foreground">{helpCopy}</p>
+      <EditableTranscript
+        value={transcript}
+        initialValue={initialTranscript}
+        hints={hints}
+        showHints={showHints}
+        onChange={onTranscriptChange}
+      />
+      {/* Hidden form so the (possibly-edited) transcript posts to the
+          server action; useFormState surfaces errors without a useEffect. */}
+      <form action={formAction} className="space-y-2">
+        <input type="hidden" name="text" value={transcript} />
+        <input type="hidden" name="audioStoragePath" value={audioStoragePath ?? ""} />
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" type="button" onClick={onRecordAgain}>
+            Record again
+          </Button>
+          <GenerateButton />
+        </div>
+        {genState.error ? (
+          <p className="text-xs text-destructive">{genState.error}</p>
+        ) : null}
+      </form>
     </section>
+  );
+}
+
+// Editable transcript with optional jargon-hint overlay. The overlay is
+// an absolute-positioned `<div>` behind a transparent-text textarea —
+// same font + line-height + padding so the `<mark>` spans line up with
+// the textarea's words. Granola-style: once the user edits, the marks
+// vanish (offsets become stale) and we don't try to re-compute them.
+function EditableTranscript({
+  value,
+  initialValue,
+  hints,
+  showHints,
+  onChange,
+}: {
+  value: string;
+  initialValue: string;
+  hints: JargonHint[];
+  showHints: boolean;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <div className="relative">
+      {showHints ? (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border border-transparent p-3 text-sm leading-relaxed text-transparent"
+        >
+          {renderHintedText(initialValue, hints)}
+        </div>
+      ) : null}
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        rows={8}
+        className={[
+          "relative block max-h-72 w-full overflow-auto whitespace-pre-wrap break-words rounded-md border bg-background p-3 text-sm leading-relaxed",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+          showHints ? "text-transparent caret-foreground" : "",
+        ].join(" ")}
+        spellCheck
+        aria-label="Edit transcript"
+      />
+    </div>
+  );
+}
+
+// Render the transcript text with `<mark>` spans wrapping each hinted
+// word. Hints are pre-sorted by start offset in the server action — we
+// belt-and-braces re-sort here in case a future caller hands them in
+// unordered. Overlapping hints are coalesced by taking the earliest
+// start to the latest end.
+function renderHintedText(text: string, hints: JargonHint[]): React.ReactNode[] {
+  if (hints.length === 0) return [text];
+  const sorted = [...hints].sort((a, b) => a.start - b.start);
+  const merged: JargonHint[] = [];
+  for (const h of sorted) {
+    const last = merged[merged.length - 1];
+    if (last && h.start <= last.end) {
+      last.end = Math.max(last.end, h.end);
+    } else {
+      merged.push({ ...h });
+    }
+  }
+  const nodes: React.ReactNode[] = [];
+  let cursor = 0;
+  for (let i = 0; i < merged.length; i++) {
+    const h = merged[i];
+    if (h.start > cursor) nodes.push(text.slice(cursor, h.start));
+    nodes.push(
+      <mark
+        key={`hint-${i}`}
+        title="Whisper wasn't sure about this word — tap to edit."
+        className="rounded-sm bg-amber-400/30 text-foreground decoration-amber-500 underline decoration-dotted underline-offset-2"
+      >
+        {text.slice(h.start, h.end)}
+      </mark>,
+    );
+    cursor = h.end;
+  }
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+  return nodes;
+}
+
+function GenerateButton() {
+  const { pending } = useFormStatus();
+  return (
+    <Button size="sm" type="submit" disabled={pending}>
+      {pending ? "Generating…" : "Generate week of posts"}
+    </Button>
   );
 }
 

@@ -5,6 +5,7 @@
 // `instagram_content_publish`, `pages_show_list`.
 
 import { serverEnv } from "@/lib/env";
+import { MetaAppReviewPendingError } from "@/lib/interactions/errors";
 
 export interface InstagramCredentials {
   accessToken: string;
@@ -147,4 +148,28 @@ export async function instagramMetrics(
     shares: map.get("shares") ?? 0,
     saved: map.get("saved") ?? 0,
   };
+}
+
+// ─── Phase 4.5 (Reply Inbox + Engagement Assistant) ─────────────────────
+//
+// Stubs only. Reply + comment-pull paths require the
+// `instagram_manage_comments` scope, which is gated on Meta App Review.
+// We expose the helpers so call sites in the poller / send code path
+// type-check, but every call throws MetaAppReviewPendingError. The /inbox
+// UI catches this distinctly and renders a "coming soon" badge.
+
+export async function instagramListComments(
+  _creds: InstagramCredentials,
+  _mediaId: string,
+  _count = 25,
+): Promise<never> {
+  throw new MetaAppReviewPendingError("instagram_manage_comments");
+}
+
+export async function instagramReply(
+  _creds: InstagramCredentials,
+  _replyText: string,
+  _parentCommentId: string,
+): Promise<never> {
+  throw new MetaAppReviewPendingError("instagram_manage_comments");
 }
