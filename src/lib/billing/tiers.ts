@@ -3,14 +3,8 @@
 // Hard-coded so the app can boot without a working Stripe configuration —
 // every gating helper and the /settings/billing UI imports these. The
 // Stripe price IDs live in env (STRIPE_PRICE_PRO / STRIPE_PRICE_AGENCY /
-// STRIPE_PRICE_FOUNDER) and are resolved at request time via
-// priceIdForPlan(); never in the hot path so missing keys don't crash
-// unrelated pages.
-//
-// Founder tier (Phase 2.6) is the voice-first creator tier — premium price,
-// single workspace, but includes exclusive entitlements (Founder Mode at
-// /record and Competitor Watch from Phase 6.6). Limits + price are
-// placeholders; the operator dials them in when the live price ID lands.
+// STRIPE_PRICE_FOUNDER) and are resolved at request time via priceIdForPlan();
+// never in the hot path so missing keys don't crash unrelated pages.
 
 export type PlanId = "hobby" | "pro" | "agency" | "founder";
 
@@ -19,6 +13,11 @@ export interface TierLimits {
   channels: number;
   postsPerMonth: number;
   imageGensPerMonth: number;
+  // Phase 2.6: gates /record (voice-memo workflow). Only Founder tier sees
+  // the recorder; lower tiers see an upgrade CTA. We model it as a boolean
+  // capability flag rather than a quota because Founder Mode is an entire
+  // workflow, not a metered feature.
+  voiceMemoRecorder: boolean;
 }
 
 export interface Tier {
@@ -35,7 +34,7 @@ export const TIERS: Record<PlanId, Tier> = {
     id: "hobby",
     name: "Hobby",
     priceMonthly: 0,
-    limits: { channels: 1, postsPerMonth: 10, imageGensPerMonth: 0 },
+    limits: { channels: 1, postsPerMonth: 10, imageGensPerMonth: 0, voiceMemoRecorder: false },
     blurb: "Free forever for solo creators trying it out.",
     features: [
       "1 connected channel",
@@ -45,11 +44,15 @@ export const TIERS: Record<PlanId, Tier> = {
     ],
   },
   pro: {
+    // Phase 2.6: renamed "Pro" → "Solo" in customer-facing copy so the
+    // three paid tiers read as Solo / Agency / Founder. The enum id stays
+    // 'pro' so the Stripe webhook + DB rows + price-id env var keep
+    // working without a data migration; only the display name changed.
     id: "pro",
-    name: "Pro",
+    name: "Solo",
     priceMonthly: 29,
-    limits: { channels: -1, postsPerMonth: 200, imageGensPerMonth: 100 },
-    blurb: "For one brand, all the channels, real volume.",
+    limits: { channels: -1, postsPerMonth: 200, imageGensPerMonth: 100, voiceMemoRecorder: false },
+    blurb: "One brand, every channel, real volume. The default for solo creators.",
     features: [
       "Unlimited connected channels",
       "200 generated posts / month",
@@ -61,7 +64,7 @@ export const TIERS: Record<PlanId, Tier> = {
     id: "agency",
     name: "Agency",
     priceMonthly: 99,
-    limits: { channels: -1, postsPerMonth: 500, imageGensPerMonth: 500 },
+    limits: { channels: -1, postsPerMonth: 500, imageGensPerMonth: 500, voiceMemoRecorder: false },
     blurb: "Multi-client workspaces, higher ceilings, priority support.",
     features: [
       "Everything in Pro",
@@ -70,18 +73,23 @@ export const TIERS: Record<PlanId, Tier> = {
       "500 AI image generations / month",
     ],
   },
+  // Phase 2.6 — premium voice-memo tier. Positioned above Agency on price
+  // because the value prop ("no typing, voice-only workflow") targets
+  // founders/operators who'd otherwise dictate to a human social manager.
+  // Quotas are intentionally higher than Pro but lower than the implicit
+  // Enterprise ceiling — we want the tier to feel generous but not bottomless.
   founder: {
     id: "founder",
     name: "Founder",
     priceMonthly: 149,
-    limits: { channels: -1, postsPerMonth: 500, imageGensPerMonth: 200 },
-    blurb: "Voice-first workflow. Record a memo, ship a week of posts.",
+    limits: { channels: -1, postsPerMonth: 1000, imageGensPerMonth: 300, voiceMemoRecorder: true },
+    blurb: "Voice-memo to a week of posts. For solo operators who'd rather talk than type.",
     features: [
-      "Founder Mode — voice memo to a week of posts (no typing)",
-      "Competitor Watch — daily intel on accounts you pick",
-      "500 generated posts / month",
-      "200 AI image generations / month",
       "Everything in Pro",
+      "Voice-memo recorder (/record) — talk for 2 minutes, get a week of posts",
+      "1,000 generated posts / month",
+      "300 AI image generations / month",
+      "Priority support",
     ],
   },
 };
@@ -93,6 +101,18 @@ export function tierFor(plan: string | null | undefined): Tier {
   if (plan === "agency") return TIERS.agency;
   if (plan === "founder") return TIERS.founder;
   return TIERS.hobby;
+}
+
+// Phase 2.6 + 6.6 capability gates. /record imports hasFounderMode;
+// keeping these named helpers means call sites read clearly and we can
+// swap the implementation (e.g. to read the TierLimits.voiceMemoRecorder
+// flag) without touching every consumer.
+export function hasFounderMode(plan: string | null | undefined): boolean {
+  return tierFor(plan).id === "founder";
+}
+
+export function hasCompetitorWatch(plan: string | null | undefined): boolean {
+  return tierFor(plan).id === "founder";
 }
 
 // Resolves a Stripe price id to a plan. Env is read lazily (no throw if
@@ -111,26 +131,6 @@ export function priceIdForPlan(plan: PlanId): string | null {
   if (plan === "agency") return process.env.STRIPE_PRICE_AGENCY ?? null;
   if (plan === "founder") return process.env.STRIPE_PRICE_FOUNDER ?? null;
   return null;
-}
-
-// Entitlement gates. Cheap boolean checks consumed by feature mounts
-// (/record, /competitors) and by the planner if it needs to vary behavior
-// per tier. Implemented as functions, not Tier.entitlements fields, so the
-// gate set stays in one file rather than duplicating across TIERS entries —
-// any tier could grow into Founder-grade entitlements without re-shipping
-// the limit table.
-//
-// Default policy: Founder Mode and Competitor Watch are Founder-only. We
-// keep Agency out of these on purpose — Agency is the multi-client tier
-// (different value prop), Founder is the voice-first solo creator tier.
-// If the user later wants Agency to inherit Founder entitlements, flip a
-// single line here rather than weaving tier checks across call sites.
-export function hasFounderMode(plan: string | null | undefined): boolean {
-  return tierFor(plan).id === "founder";
-}
-
-export function hasCompetitorWatch(plan: string | null | undefined): boolean {
-  return tierFor(plan).id === "founder";
 }
 
 // YYYY-MM bucket used to key usage_counters rows.

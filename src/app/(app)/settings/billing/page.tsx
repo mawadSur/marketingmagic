@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseService } from "@/lib/supabase/service";
-import { TIERS, tierFor, currentMonthBucket, type PlanId } from "@/lib/billing/tiers";
+import { TIERS, tierFor, currentMonthBucket, priceIdForPlan, type PlanId } from "@/lib/billing/tiers";
 import { billingConfigured } from "@/lib/billing/stripe";
 import { BillingActions } from "./billing-actions";
 
@@ -74,7 +74,8 @@ export default async function BillingPage({
           <p className="font-medium">Stripe is not configured on this deployment.</p>
           <p className="mt-1 text-muted-foreground">
             Set <code>STRIPE_SECRET_KEY</code>, <code>STRIPE_WEBHOOK_SECRET</code>,{" "}
-            <code>STRIPE_PRICE_PRO</code>, and <code>STRIPE_PRICE_AGENCY</code> in env.
+            <code>STRIPE_PRICE_PRO</code>, <code>STRIPE_PRICE_AGENCY</code>, and (optionally){" "}
+            <code>STRIPE_PRICE_FOUNDER</code> in env.
           </p>
         </div>
       )}
@@ -114,47 +115,74 @@ export default async function BillingPage({
         )}
       </section>
 
-      <section className="space-y-3">
-        <h2 className="text-base font-semibold">Plans</h2>
-        <div className="grid gap-4 md:grid-cols-3">
-          {(Object.values(TIERS)).map((tier) => {
-            const isCurrent = tier.id === currentPlan;
+      {/* Phase 2.6 pricing redesign — three paid tiers as the centerpiece
+          (Solo / Agency / Founder) with Hobby as a quieter "or stay free"
+          card at the bottom. Founder gets a "Most premium" pill + amber
+          border so it reads as the anchor tier, not just "the priciest"
+          option. */}
+      <section className="space-y-4">
+        <div className="space-y-1">
+          <h2 className="text-base font-semibold">Plans</h2>
+          <p className="text-sm text-muted-foreground">
+            Three paid tiers. Pick the one that matches how you work.
+          </p>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-3">
+          {(["pro", "agency", "founder"] as PlanId[]).map((id) => {
+            const tier = TIERS[id];
+            const isCurrent = id === currentPlan;
+            const tierPriceConfigured = priceIdForPlan(id) !== null;
+            const isFounder = id === "founder";
             return (
               <div
                 key={tier.id}
                 className={
-                  "rounded-lg border p-5 " +
-                  (isCurrent ? "border-primary/60 ring-1 ring-primary/30" : "")
+                  "relative flex flex-col rounded-lg border p-6 " +
+                  (isCurrent ? "border-primary/60 ring-1 ring-primary/30 " : "") +
+                  (isFounder && !isCurrent ? "border-amber-500/60 bg-amber-500/5 " : "")
                 }
               >
+                {isFounder && (
+                  <span className="absolute -top-3 left-6 inline-flex items-center rounded-full border border-amber-500/60 bg-background px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                    Voice-only workflow
+                  </span>
+                )}
                 <div className="flex items-baseline justify-between">
-                  <p className="text-lg font-semibold">{tier.name}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {tier.priceMonthly === 0 ? "Free" : `$${tier.priceMonthly}/mo`}
+                  <p className="text-xl font-semibold">{tier.name}</p>
+                  <p className="text-base text-muted-foreground">
+                    <span className="font-semibold text-foreground">
+                      ${tier.priceMonthly}
+                    </span>
+                    /mo
                   </p>
                 </div>
-                <p className="mt-1 text-sm text-muted-foreground">{tier.blurb}</p>
-                <ul className="mt-3 space-y-1 text-sm">
+                <p className="mt-2 text-sm text-muted-foreground">{tier.blurb}</p>
+                <ul className="mt-4 flex-1 space-y-2 text-sm">
                   {tier.features.map((f) => (
-                    <li key={f}>· {f}</li>
+                    <li key={f} className="flex gap-2">
+                      <span aria-hidden className="text-emerald-600 dark:text-emerald-500">
+                        ✓
+                      </span>
+                      <span>{f}</span>
+                    </li>
                   ))}
                 </ul>
-                <div className="mt-4">
+                <div className="mt-6">
                   {isCurrent ? (
-                    <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    <span className="inline-block text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       Current plan
                     </span>
-                  ) : tier.id === "hobby" ? (
-                    <span className="text-xs text-muted-foreground">
-                      Cancel via Manage subscription to downgrade.
-                    </span>
-                  ) : configured ? (
+                  ) : configured && tierPriceConfigured ? (
                     <BillingActions
                       workspaceId={ws.id}
                       mode="checkout"
                       planId={tier.id}
                       label={`Upgrade to ${tier.name}`}
                     />
+                  ) : !tierPriceConfigured ? (
+                    <span className="text-xs text-muted-foreground">
+                      Configure <code>STRIPE_PRICE_{tier.id.toUpperCase()}</code> to enable.
+                    </span>
                   ) : (
                     <span className="text-xs text-muted-foreground">
                       Billing not configured.
@@ -164,6 +192,27 @@ export default async function BillingPage({
               </div>
             );
           })}
+        </div>
+
+        {/* Hobby as a quiet free-tier fallback. Same logic as before, just
+            visually demoted so the three paid tiers are the centerpiece. */}
+        <div
+          className={
+            "rounded-lg border p-5 " +
+            (currentPlan === "hobby" ? "border-primary/60 ring-1 ring-primary/30" : "border-dashed")
+          }
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-0.5">
+              <p className="text-sm font-semibold">{TIERS.hobby.name} · Free</p>
+              <p className="text-xs text-muted-foreground">{TIERS.hobby.blurb}</p>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {currentPlan === "hobby"
+                ? "Current plan"
+                : "Cancel via Manage subscription to downgrade."}
+            </p>
+          </div>
         </div>
       </section>
 
