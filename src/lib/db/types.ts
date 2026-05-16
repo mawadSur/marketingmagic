@@ -124,6 +124,20 @@ export type ThemeSnoozeEntry =
 // global Channel union for callers that want a strictly-typed narrowing.
 export type CompetitorWatchChannel = "x" | "bluesky" | "linkedin" | "instagram" | "threads";
 
+// Phase 4.5 (Reply Inbox + Engagement Assistant): the five channels the
+// inbox / pollers handle. Same set as competitor watch — IG / Threads
+// rows are accepted at the DB layer but the pollers throw
+// MetaAppReviewPendingError until the Meta scopes land.
+// Mirrors the CHECK constraint in migration 023.
+export type InteractionChannel = "x" | "linkedin" | "bluesky" | "instagram" | "threads";
+
+// Phase 4.5: lifecycle of an interaction row. `unread` = freshly pulled;
+// `read` = opened OR downgraded by native-reply conflict; `replied` =
+// the user clicked send via the inbox composer; `snoozed` = hidden
+// until snooze_until passes; `dismissed` = manually cleared.
+// Mirrors the CHECK constraint in migration 023.
+export type InteractionStatus = "unread" | "read" | "replied" | "snoozed" | "dismissed";
+
 export interface Database {
   public: {
     Tables: {
@@ -426,6 +440,11 @@ export interface Database {
           // time it walks this goal. Throttles proposal generation.
           // Migration 020.
           last_replan_check_at: string | null;
+          // Phase 2.1 follow-up — when this goal was spawned by accepting
+          // a replan_proposal on a prior goal, this points at that prior
+          // goal. NULL for root goals. ON DELETE SET NULL preserves the
+          // descendant if the parent is hard-deleted. Migration 022.
+          parent_goal_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -440,6 +459,7 @@ export interface Database {
           baseline_snapshot?: Json | null;
           strategy?: Json | null;
           last_replan_check_at?: string | null;
+          parent_goal_id?: string | null;
         };
         Update: Partial<{
           goal_text: string;
@@ -450,6 +470,7 @@ export interface Database {
           baseline_snapshot: Json | null;
           strategy: Json | null;
           last_replan_check_at: string | null;
+          parent_goal_id: string | null;
         }>;
         Relationships: [];
       };
@@ -915,6 +936,60 @@ export interface Database {
           failure_reason: string | null;
           last_pulled_at: string | null;
           display_name: string | null;
+        }>;
+        Relationships: [];
+      };
+      interactions: {
+        // Phase 4.5 (Reply Inbox + Engagement Assistant): one row per
+        // inbound mention / reply / comment across X, LinkedIn, Bluesky
+        // (and IG / Threads once Meta App Review lands). See migration
+        // 023 for the CHECK constraints + the snooze/replied/snoozed
+        // shape invariants. Polled into shape by
+        // src/lib/interactions/pollers/*; never auto-replied to —
+        // sendReplyAction requires explicit user click.
+        Row: {
+          id: string;
+          workspace_id: string;
+          social_account_id: string;
+          channel: InteractionChannel;
+          external_id: string;
+          parent_post_id: string | null;
+          author_handle: string;
+          author_display_name: string | null;
+          body: string;
+          received_at: string;
+          status: InteractionStatus;
+          priority_score: number | null;
+          snooze_until: string | null;
+          replied_at: string | null;
+          replied_to_post_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          social_account_id: string;
+          channel: InteractionChannel;
+          external_id: string;
+          parent_post_id?: string | null;
+          author_handle: string;
+          author_display_name?: string | null;
+          body: string;
+          received_at: string;
+          status?: InteractionStatus;
+          priority_score?: number | null;
+          snooze_until?: string | null;
+          replied_at?: string | null;
+          replied_to_post_id?: string | null;
+        };
+        Update: Partial<{
+          status: InteractionStatus;
+          priority_score: number | null;
+          snooze_until: string | null;
+          replied_at: string | null;
+          replied_to_post_id: string | null;
+          parent_post_id: string | null;
+          author_display_name: string | null;
         }>;
         Relationships: [];
       };

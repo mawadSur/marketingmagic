@@ -5,9 +5,10 @@ import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseService } from "@/lib/supabase/service";
 import { tierFor } from "@/lib/billing/tiers";
 import {
-  transcribeAudio,
+  transcribeAudioRich,
   TranscriptionUnavailableError,
   TranscriptionError,
+  type JargonHint,
 } from "@/lib/sources/transcribe";
 
 // Hard ceiling on the raw audio blob we'll accept from the client. Groq's
@@ -28,8 +29,14 @@ export interface TranscribeRecordingResult {
   ok: boolean;
   // Populated on success.
   transcript?: string;
+  // Phase 2.6/2: per-word jargon hints (low-confidence Whisper segments).
+  // Empty array when Whisper returned no segment confidences (older
+  // models, very short clips) — the client falls back to a plain
+  // textarea with no marks in that case. See transcribe.ts for the
+  // segment-vs-word caveat (Groq doesn't expose per-word probability).
+  hints?: JargonHint[];
   // When the user has opt-in retention on, we return the Storage path so
-  // a future slice (2.6/3) can store it on the eventual sources row.
+  // the generate-from-voice-memo action can store it on the sources row.
   audioStoragePath?: string;
   // Single user-facing error message. We keep the messages friendly here
   // rather than surfacing raw provider/storage errors — the underlying
@@ -119,8 +126,17 @@ export async function transcribeRecordingAction(
   }
 
   try {
-    const transcript = await transcribeAudio(file, { filename, contentType });
-    return { ok: true, transcript, audioStoragePath };
+    const result = await transcribeAudioRich(file, {
+      filename,
+      contentType,
+      verbose: true,
+    });
+    return {
+      ok: true,
+      transcript: result.text,
+      hints: result.hints,
+      audioStoragePath,
+    };
   } catch (err) {
     if (err instanceof TranscriptionUnavailableError) {
       return {
@@ -150,3 +166,8 @@ function pickExtension(contentType: string): string {
   if (contentType.includes("ogg")) return "ogg";
   return "webm";
 }
+
+// The "Generate week of posts" handoff lives in ./generate-action.ts —
+// imported directly by the /record client. We keep that action in its own
+// file so this file stays focused on the transcribe path and well under
+// the 500-line ceiling.

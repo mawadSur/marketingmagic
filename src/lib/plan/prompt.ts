@@ -146,7 +146,9 @@ function sourceBlock(src: SourceContext | undefined): string {
     "The user pasted or fetched this source and is asking for a content cluster built from it. " +
       "Every idea in the plan must be grounded in one or more themes / quotes / facts below — " +
       "do not invent material the source doesn't support. When you quote, use the quote verbatim " +
-      "(no paraphrasing).",
+      "(no paraphrasing). When the source contains quotable phrases — especially the customer's own " +
+      "words, voice-memo asides, or off-script lines — preserve them verbatim as hook lines or " +
+      "punchlines when natural. Don't paraphrase what's already well-said.",
   );
   lines.push("");
   lines.push(`### Title: ${src.title}`);

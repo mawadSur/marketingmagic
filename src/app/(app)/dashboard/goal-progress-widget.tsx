@@ -46,9 +46,10 @@ export async function GoalProgressWidget({ workspaceId }: { workspaceId: string 
   const visibleIds = activeGoals.slice(0, MAX_VISIBLE).map((g) => g.id as string);
   const overflow = Math.max(0, activeGoals.length - MAX_VISIBLE);
 
-  const [progresses, openProposals] = await Promise.all([
+  const [progresses, openProposals, replannedIds] = await Promise.all([
     Promise.all(visibleIds.map((id) => computeGoalProgress(id))),
     loadOpenProposals(visibleIds),
+    loadReplannedIds(visibleIds),
   ]);
 
   const cards = progresses.filter((p): p is GoalProgress => p !== null);
@@ -83,6 +84,7 @@ export async function GoalProgressWidget({ workspaceId }: { workspaceId: string 
             key={p.goal.id}
             progress={p}
             proposal={openProposals.get(p.goal.id) ?? null}
+            replanned={replannedIds.has(p.goal.id)}
           />
         ))}
       </ul>
@@ -93,9 +95,11 @@ export async function GoalProgressWidget({ workspaceId }: { workspaceId: string 
 function GoalRow({
   progress,
   proposal,
+  replanned,
 }: {
   progress: GoalProgress;
   proposal: OpenProposal | null;
+  replanned: boolean;
 }) {
   const { goal, paceVerdict, summaryLine, baselineValue, targetValue, actualValue } = progress;
   const showVerdict = paceVerdict !== "tracking";
@@ -109,6 +113,7 @@ function GoalRow({
         ) : (
           <Badge variant="muted">Tracking</Badge>
         )}
+        {replanned ? <Badge variant="muted">Replanned</Badge> : null}
         {targetValue != null ? (
           <span className="text-xs text-muted-foreground tabular-nums">
             target {targetValue}
@@ -163,6 +168,24 @@ async function loadOpenProposals(goalIds: string[]): Promise<Map<string, OpenPro
     byGoal.set(row.goal_id, row);
   }
   return byGoal;
+}
+
+// Phase 2.1 replan-loop — which of these goal_ids have at least one
+// descendant (another content_goals row with parent_goal_id pointing
+// here)? Drives the "Replanned" badge on the dashboard widget. One
+// round-trip; the partial index from migration 022 covers the IN-list.
+async function loadReplannedIds(goalIds: string[]): Promise<Set<string>> {
+  if (goalIds.length === 0) return new Set();
+  const svc = supabaseService();
+  const { data } = await svc
+    .from("content_goals")
+    .select("parent_goal_id")
+    .in("parent_goal_id", goalIds);
+  const ids = new Set<string>();
+  for (const row of (data ?? []) as Array<{ parent_goal_id: string | null }>) {
+    if (row.parent_goal_id) ids.add(row.parent_goal_id);
+  }
+  return ids;
 }
 
 function metricLabel(m: GoalMetric): string {

@@ -21,6 +21,11 @@ const baseNav = [
   // mental model is: paste a source → generate a cluster → approve in queue.
   { href: "/sources", label: "Sources" },
   { href: "/queue", label: "Queue" },
+  // Phase 4.5 — Reply Inbox + Engagement Assistant. Lives between Queue
+  // and Brief: queue is "ship our content", inbox is "respond to theirs."
+  // Brief sits right after so the user can adjust voice if the inbox
+  // suggests their drafter is off.
+  { href: "/inbox", label: "Inbox" },
   { href: "/settings/brief", label: "Brief" },
   { href: "/settings/channels", label: "Channels" },
   { href: "/settings/events", label: "Events" },

@@ -371,6 +371,112 @@ export async function xAccessToken(opts: {
   };
 }
 
+// ─── Phase 4.5 (Reply Inbox + Engagement Assistant) ─────────────────────
+//
+// xReply — adapt xPost for reply usage. Kept as its own helper rather
+// than reusing xPost directly so the call site in inbox/[id]/actions.ts
+// reads as a reply, not a post.
+//
+// Mentions + replies pull: `xMentions` returns recent mentions of the
+// authenticated user. We pull up to `count` (default 20) and let the
+// poller dedupe via the unique (channel, external_id) index.
+//
+// Both endpoints share the existing OAuth 1.0a auth chain — no new
+// scopes required.
+
+export interface XReplyResult {
+  id: string;
+  text: string;
+}
+
+export async function xReply(
+  creds: XCredentials,
+  replyText: string,
+  inReplyToTweetId: string,
+): Promise<XReplyResult> {
+  if (!inReplyToTweetId) throw new Error("xReply requires inReplyToTweetId.");
+  return xPost(creds, replyText, undefined, inReplyToTweetId);
+}
+
+export interface XInboundMention {
+  id: string;
+  text: string;
+  created_at: string;
+  author_id: string;
+  author_username: string;
+  author_name: string | null;
+  author_verified: boolean;
+  author_follower_count: number | null;
+  // True when this mention is a reply (in_reply_to_user_id is the
+  // authed user) rather than a top-level mention. Drives the
+  // parent_post_id linking in the poller.
+  is_reply: boolean;
+  in_reply_to_tweet_id: string | null;
+}
+
+export async function xMentions(
+  creds: XCredentials,
+  userId: string,
+  count = 20,
+): Promise<XInboundMention[]> {
+  const bounded = Math.max(5, Math.min(100, Math.floor(count)));
+  const params = new URLSearchParams({
+    max_results: String(bounded),
+    "tweet.fields": "created_at,author_id,referenced_tweets,in_reply_to_user_id",
+    expansions: "author_id,referenced_tweets.id",
+    "user.fields": "verified,public_metrics,name",
+  });
+  const url = `${BASE_URL}/2/users/${encodeURIComponent(userId)}/mentions?${params}`;
+  const auth = authorize(creds, url, "GET");
+  const res = await fetch(url, { headers: { ...auth } });
+  if (!res.ok) {
+    const text = await res.text();
+    const err = new Error(`X mentions failed (${res.status}): ${text.slice(0, 200)}`);
+    (err as Error & { status?: number }).status = res.status;
+    throw err;
+  }
+  const body = (await res.json()) as {
+    data?: Array<{
+      id: string;
+      text: string;
+      created_at: string;
+      author_id: string;
+      in_reply_to_user_id?: string;
+      referenced_tweets?: Array<{ type: string; id: string }>;
+    }>;
+    includes?: {
+      users?: Array<{
+        id: string;
+        username: string;
+        name?: string;
+        verified?: boolean;
+        public_metrics?: { followers_count?: number };
+      }>;
+    };
+  };
+  const users = new Map(
+    (body.includes?.users ?? []).map((u) => [u.id, u] as const),
+  );
+  const out: XInboundMention[] = [];
+  for (const t of body.data ?? []) {
+    const user = users.get(t.author_id);
+    const replied = (t.referenced_tweets ?? []).find((r) => r.type === "replied_to");
+    out.push({
+      id: t.id,
+      text: t.text,
+      created_at: t.created_at,
+      author_id: t.author_id,
+      author_username: user?.username ?? t.author_id,
+      author_name: user?.name ?? null,
+      author_verified: Boolean(user?.verified),
+      author_follower_count: user?.public_metrics?.followers_count ?? null,
+      is_reply: Boolean(t.in_reply_to_user_id),
+      in_reply_to_tweet_id: replied?.id ?? null,
+    });
+  }
+  return out;
+}
+
 // ─── Phase 6.6 (Competitor Watch) ───────────────────────────────────────
 //
 // Uses GET /2/users/by/username/:username to resolve a screen name to an
