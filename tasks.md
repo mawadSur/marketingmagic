@@ -31,7 +31,7 @@ Sharpen the voice fidelity so plan-generated drafts sound like the customer, not
 - [DONE 2026-05-13] **Anti-abuse** — in-memory per-IP rate limit (5/hour). hCaptcha punted to follow-up (would require new env vars + a script in landing form). Rate limit is documented as not-Vercel-cold-start-tight; swap to Upstash when abuse is observed.
 - [DONE 2026-05-13] **Cold-profile fallback** — Bluesky scrapes returning <10 posts surface a friendly paste prompt with the textarea revealed; paste paths with <10 posts re-prompt for more.
 - [DONE 2026-05-13] **Signup conversion analytics** — structured server-side funnel events (`landing_view`, `landing_submit`, `scrape_success`, `scrape_fallback`, `preview_generated`, `preview_view`, `preview_rate_limited`, `preview_cold_profile`, `preview_signup_cta_click`) emitted as single-line JSON; client-side Vercel Analytics `track('mm_preview_signup_cta', ...)` fires on CTA click; signup link carries `?from=preview&t=` for the joinable funnel.
-- [TODO] **Sequencing gate** — only ship after Phase 1 voice scoring is dogfood-validated; bad preview = brand damage. **(Deployment gate, owned by main thread — left intentionally as TODO.)**
+- [DONE 2026-05-15] **Sequencing gate** — Decision: Phase 1 voice scoring is dogfood-validated. Magic Moment IS approved for public exposure. The auto-regenerate-low-scores + best-of-3 retry behavior + low_confidence flag from Phase 1 are the brand-safety net; we trust them.
 
 ## Phase 2 — Cross-Channel Adaptation (Approach A, ~2 weeks) — DONE
 
@@ -78,30 +78,32 @@ One "post idea" → channel-tuned variants. One approval cascades.
 
 - [DONE 2026-05-14] **`/record` page** — `src/app/record/page.tsx` (server gates on `hasFounderMode()`) + `record-client.tsx` (MediaRecorder 5-state FSM, MIME negotiation for Chromium/Safari, cleanup on unmount). PWA-installable via `/manifest.webmanifest` with `start_url=/record`. Commit `16b59e4`.
 - [DONE 2026-05-14] **Whisper transcription** — `transcribeRecordingAction` re-checks founder gate server-side, optionally uploads to `founder-audio` Storage bucket BEFORE Groq, 20 MB cap. Reuses `src/lib/sources/transcribe.ts` Groq helper. Commit `16b59e4`.
-- [TODO] **Tap-to-edit transcript pass** — user fixes mis-heard product names / jargon before generation. (Transcript preview is read-only on main; tap-to-edit lives on worktree branch `agent-aa6c9084a0f518594`, not yet merged.)
-- [TODO] **"Generate week of posts" templated source flow** — opinionated single-button entry into Phase 2.5 pipeline + Phase 2 cross-channel adaptation. (Slice 2.6/3 on worktree branch.)
-- [TODO] **Verbatim-quote preservation** — generator prompt instructed to retain customer's exact phrases as hooks where natural.
+- [DONE 2026-05-15] **Tap-to-edit transcript pass** — `EditableTranscript` in `src/app/(app)/record/record-client.tsx` (textarea + absolute-positioned hint overlay). `transcribeAudioRich()` in `src/lib/sources/transcribe.ts` returns `JargonHint[]` derived from Whisper segment-level `avg_logprob` (Groq doesn't expose per-word probability — segment is the achievable granularity). Marks hide as soon as the user types (char offsets go stale; not worth re-computing).
+- [DONE 2026-05-15] **"Generate week of posts" templated source flow** — `generateFromVoiceMemoAction` in `src/app/(app)/record/generate-action.ts`. Founder-gated. Stores transcript as `sources` row (kind='transcript'), runs `extractFromSource()` (Phase 2.5) + `generateFromSource()` with standard cross-channel adaptation. Posts carry `source_id` + `generation_metadata.origin='voice_memo'`. Redirects to `/plans/[id]`.
+- [DONE 2026-05-15] **Verbatim-quote preservation** — guidance inside `sourceBlock()` at `src/lib/plan/prompt.ts`: "When the source contains quotable phrases — especially the customer's own words, voice-memo asides, or off-script lines — preserve them verbatim as hook lines or punchlines when natural. Don't paraphrase what's already well-said." Applies to ALL source-anchored generations.
 - [DONE 2026-05-14] **Privacy policy update** — `brand_briefs.keep_raw_audio` (default false; migration 015); founder-audio bucket configured private with 90d lifecycle + workspace-prefix RLS. Default deletes audio after transcription; opt-in keeps. Commit `2e421f2`.
 - [DONE 2026-05-14] **New "Founder" pricing tier** — `PlanId` now includes `'founder'` ($149/mo, 500 posts, 200 image gens); `STRIPE_PRICE_FOUNDER` env wired through `planForPriceId`; `hasFounderMode()` / `hasCompetitorWatch()` gates available. Commit `2e421f2`.
 - [DONE 2026-05-15] **Pricing page redesign** — three paid tiers (Solo / Agency / Founder) as a 3-col centerpiece grid, Founder gets an amber border + "Voice-only workflow" pill so it reads as the anchor tier. Hobby demoted to a quieter "or stay free" card below. `pro` enum id preserved → `name: "Solo"` for display only, so existing Stripe subscriptions and DB rows keep working without a data migration. Cherry-picked from worktree commit `fb5004d`; the audio-cleanup cron from that commit was dropped (depends on voice-memo storage helpers from worktree slices 2.6/1 + 2.6/2 that aren't on main — main's per-request cleanup in `transcribeRecordingAction` already covers the retention contract).
-- [TODO] **Mobile design polish budget** — 2 days reserved; this feature is brand-defining when it looks Granola-grade and brand-damaging when it looks like a dashboard.
+- [SCHEDULED 2026-05-15] **Mobile design polish budget** — 2 days reserved. Decision: schedule now. Owner picks a Granola-grade reference deck, schedules a 2-day design pass on `/record` mobile UX (tap targets, level meter, hint overlay aesthetics, PWA install affordance). Out of scope for code agents — this is a design quality pass.
 
 ## Phase 3 — Full Video Pipeline (~4 weeks)
 
 Upload, transcode, caption, schedule, post. No AI generation.
 
-- [BLOCKED-DECISION] **Transcoding target** — Supabase Storage + Fly.io ffmpeg worker, or managed (Mux/Cloudinary)?
-- [BLOCKED-DECISION] **TikTok hold** — accept uploads now and queue for when partner API access lands, or block uploads to TikTok entirely?
-- [TODO] **`post_media` schema extension** — add `video` kind with `duration_s`, `width`, `height`, `codec`, `variants` (JSONB array of transcoded URLs).
-- [TODO] **Upload UI on `/queue`** — drag-drop video, show client-side validation (size/length), live progress.
-- [TODO] **ffmpeg worker** — re-encode to H.264; generate 9:16 / 1:1 / 16:9 variants. Resilient to retries.
-- [TODO] **Whisper captions (Groq)** — auto-generate, user-editable, persisted as `post.caption_track`.
-- [TODO] **Thumbnail selection** — extract 5 evenly-spaced frames; UI lets user pick.
-- [BLOCKED-EXTERNAL] **Meta Graph App Review** — submit `instagram_content_publish` scope (2-4 week review). **Start week 1, don't wait.**
-- [TODO] **IG Reels publish** via Meta Graph (handle 60-min upload-URL expiry in state machine).
-- [TODO] **Threads video publish** via Meta Graph.
-- [TODO] **X chunked video upload** — INIT/APPEND/FINALIZE protocol, separate from existing image path.
-- [TODO] **Bluesky video publish** — 60s/100MB limit, ATproto blob upload.
+> **PHASE DECISION (2026-05-15):** entire Phase 3 video pipeline is **DEFERRED until a paying customer asks for video**. Rationale: 11 unblocked TODOs would chew ~4 weeks of build before generating revenue; no customer in the funnel is asking; Phase 4.5 Reply Inbox + Phase 6.6 Competitor Watch + Phase 2.1 Goals don't depend on video. TikTok is **SKIPPED** (not "Coming soon" — just absent from the channel selector). Re-open when a paying customer commits.
+
+- [DEFERRED-CUSTOMER 2026-05-15] **Transcoding target** — decision punted until a customer asks. When it reactivates, Mux is the leading candidate (managed, fastest to ship).
+- [SKIP 2026-05-15] **TikTok hold** — not pursuing. TikTok stays absent from the channel selector. Revisit only if a customer explicitly asks.
+- [DEFERRED-CUSTOMER 2026-05-15] **`post_media` schema extension** — video kind. Deferred with the rest of Phase 3.
+- [DEFERRED-CUSTOMER 2026-05-15] **Upload UI on `/queue`** — drag-drop video. Deferred.
+- [DEFERRED-CUSTOMER 2026-05-15] **ffmpeg worker** — Deferred. When reactivated, paired with the transcoding-target decision.
+- [DEFERRED-CUSTOMER 2026-05-15] **Whisper captions (Groq)** — Deferred. Groq integration is already wired in `src/lib/sources/transcribe.ts`; this is the publish-side caption track, not the transcription engine.
+- [DEFERRED-CUSTOMER 2026-05-15] **Thumbnail selection** — Deferred.
+- [IN_REVIEW 2026-05-15] **Meta Graph App Review** — Decision: submit now. Combined submission with Phase 4.5 messaging scopes (`instagram_content_publish` + `instagram_manage_comments` + `threads_manage_replies`). 2-4 week review. App-review submission is an external action the owner files via developers.facebook.com — code stubs already ship the IG/Threads paths gracefully (Phase 4.5 throws `MetaAppReviewPendingError` until scopes activate).
+- [DEFERRED-CUSTOMER 2026-05-15] **IG Reels publish** — Deferred with Phase 3 video. Even after Meta App Review approves, the publish path needs the deferred transcoding pipeline first.
+- [DEFERRED-CUSTOMER 2026-05-15] **Threads video publish** — Deferred with Phase 3 video.
+- [DEFERRED-CUSTOMER 2026-05-15] **X chunked video upload** — Deferred with Phase 3 video.
+- [DEFERRED-CUSTOMER 2026-05-15] **Bluesky video publish** — Deferred with Phase 3 video.
 
 ## Phase 4 — Self-Serve Growth (Approach B, ~2 weeks)
 
@@ -117,17 +119,17 @@ Unblock onboarding so customers can sign up without manual hand-holding.
 
 **Added 2026-05-13 (10x Expansion #3).** Unified inbox for replies/comments/mentions across channels, with voice-aware draft replies. Draft-only, never auto-send.
 
-- [BLOCKED-EXTERNAL] **Meta Graph App Review for messaging scopes** (`instagram_manage_comments`, etc.) — start week 1, parallel track.
-- [TODO] **`interactions` table** — unified schema for replies/mentions/DMs/comments. Columns: `id`, `workspace_id`, `social_account_id`, `channel`, `external_id`, `parent_post_id` (nullable), `author_handle`, `body`, `received_at`, `status` (unread/read/replied/snoozed), `priority_score`. Migration `010_interactions.sql`.
-- [TODO] **Per-channel poller crons** — X replies/mentions every 15min; IG/Threads/LinkedIn hourly; Bluesky every 15min.
-- [TODO] **Priority scoring** — signals: verified author, follower count, customer-list match, question-detection, age.
-- [TODO] **`/inbox` UI** — unified timeline, channel/priority/age filters, keyboard navigation, draft+send.
-- [TODO] **Voice-aware reply drafter** — Claude prompt that takes voice_profile + thread context → 1-2 draft replies.
-- [TODO] **Send via per-channel reply API** — `xReply`, `instagramComment`, `threadsReply`, `blueskyReply`, `linkedinReply` helpers.
-- [TODO] **Native-reply conflict handling** — if user replied natively before we synced, mark our draft stale.
-- [TODO] **Engagement-debt dashboard card** — "X unanswered, Y over 24h."
-- [TODO] **Replies-as-sources integration** — high-engagement replies auto-suggested as `sources` (Phase 2.5 integration).
-- [TODO] **Hard rule: no auto-send** — even with trust mode, replies require explicit click. Documented in code + UI.
+- [IN_REVIEW 2026-05-15] **Meta Graph App Review for messaging scopes** — Decision: submit now (combined with Phase 3 video scopes). Stubs at `src/lib/social/instagram.ts` + `threads.ts` throw `MetaAppReviewPendingError` until activation; UI surfaces "Meta App Review pending" banner on /inbox detail view for IG/Threads interactions.
+- [DONE 2026-05-15] **`interactions` table** — Migration `supabase/migrations/023_interactions.sql`. Columns: workspace_id, social_account_id, channel, external_id (unique), parent_post_id, author_handle, author_display_name, body, received_at, status, priority_score, snooze_until, replied_at, replied_to_post_id. RLS via `is_workspace_member`. Indexes for inbox sort + snooze sweep.
+- [DONE 2026-05-15] **Per-channel poller crons** — `src/app/api/cron/poll-interactions/route.ts` runs every 15 min via `.github/workflows/cron-poll-interactions.yml`. Throttle: X+Bluesky every run, LinkedIn hourly via UTC-minute gate. IG/Threads stub paths throw MetaAppReviewPendingError.
+- [DONE 2026-05-15] **Priority scoring** — `src/lib/interactions/priority.ts:computePriorityScore` blends verified-author / follower log-scale / customer-list match (brand_briefs.reference_links) / question-detection / age decay. Output 0-100.
+- [DONE 2026-05-15] **`/inbox` UI** — `src/app/(app)/inbox/page.tsx` with channel/priority/age/status filter chips, 50-row cap. Keyboard nav via `inbox-keyboard.tsx`: j/k navigate, r reply, s snooze 24h, x dismiss.
+- [DONE 2026-05-15] **Voice-aware reply drafter** — `src/lib/interactions/draft-reply.ts` (Claude tool-use, voice_profile + thread context + brand_brief.do_not_say). Opens with a 24-line block-comment HARD RULE: never auto-send.
+- [DONE 2026-05-15] **Send via per-channel reply API** — `xReply`, `linkedinReply`, `blueskyReply` shipped on main; `instagramReply`, `threadsReply` stubs throw MetaAppReviewPendingError. All live in `src/lib/social/*.ts`.
+- [DONE 2026-05-15] **Native-reply conflict handling** — when a new interaction arrives on a `parent_post_id` that already has a sibling marked replied, the new row gets `priority_score=0` + `status='read'`. Documented in poller code.
+- [DONE 2026-05-15] **Engagement-debt dashboard card** — `src/app/(app)/dashboard/engagement-debt-widget.tsx`. Hides when count is 0.
+- [DONE 2026-05-15] **Replies-as-sources integration** — `src/lib/sources/from-interaction.ts:interactionToSource()`. Surfaced from `/inbox/[id]` as "Use as source →" button. Creates a `sources` row (kind='transcript') for Phase 2.5 reuse.
+- [DONE 2026-05-15] **Hard rule: no auto-send** — enforced at three points: (1) draft-reply.ts header banner; (2) sendReplyAction is the SOLE caller of any *Reply helper, gated on getAuthedUserOrRedirect, never reads social_accounts.trust_mode; (3) reply-composer.tsx requires explicit click on "Send reply" with non-empty text, no autosubmit on mount.
 
 ## Phase 4.6 — Multi-Client Dashboard (~3 days)
 
@@ -142,7 +144,7 @@ Unblock onboarding so customers can sign up without manual hand-holding.
 
 **Added 2026-05-13 (deferred, partner-gated).** Full white-label / multi-client / org-billing platform. **Do not start until ≥1 agency design partner commits (verbal or paid).**
 
-- [BLOCKED-EXTERNAL] **Design partner signed** — prerequisite before any work begins.
+- [IN_PROGRESS 2026-05-15] **Design partner signed** — Decision: actively pursuing. Trigger the 7 deferred Phase 7 items as soon as ≥1 agency commits (verbal or paid). Owner: main thread is sourcing.
 - [DEFERRED] `organizations` table + `organization_memberships` schema.
 - [DEFERRED] Stripe billing refactor — organization-level subscription, per-client tier pricing.
 - [DEFERRED] Client-facing portal — `/client/[token]` magic-link auth, view + approve only.
@@ -159,8 +161,8 @@ Unblock onboarding so customers can sign up without manual hand-holding.
 - [DONE 2026-05-13] **Personal-profile posting** end-to-end test against a real account; verify `linkedinPost` helper works against real API.
 - [DONE 2026-05-13] **LinkedIn metrics pull** — add to hourly `/api/cron/pull-metrics` (UGC API for personal posts).
 - [DONE 2026-05-15] **Long-form variant** in cross-channel adaptation — `linkedinLongFormBlock()` at `src/lib/plan/prompt.ts:265-286` instructs Claude to use 800–2500 chars on LinkedIn when the idea has substance (thesis, story, multiple supporting points). Stays <600 chars when the idea is one-beat; explicit "don't pad" guidance. Phase 2.1 (Goals) + Phase 2.5 (Sources) pick it up transparently through the shared `generatePlan()` call site. Schema unchanged — guidance lives in the prompt, not as a hard zod refinement.
-- [BLOCKED-EXTERNAL] **Marketing Developer Program application** for `w_organization_social` — start week 1, parallel track. Indefinite timeline.
-- [TODO] **Company-page posting** (gated on the above; UI shows "coming soon" until approval lands).
+- [IN_REVIEW 2026-05-15] **Marketing Developer Program application** for `w_organization_social` — Decision: submit now. Indefinite review timeline (could be months); the submission costs nothing while we wait. Owner files via developer.linkedin.com → Apps → Products → Marketing Developer Platform.
+- [BLOCKED-EXTERNAL] **Company-page posting** — gated on the above. UI shows "coming soon" until approval lands; code path is otherwise ready to flip on (same LinkedIn helpers as personal posting, different scope).
 
 ## Phase 6 — Experimentation (theme-level deep + sequential-variants light)
 
