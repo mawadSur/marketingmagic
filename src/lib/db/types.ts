@@ -119,6 +119,11 @@ export type ThemeSnoozeEntry =
   | { theme: string; snoozed_until: string; archived?: false }
   | { theme: string; archived: true; snoozed_until?: null };
 
+// Phase 6.6 (Competitor Watch): the five channels the watch list accepts.
+// Mirrors the CHECK constraint in migration 021. Intersected with the
+// global Channel union for callers that want a strictly-typed narrowing.
+export type CompetitorWatchChannel = "x" | "bluesky" | "linkedin" | "instagram" | "threads";
+
 export interface Database {
   public: {
     Tables: {
@@ -874,6 +879,99 @@ export interface Database {
         Update: Partial<{
           posted_at: string | null;
           metrics_snapshot: Json | null;
+        }>;
+        Relationships: [];
+      };
+      watch_handles: {
+        // Phase 6.6 (Competitor Watch): one row per (workspace, channel,
+        // handle) pair. Founder-tier-only at the application layer
+        // (`hasCompetitorWatch()`); DB schema doesn't enforce the gate
+        // (would couple to billing).
+        Row: {
+          id: string;
+          workspace_id: string;
+          channel: CompetitorWatchChannel;
+          handle: string;
+          display_name: string | null;
+          status: "active" | "failed" | "rate_limited" | "paused";
+          failure_reason: string | null;
+          last_pulled_at: string | null;
+          added_by: string | null;
+          added_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          channel: CompetitorWatchChannel;
+          handle: string;
+          display_name?: string | null;
+          status?: "active" | "failed" | "rate_limited" | "paused";
+          failure_reason?: string | null;
+          last_pulled_at?: string | null;
+          added_by?: string | null;
+        };
+        Update: Partial<{
+          status: "active" | "failed" | "rate_limited" | "paused";
+          failure_reason: string | null;
+          last_pulled_at: string | null;
+          display_name: string | null;
+        }>;
+        Relationships: [];
+      };
+      competitor_posts: {
+        // Phase 6.6: per-watch-handle post cache. Outlier-detection sets
+        // is_winner; pattern extraction populates pattern_tags / reason.
+        Row: {
+          id: string;
+          watch_handle_id: string;
+          workspace_id: string;
+          external_id: string;
+          post_url: string | null;
+          posted_at: string;
+          text: string;
+          likes: number | null;
+          reposts: number | null;
+          replies: number | null;
+          impressions: number | null;
+          engagement_rate: number | null;
+          is_winner: boolean;
+          pattern_tags: string[] | null;
+          pattern_reason: string | null;
+          fetched_at: string;
+          drafted_at: string | null;
+          drafted_by: string | null;
+        };
+        Insert: {
+          id?: string;
+          watch_handle_id: string;
+          workspace_id: string;
+          external_id: string;
+          post_url?: string | null;
+          posted_at: string;
+          text?: string;
+          likes?: number | null;
+          reposts?: number | null;
+          replies?: number | null;
+          impressions?: number | null;
+          engagement_rate?: number | null;
+          is_winner?: boolean;
+          pattern_tags?: string[] | null;
+          pattern_reason?: string | null;
+          drafted_at?: string | null;
+          drafted_by?: string | null;
+        };
+        Update: Partial<{
+          text: string;
+          likes: number | null;
+          reposts: number | null;
+          replies: number | null;
+          impressions: number | null;
+          engagement_rate: number | null;
+          is_winner: boolean;
+          pattern_tags: string[] | null;
+          pattern_reason: string | null;
+          drafted_at: string | null;
+          drafted_by: string | null;
         }>;
         Relationships: [];
       };

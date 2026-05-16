@@ -370,3 +370,72 @@ export async function xAccessToken(opts: {
     screen_name: parsed.screen_name ?? "",
   };
 }
+
+// ─── Phase 6.6 (Competitor Watch) ───────────────────────────────────────
+//
+// Uses GET /2/users/by/username/:username to resolve a screen name to an
+// id, then GET /2/users/:id/tweets for the timeline. Both require the
+// elevated tier; for free-tier credentials this returns 403 and the
+// competitor-watch cron flags the row failed.
+//
+// Bound results to `count` (max 100 per API docs). The competitor cron
+// uses 30 for daily polling and 100 for initial backfill.
+
+export interface XPublicTweet {
+  id: string;
+  text: string;
+  created_at: string;
+  public_metrics?: {
+    like_count?: number;
+    retweet_count?: number;
+    reply_count?: number;
+    impression_count?: number;
+  };
+}
+
+export async function xResolveUsername(
+  creds: XCredentials,
+  username: string,
+): Promise<{ id: string; username: string; name: string | null }> {
+  const cleaned = username.replace(/^@/, "").trim();
+  const url = `${BASE_URL}/2/users/by/username/${encodeURIComponent(cleaned)}`;
+  const auth = authorize(creds, url, "GET");
+  const res = await fetch(url, { headers: { ...auth } });
+  if (!res.ok) {
+    const text = await res.text();
+    const err = new Error(`X resolve username failed (${res.status}): ${text.slice(0, 200)}`);
+    (err as Error & { status?: number }).status = res.status;
+    throw err;
+  }
+  const body = (await res.json()) as { data?: { id: string; username: string; name?: string } };
+  if (!body.data?.id) {
+    throw new Error(`X resolve username returned no data for @${cleaned}`);
+  }
+  return { id: body.data.id, username: body.data.username, name: body.data.name ?? null };
+}
+
+export async function xGetUserPosts(
+  creds: XCredentials,
+  userId: string,
+  count = 30,
+): Promise<XPublicTweet[]> {
+  const bounded = Math.max(5, Math.min(100, Math.floor(count)));
+  const params = new URLSearchParams({
+    max_results: String(bounded),
+    "tweet.fields": "created_at,public_metrics",
+    exclude: "retweets,replies",
+  });
+  const url = `${BASE_URL}/2/users/${encodeURIComponent(userId)}/tweets?${params}`;
+  const auth = authorize(creds, url, "GET");
+  const res = await fetch(url, { headers: { ...auth } });
+  if (!res.ok) {
+    const text = await res.text();
+    // Surface rate-limit + 403 distinctly so the caller can downgrade
+    // the watch row's status without retrying immediately.
+    const err = new Error(`X get user tweets failed (${res.status}): ${text.slice(0, 200)}`);
+    (err as Error & { status?: number }).status = res.status;
+    throw err;
+  }
+  const body = (await res.json()) as { data?: XPublicTweet[] };
+  return body.data ?? [];
+}

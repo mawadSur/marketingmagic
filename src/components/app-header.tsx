@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { Database } from "@/lib/db/types";
+import { hasCompetitorWatch } from "@/lib/billing/tiers";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { cn } from "@/lib/utils";
 
@@ -33,10 +34,26 @@ const baseNav = [
 //
 // Team is owner-only (the page itself redirects non-owners). Surfaced
 // next to Billing so settings-y links cluster together.
-function buildNav(showPortfolio: boolean, showTeam: boolean) {
+//
+// Competitors is Founder-tier-gated (`hasCompetitorWatch()`). We insert
+// it right after Sources because the mental model is: a competitor
+// winner can be promoted to a Source via the "Draft response" action.
+function buildNav(showPortfolio: boolean, showTeam: boolean, showCompetitors: boolean) {
   let items = baseNav;
   if (showPortfolio) {
     items = [baseNav[0]!, { href: "/portfolio", label: "Portfolio" }, ...baseNav.slice(1)];
+  }
+  if (showCompetitors) {
+    const sourcesIdx = items.findIndex((i) => i.href === "/sources");
+    if (sourcesIdx !== -1) {
+      items = [
+        ...items.slice(0, sourcesIdx + 1),
+        { href: "/competitors", label: "Competitors" },
+        ...items.slice(sourcesIdx + 1),
+      ];
+    } else {
+      items = [...items, { href: "/competitors", label: "Competitors" }];
+    }
   }
   if (showTeam) {
     items = [...items, { href: "/settings/team", label: "Team" }];
@@ -63,7 +80,7 @@ export function AppHeader({
   isOwner?: boolean;
 }) {
   const pathname = usePathname();
-  const nav = buildNav(workspaces.length >= 2, isOwner);
+  const nav = buildNav(workspaces.length >= 2, isOwner, hasCompetitorWatch(active.plan));
 
   return (
     <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
