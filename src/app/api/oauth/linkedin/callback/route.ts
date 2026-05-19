@@ -2,7 +2,13 @@ import { NextResponse, type NextRequest } from "next/server";
 import { siteUrl } from "@/lib/env";
 import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseService } from "@/lib/supabase/service";
-import { linkedinExchangeCode, linkedinVerify, type LinkedInCredentials } from "@/lib/social/linkedin";
+import {
+  linkedinExchangeCode,
+  linkedinVerify,
+  linkedinListOrganizations,
+  hasOrgPostScope,
+  type LinkedInCredentials,
+} from "@/lib/social/linkedin";
 import { assertWithinChannelQuota, QuotaExceededError } from "@/lib/billing/limits";
 
 // LinkedIn OAuth callback. State is `<workspaceId>:<nonce>` — nonce is
@@ -62,7 +68,17 @@ export async function GET(req: NextRequest) {
       refreshToken: token.refresh_token,
       expiresAt: new Date(Date.now() + token.expires_in * 1000).toISOString(),
       memberUrn: profile.urn,
+      grantedScopes: token.scope,
     };
+
+    // Community Management API: when w_organization_social was actually
+    // granted (LinkedIn approval through), fetch the orgs the user
+    // admins so we can offer the org picker. When the scope isn't
+    // granted (review pending), short-circuit to [] and fall through to
+    // personal-profile only.
+    const orgs = hasOrgPostScope(creds)
+      ? await linkedinListOrganizations(token.access_token)
+      : [];
 
     // Plan-gating: hobby caps channels at 1; reconnect of an existing
     // (channel, handle) is grandfathered through.
@@ -81,21 +97,44 @@ export async function GET(req: NextRequest) {
     }
 
     const svc = supabaseService();
-    const { error: dbErr } = await svc.from("social_accounts").upsert(
-      {
-        workspace_id: workspaceId,
-        channel: "linkedin",
-        handle: profile.name,
-        credentials: creds as unknown as Record<string, string>,
-        status: "connected",
-      },
-      { onConflict: "workspace_id,channel,handle" },
-    );
-    if (dbErr) {
+    const { data: inserted, error: dbErr } = await svc
+      .from("social_accounts")
+      .upsert(
+        {
+          workspace_id: workspaceId,
+          channel: "linkedin",
+          handle: profile.name,
+          credentials: creds as unknown as Record<string, string>,
+          status: "connected",
+        },
+        { onConflict: "workspace_id,channel,handle" },
+      )
+      .select("id")
+      .single();
+    if (dbErr || !inserted) {
       return NextResponse.redirect(
-        new URL(`/settings/channels?error=${encodeURIComponent(dbErr.message)}`, base),
+        new URL(
+          `/settings/channels?error=${encodeURIComponent(dbErr?.message ?? "db_insert_failed")}`,
+          base,
+        ),
       );
     }
+
+    // If the user admins at least one Company Page AND we got the scope,
+    // route them to the org picker so they can choose personal vs. org
+    // for this connection. Otherwise it's personal-only.
+    if (orgs.length > 0) {
+      const orgsParam = encodeURIComponent(JSON.stringify(orgs));
+      const res = NextResponse.redirect(
+        new URL(
+          `/settings/channels/linkedin/select-target?account=${inserted.id}&orgs=${orgsParam}`,
+          base,
+        ),
+      );
+      res.cookies.delete("li_oauth_nonce");
+      return res;
+    }
+
     const res = NextResponse.redirect(new URL("/settings/channels?connected=linkedin", base));
     res.cookies.delete("li_oauth_nonce");
     return res;

@@ -4,8 +4,18 @@
 // (or `openid profile` on the newer "Sign In with LinkedIn using OpenID")
 // to fetch the member URN we need for ugcPosts.
 //
+// Company-page posting (Phase 5 follow-up, 2026-05-18) adds the
+// Community Management API scopes (`w_organization_social` +
+// `r_organization_social`). When granted, the OAuth callback fetches the
+// orgs the user administers and persists `targetOrgUrn` on the social
+// account row; `linkedinPost` uses that URN as the author. When the
+// scope isn't granted (LinkedIn review still pending), the flow falls
+// back to personal-profile posting with the new scopes silently dropped
+// — old behavior preserved.
+//
 // Credentials shape stored in social_accounts.credentials:
-//   { accessToken, refreshToken?, expiresAt, memberUrn }
+//   { accessToken, refreshToken?, expiresAt, memberUrn, targetOrgUrn?,
+//     grantedScopes? }
 
 import { serverEnv } from "@/lib/env";
 
@@ -14,6 +24,22 @@ export interface LinkedInCredentials {
   refreshToken?: string;
   expiresAt: string; // ISO
   memberUrn: string; // e.g. "urn:li:person:abc123"
+  // Set when this social_account targets a Company Page rather than the
+  // member's personal profile. linkedinPost uses this as the author when
+  // present. Unset = personal profile.
+  targetOrgUrn?: string; // e.g. "urn:li:organization:12345"
+  // Granted scopes from the token response, space-separated. Used by the
+  // callback to decide whether to offer the org picker.
+  grantedScopes?: string;
+}
+
+// Helper: does this credentials blob have permission to post on behalf
+// of organizations? True only when the OAuth grant included
+// w_organization_social. Defensive — if `grantedScopes` is missing on
+// a legacy credentials row, we assume no.
+export function hasOrgPostScope(creds: LinkedInCredentials): boolean {
+  if (!creds.grantedScopes) return false;
+  return creds.grantedScopes.split(/\s+/).includes("w_organization_social");
 }
 
 const API = "https://api.linkedin.com";
@@ -37,12 +63,19 @@ export function linkedinAuthorizeUrl(opts: { redirectUri: string; state: string 
   if (!env.LINKEDIN_CLIENT_ID) {
     throw new Error("LINKEDIN_CLIENT_ID is not set.");
   }
+  // Scope request includes the Community Management API scopes
+  // (w_organization_social + r_organization_social). LinkedIn will only
+  // GRANT those if the app has been approved for Community Management
+  // API — submissions can be pending. If LinkedIn drops the unauthorized
+  // scope at consent time, the token response's `scope` field reports
+  // what was actually granted, and the callback gracefully falls back
+  // to personal-only.
   const params = new URLSearchParams({
     response_type: "code",
     client_id: env.LINKEDIN_CLIENT_ID,
     redirect_uri: opts.redirectUri,
     state: opts.state,
-    scope: "openid profile w_member_social",
+    scope: "openid profile w_member_social w_organization_social r_organization_social",
   });
   return `https://www.linkedin.com/oauth/v2/authorization?${params}`;
 }
@@ -82,6 +115,52 @@ export async function linkedinExchangeCode(opts: {
   return (await res.json()) as TokenResponse;
 }
 
+// List LinkedIn organizations the authed user administers. Requires the
+// `r_organization_social` scope to be granted — caller should check
+// hasOrgPostScope() on the post-exchange credentials before calling.
+//
+// LinkedIn's `organizationAcls` endpoint returns role assignments; we
+// filter to ADMINISTRATOR and resolve org URNs to display names via a
+// follow-up batch call.
+export interface LinkedInOrgRef {
+  urn: string; // "urn:li:organization:12345"
+  name: string;
+}
+
+export async function linkedinListOrganizations(accessToken: string): Promise<LinkedInOrgRef[]> {
+  const aclRes = await fetch(
+    `${API}/v2/organizationAcls?q=roleAssignee&role=ADMINISTRATOR&state=APPROVED&projection=(elements*(organization~(localizedName)))`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "LinkedIn-Version": "202404",
+        "X-Restli-Protocol-Version": "2.0.0",
+      },
+    },
+  );
+  if (!aclRes.ok) {
+    // Either no scope grant or no org admin roles. Return empty rather
+    // than throwing — callers handle the "no orgs available" case by
+    // defaulting to personal-profile posting.
+    return [];
+  }
+  const json = (await aclRes.json()) as {
+    elements?: Array<{
+      organization?: string;
+      "organization~"?: { localizedName?: string };
+    }>;
+  };
+  const out: LinkedInOrgRef[] = [];
+  for (const el of json.elements ?? []) {
+    if (!el.organization) continue;
+    out.push({
+      urn: el.organization,
+      name: el["organization~"]?.localizedName ?? el.organization,
+    });
+  }
+  return out;
+}
+
 export async function linkedinVerify(accessToken: string): Promise<{ urn: string; name: string }> {
   // OpenID userinfo endpoint — returns `sub` we use to construct the URN.
   const res = await fetch(`${API}/v2/userinfo`, {
@@ -111,8 +190,12 @@ export async function linkedinPost(
       `LinkedIn post text exceeds ${LINKEDIN_MAX_TEXT} chars (got ${text.length}).`,
     );
   }
+  // Author URN: organization when this social_account targets a Page,
+  // else the member's personal URN. linkedinPost is otherwise unchanged
+  // — the UGC posts endpoint takes either URN form transparently.
+  const author = creds.targetOrgUrn ?? creds.memberUrn;
   const body = {
-    author: creds.memberUrn,
+    author,
     lifecycleState: "PUBLISHED",
     specificContent: {
       "com.linkedin.ugc.ShareContent": {
