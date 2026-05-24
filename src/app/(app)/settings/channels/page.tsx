@@ -14,8 +14,13 @@ const CONNECTORS = [
   { slug: "bluesky", label: "Connect Bluesky" },
 ] as const;
 
-export default async function ChannelsPage() {
+export default async function ChannelsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ connected?: string; error?: string }>;
+}) {
   const ws = await getActiveWorkspaceOrRedirect();
+  const params = await searchParams;
   const supabase = await supabaseServer();
   const { data: accounts } = await supabase
     .from("social_accounts_safe")
@@ -34,6 +39,21 @@ export default async function ChannelsPage() {
           Connected social accounts. Credentials live server-side only — never exposed to the browser.
         </p>
       </header>
+
+      {/* OAuth callbacks (X, LinkedIn, IG, Threads) bounce back here with
+          ?connected=… or ?error=…. Surface them so users aren't silently
+          stranded after an OAuth round-trip. */}
+      {params.connected ? (
+        <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-4 text-sm">
+          <p className="font-medium">Connected {params.connected}.</p>
+        </div>
+      ) : null}
+      {params.error ? (
+        <div className="rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm">
+          <p className="font-medium">Connection failed.</p>
+          <p className="mt-1 text-muted-foreground break-words">{params.error}</p>
+        </div>
+      ) : null}
 
       <section className="space-y-3">
         <div className="flex items-end justify-between">
