@@ -13,11 +13,30 @@ import { xRequestToken, xAuthorizeUrl } from "@/lib/social/x";
 // keep the action behind a same-site form submission). The settings UI posts
 // a hidden form.
 
+// Translate raw Twitter error strings into something a human can act on.
+// Twitter's code 32 ("Could not authenticate you") at /oauth/request_token
+// is the classic symptom of the wrong consumer credentials — almost always
+// because the operator pasted the OAuth 2.0 Client ID/Secret into the env
+// vars instead of the OAuth 1.0a API Key/Secret. Same dev portal, different
+// section of "Keys and tokens".
+function friendlyXError(raw: string): string {
+  if (raw.includes('"code":32') || raw.includes("Could not authenticate you")) {
+    return "X rejected the API credentials. Open developer.x.com → your app → Keys and tokens → 'Consumer Keys', and set X_CLIENT_ID = API Key, X_CLIENT_SECRET = API Secret (NOT the OAuth 2.0 Client ID/Secret).";
+  }
+  if (raw.includes('"code":89')) {
+    return "X access token expired or invalid. Disconnect and re-authorize.";
+  }
+  if (raw.includes('"code":215')) {
+    return "X authentication data missing. Check that both X_CLIENT_ID and X_CLIENT_SECRET are set on Vercel.";
+  }
+  return raw;
+}
+
 export async function POST(_req: NextRequest) {
   const env = serverEnv();
   if (!env.X_CLIENT_ID || !env.X_CLIENT_SECRET) {
     return NextResponse.redirect(
-      new URL("/settings/channels?error=x_not_configured", siteUrl()),
+      new URL("/settings/channels/x?error=x_not_configured", siteUrl()),
     );
   }
   // getActiveWorkspaceOrRedirect handles auth + workspace bootstrap.
@@ -35,9 +54,10 @@ export async function POST(_req: NextRequest) {
       callbackUrl,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "x_request_token_failed";
+    const raw = err instanceof Error ? err.message : "x_request_token_failed";
+    const msg = friendlyXError(raw);
     return NextResponse.redirect(
-      new URL(`/settings/channels?error=${encodeURIComponent(msg)}`, base),
+      new URL(`/settings/channels/x?error=${encodeURIComponent(msg)}`, base),
     );
   }
 
@@ -45,7 +65,12 @@ export async function POST(_req: NextRequest) {
     // Twitter rejected the callback URL. Most common cause: the app's
     // configured callback domain doesn't include the current host.
     return NextResponse.redirect(
-      new URL("/settings/channels?error=x_callback_not_confirmed", base),
+      new URL(
+        `/settings/channels/x?error=${encodeURIComponent(
+          `X rejected the callback URL. Add ${callbackUrl} to your X app's Callback URI / Redirect URL list at developer.x.com.`,
+        )}`,
+        base,
+      ),
     );
   }
 

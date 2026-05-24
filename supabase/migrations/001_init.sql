@@ -163,7 +163,9 @@ create policy "Members can update their accounts"
   using (public.is_workspace_member(workspace_id))
   with check (public.is_workspace_member(workspace_id));
 
-create or replace view public.social_accounts_safe as
+create or replace view public.social_accounts_safe
+  with (security_invoker = true)
+  as
   select
     id, workspace_id, channel, handle, trust_mode, trust_threshold,
     successful_post_count, status, created_at, updated_at
