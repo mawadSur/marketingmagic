@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 async function startConnect() {
   "use server";
   const env = serverEnv();
-  if (!env.META_APP_ID || !env.META_APP_SECRET) {
+  if (!env.THREADS_APP_ID || !env.THREADS_APP_SECRET) {
     redirect("/settings/channels?error=threads_not_configured");
   }
   const ws = await getActiveWorkspaceOrRedirect();
@@ -32,7 +32,7 @@ async function startConnect() {
 
 export default function ConnectThreadsPage() {
   const env = serverEnv();
-  const configured = Boolean(env.META_APP_ID && env.META_APP_SECRET);
+  const configured = Boolean(env.THREADS_APP_ID && env.THREADS_APP_SECRET);
   return (
     <div className="mx-auto max-w-xl space-y-6">
       <header className="space-y-1">
@@ -47,9 +47,9 @@ export default function ConnectThreadsPage() {
         </form>
       ) : (
         <div className="rounded-md border border-amber-500/50 bg-amber-500/5 p-4 text-sm">
-          <p className="font-medium">Meta OAuth keys are not configured.</p>
+          <p className="font-medium">Threads OAuth keys are not configured.</p>
           <p className="mt-1 text-muted-foreground">
-            Set <code>META_APP_ID</code> and <code>META_APP_SECRET</code> in <code>.env</code> and
+            Set <code>THREADS_APP_ID</code> and <code>THREADS_APP_SECRET</code> in <code>.env</code> and
             register your app at{" "}
             <a className="underline-offset-4 hover:underline" href="https://developers.facebook.com/apps/" target="_blank" rel="noreferrer">
               developers.facebook.com/apps
