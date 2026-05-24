@@ -7,8 +7,10 @@ import { serverEnv, siteUrl } from "@/lib/env";
 // Meta calls this with a single form field `signed_request` shaped as
 // `<base64url(HMAC-SHA256 of payload)>.<base64url(JSON payload)>`. The payload
 // contains the Facebook user_id whose data should be deleted, plus algorithm
-// + issued_at timestamps. We verify the HMAC using META_APP_SECRET so we
-// don't act on forged requests, then return JSON with:
+// + issued_at timestamps. We verify the HMAC against each known app secret
+// (META, INSTAGRAM, THREADS) since Meta sends the callback signed with
+// whichever app the user removed. The first secret that matches wins.
+// Then we return JSON with:
 //   { url: "<status page>", confirmation_code: "<unique code>" }
 //
 // Meta surfaces that URL to the user so they can check on the deletion. The
@@ -75,10 +77,15 @@ function confirmationCodeFor(userId: string): string {
 
 export async function POST(req: NextRequest) {
   const env = serverEnv();
-  if (!env.META_APP_SECRET) {
-    // App secret missing — we can't verify the signature, so we refuse rather
-    // than silently accept anything Meta (or anyone else) sends.
-    return NextResponse.json({ error: "meta_app_secret_not_configured" }, { status: 503 });
+  // Meta calls this endpoint from whichever app the user removed (umbrella,
+  // IG, or Threads), each signed with that app's secret. Collect every secret
+  // we know about and try them in turn — the first one that verifies wins.
+  // At least one must be configured or we have no way to validate anything.
+  const candidateSecrets = [env.META_APP_SECRET, env.INSTAGRAM_APP_SECRET, env.THREADS_APP_SECRET].filter(
+    (s): s is string => typeof s === "string" && s.length > 0,
+  );
+  if (candidateSecrets.length === 0) {
+    return NextResponse.json({ error: "no_meta_secret_configured" }, { status: 503 });
   }
 
   // Meta sends application/x-www-form-urlencoded with a single field.
@@ -102,7 +109,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "missing_signed_request" }, { status: 400 });
   }
 
-  const payload = verifySignedRequest(signedRequest, env.META_APP_SECRET);
+  // Try each known app secret in turn until one verifies. This is fine
+  // performance-wise (≤3 HMAC computations) and avoids hard-coding which
+  // app the callback came from.
+  let payload: SignedRequestPayload | null = null;
+  for (const secret of candidateSecrets) {
+    payload = verifySignedRequest(signedRequest, secret);
+    if (payload) break;
+  }
   if (!payload) {
     return NextResponse.json({ error: "invalid_signature" }, { status: 400 });
   }

@@ -20,9 +20,25 @@ const serverSchema = z.object({
   // LinkedIn OAuth (Sign In with LinkedIn + w_member_social).
   LINKEDIN_CLIENT_ID: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
   LINKEDIN_CLIENT_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
-  // Meta (Threads + Instagram share these).
+  // Meta's "Use cases" model in 2025 issues separate App ID/Secret pairs per
+  // product. We keep them split so each channel uses its own credentials —
+  // the alternative (one umbrella app) hits App Review snags because Meta
+  // reviews each product's surface independently.
+  //
+  // - META_APP_ID/SECRET — the main "umbrella" app credentials from
+  //   App Settings → Basic. Used to verify signed_request payloads on the
+  //   data-deletion callback when the user removed the umbrella app itself,
+  //   and reserved for any future Facebook Page channel.
+  // - INSTAGRAM_APP_ID/SECRET — credentials from the Instagram product
+  //   ("Instagram API with Instagram Login"). Used by the IG OAuth flow.
+  // - THREADS_APP_ID/SECRET — credentials from the Threads API product.
+  //   Used by the Threads OAuth flow.
   META_APP_ID: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
   META_APP_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
+  INSTAGRAM_APP_ID: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
+  INSTAGRAM_APP_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
+  THREADS_APP_ID: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
+  THREADS_APP_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
   // Resend transactional email — used by the daily approval digest cron.
   // Optional: when unset the digest route logs and skips instead of throwing,
   // so the rest of the app keeps booting without an email provider configured.

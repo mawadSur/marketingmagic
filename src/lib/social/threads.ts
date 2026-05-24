@@ -30,11 +30,11 @@ export interface ThreadsMetrics {
 
 export function threadsAuthorizeUrl(opts: { redirectUri: string; state: string }): string {
   const env = serverEnv();
-  if (!env.META_APP_ID) {
-    throw new Error("META_APP_ID is not set.");
+  if (!env.THREADS_APP_ID) {
+    throw new Error("THREADS_APP_ID is not set.");
   }
   const params = new URLSearchParams({
-    client_id: env.META_APP_ID,
+    client_id: env.THREADS_APP_ID,
     redirect_uri: opts.redirectUri,
     scope: "threads_basic,threads_content_publish,threads_manage_insights",
     response_type: "code",
@@ -48,16 +48,16 @@ export async function threadsExchangeCode(opts: {
   redirectUri: string;
 }): Promise<{ accessToken: string; userId: string; expiresAt: string }> {
   const env = serverEnv();
-  if (!env.META_APP_ID || !env.META_APP_SECRET) {
-    throw new Error("META OAuth keys are not set.");
+  if (!env.THREADS_APP_ID || !env.THREADS_APP_SECRET) {
+    throw new Error("Threads OAuth keys are not set.");
   }
   // Short-lived token first.
   const shortRes = await fetch("https://graph.threads.net/oauth/access_token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      client_id: env.META_APP_ID,
-      client_secret: env.META_APP_SECRET,
+      client_id: env.THREADS_APP_ID,
+      client_secret: env.THREADS_APP_SECRET,
       grant_type: "authorization_code",
       redirect_uri: opts.redirectUri,
       code: opts.code,
@@ -70,7 +70,7 @@ export async function threadsExchangeCode(opts: {
 
   // Exchange for long-lived (60-day) token.
   const longRes = await fetch(
-    `https://graph.threads.net/access_token?grant_type=th_exchange_token&client_secret=${encodeURIComponent(env.META_APP_SECRET)}&access_token=${encodeURIComponent(short.access_token)}`,
+    `https://graph.threads.net/access_token?grant_type=th_exchange_token&client_secret=${encodeURIComponent(env.THREADS_APP_SECRET)}&access_token=${encodeURIComponent(short.access_token)}`,
   );
   if (!longRes.ok) {
     throw new Error(`Threads long token failed (${longRes.status}): ${await longRes.text()}`);

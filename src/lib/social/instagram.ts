@@ -1,8 +1,18 @@
-// Instagram via Meta Graph API (Business/Creator account linked to FB Page).
+// Instagram via the Instagram Graph API (Instagram API with Instagram Login).
 //
-// Two-step publish: create container with image_url, then publish.
-// Auth: long-lived page access token with `instagram_basic`,
-// `instagram_content_publish`, `pages_show_list`.
+// Users authorize directly with their Instagram Business/Creator account —
+// no Facebook Page intermediary required. Two-step publish: create container
+// with image_url, then publish.
+//
+// Auth: long-lived user access token with `instagram_business_basic` +
+// `instagram_business_content_publish` (+ `instagram_business_manage_comments`
+// for Phase 4.5 reply inbox once App Review lands).
+//
+// Endpoints differ from the older Facebook-Login-via-Pages path:
+//   - Authorize:    https://www.instagram.com/oauth/authorize
+//   - Short token:  https://api.instagram.com/oauth/access_token
+//   - Long token:   https://graph.instagram.com/access_token?grant_type=ig_exchange_token
+//   - Graph base:   https://graph.instagram.com
 
 import { serverEnv } from "@/lib/env";
 import { MetaAppReviewPendingError } from "@/lib/interactions/errors";
@@ -13,7 +23,7 @@ export interface InstagramCredentials {
   igUserId: string; // numeric IG Business user id
 }
 
-const GRAPH = "https://graph.facebook.com/v23.0";
+const GRAPH = "https://graph.instagram.com";
 
 export interface InstagramPostResult {
   id: string;
@@ -32,15 +42,17 @@ export interface InstagramMetrics {
 
 export function instagramAuthorizeUrl(opts: { redirectUri: string; state: string }): string {
   const env = serverEnv();
-  if (!env.META_APP_ID) throw new Error("META_APP_ID is not set.");
+  if (!env.INSTAGRAM_APP_ID) throw new Error("INSTAGRAM_APP_ID is not set.");
   const params = new URLSearchParams({
-    client_id: env.META_APP_ID,
+    client_id: env.INSTAGRAM_APP_ID,
     redirect_uri: opts.redirectUri,
-    scope: "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement",
+    // IG Login flow scopes — note the `instagram_business_*` prefix vs the
+    // older `instagram_*` names used on the FB Login path.
+    scope: "instagram_business_basic,instagram_business_content_publish",
     response_type: "code",
     state: opts.state,
   });
-  return `https://www.facebook.com/v23.0/dialog/oauth?${params}`;
+  return `https://www.instagram.com/oauth/authorize?${params}`;
 }
 
 export async function instagramExchangeCode(opts: {
@@ -48,51 +60,65 @@ export async function instagramExchangeCode(opts: {
   redirectUri: string;
 }): Promise<{ accessToken: string; igUserId: string; expiresAt: string }> {
   const env = serverEnv();
-  if (!env.META_APP_ID || !env.META_APP_SECRET) throw new Error("META OAuth keys are not set.");
-
-  // 1. Authorization-code → short-lived user token.
-  const tokenRes = await fetch(
-    `${GRAPH}/oauth/access_token?` +
-      new URLSearchParams({
-        client_id: env.META_APP_ID,
-        redirect_uri: opts.redirectUri,
-        client_secret: env.META_APP_SECRET,
-        code: opts.code,
-      }),
-  );
-  if (!tokenRes.ok) throw new Error(`IG token failed (${tokenRes.status}): ${await tokenRes.text()}`);
-  const tok = (await tokenRes.json()) as { access_token: string; expires_in?: number };
-
-  // 2. Find the user's pages → which page has an IG Business account.
-  const pagesRes = await fetch(`${GRAPH}/me/accounts?access_token=${encodeURIComponent(tok.access_token)}`);
-  if (!pagesRes.ok) throw new Error(`IG pages failed (${pagesRes.status}): ${await pagesRes.text()}`);
-  const pages = (await pagesRes.json()) as {
-    data: Array<{ id: string; access_token: string; name: string }>;
-  };
-  if (!pages.data?.length) throw new Error("No FB pages found on this account.");
-
-  // Pick the first page with a connected IG Business account.
-  for (const page of pages.data) {
-    const igRes = await fetch(
-      `${GRAPH}/${page.id}?fields=instagram_business_account&access_token=${encodeURIComponent(page.access_token)}`,
-    );
-    if (!igRes.ok) continue;
-    const ig = (await igRes.json()) as { instagram_business_account?: { id: string } };
-    if (ig.instagram_business_account?.id) {
-      return {
-        accessToken: page.access_token,
-        igUserId: ig.instagram_business_account.id,
-        expiresAt: new Date(Date.now() + (tok.expires_in ?? 60 * 60 * 24 * 60) * 1000).toISOString(),
-      };
-    }
+  if (!env.INSTAGRAM_APP_ID || !env.INSTAGRAM_APP_SECRET) {
+    throw new Error("Instagram OAuth keys are not set.");
   }
-  throw new Error("No Instagram Business account linked to any of your Pages.");
+
+  // 1. Authorization-code → short-lived user token (1 hour) on api.instagram.com.
+  //    The IG Login flow uses form-encoded POST, not query-string GET like FB.
+  const shortRes = await fetch("https://api.instagram.com/oauth/access_token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: env.INSTAGRAM_APP_ID,
+      client_secret: env.INSTAGRAM_APP_SECRET,
+      grant_type: "authorization_code",
+      redirect_uri: opts.redirectUri,
+      code: opts.code,
+    }),
+  });
+  if (!shortRes.ok) {
+    throw new Error(`IG short token failed (${shortRes.status}): ${await shortRes.text()}`);
+  }
+  // Response is { access_token: "<token>", user_id: <number>, permissions: "..." }.
+  // user_id arrives as a JSON number; coerce to string since downstream stores
+  // it as text on social_accounts.credentials.
+  const short = (await shortRes.json()) as {
+    access_token: string;
+    user_id: number | string;
+    permissions?: string;
+  };
+
+  // 2. Exchange short-lived for long-lived (60-day) token on graph.instagram.com.
+  const longRes = await fetch(
+    `${GRAPH}/access_token?grant_type=ig_exchange_token&client_secret=${encodeURIComponent(env.INSTAGRAM_APP_SECRET)}&access_token=${encodeURIComponent(short.access_token)}`,
+  );
+  if (!longRes.ok) {
+    throw new Error(`IG long token failed (${longRes.status}): ${await longRes.text()}`);
+  }
+  const long = (await longRes.json()) as { access_token: string; expires_in: number };
+  return {
+    accessToken: long.access_token,
+    igUserId: String(short.user_id),
+    expiresAt: new Date(Date.now() + long.expires_in * 1000).toISOString(),
+  };
 }
 
 export async function instagramVerify(accessToken: string, igUserId: string): Promise<{ username: string }> {
-  const res = await fetch(`${GRAPH}/${igUserId}?fields=username&access_token=${encodeURIComponent(accessToken)}`);
+  // /me?fields=user_id,username works against graph.instagram.com on the
+  // IG Login flow. We accept either /me or /<igUserId> here — using /me
+  // sidesteps the rare edge case where the stored userId drifts from
+  // what the token actually represents.
+  const res = await fetch(
+    `${GRAPH}/me?fields=username,user_id&access_token=${encodeURIComponent(accessToken)}`,
+  );
   if (!res.ok) throw new Error(`IG verify failed (${res.status}): ${await res.text()}`);
-  const json = (await res.json()) as { username: string };
+  const json = (await res.json()) as { username: string; user_id?: string };
+  // igUserId arg is kept for backwards-compat with callers; we don't need
+  // it for the verify call but log a mismatch if it disagrees.
+  if (json.user_id && igUserId && json.user_id !== igUserId) {
+    console.warn(`IG verify: stored userId ${igUserId} != token's ${json.user_id}`);
+  }
   return { username: json.username };
 }
 
