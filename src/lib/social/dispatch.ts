@@ -7,6 +7,7 @@ import { xPost, xUploadMedia, xMetrics, type XCredentials } from "./x";
 import { linkedinPost, linkedinUploadImage, linkedinMetrics, type LinkedInCredentials } from "./linkedin";
 import { threadsPost, threadsMetrics, type ThreadsCredentials } from "./threads";
 import { instagramPost, instagramMetrics, type InstagramCredentials } from "./instagram";
+import { facebookPost, facebookMetrics, type FacebookCredentials } from "./facebook";
 import { blueskyPost, blueskyMetrics, type BlueskyCredentials } from "./bluesky";
 
 export interface PostMediaItem {
@@ -113,6 +114,15 @@ export async function dispatchPost(
       );
       return { externalId: sent.uri };
     }
+    case "facebook": {
+      // FB Page posts: text + optional link unfurl. Image/video posts go
+      // through /{page-id}/photos or /videos — out of scope for v1, callers
+      // that pass media items get the link-unfurl path with the public URL.
+      const creds = credentials as FacebookCredentials;
+      const linkUrl = media[0]?.publicUrl ?? undefined;
+      const sent = await facebookPost(creds, text, linkUrl);
+      return { externalId: sent.id };
+    }
     default:
       throw new Error(`Unsupported channel: ${channel}`);
   }
@@ -172,6 +182,16 @@ export async function dispatchMetrics(
         likes: m.likes,
         comments: m.replies,
         shares: m.reposts + m.quotes,
+        clicks: 0,
+      };
+    }
+    case "facebook": {
+      const m = await facebookMetrics(credentials as FacebookCredentials, externalId);
+      return {
+        impressions: m.impressions || m.reach,
+        likes: m.reactions,
+        comments: m.comments,
+        shares: m.shares,
         clicks: 0,
       };
     }

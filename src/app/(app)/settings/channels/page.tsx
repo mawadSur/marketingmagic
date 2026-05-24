@@ -6,12 +6,19 @@ import { EmptyState } from "@/components/ui/empty-state";
 
 export const dynamic = "force-dynamic";
 
+// Tiles in the "Add a channel" grid. Each OAuth channel has an `initiate`
+// path the tile POSTs to — that way the listing acts as a one-click connect
+// (no per-channel page hop required). Bluesky uses an app-password paste
+// instead of OAuth, so it stays a link to its own page where the input form
+// lives. The per-channel pages still exist for users who land there directly
+// or follow a deep link from elsewhere in the app.
 const CONNECTORS = [
-  { slug: "x", label: "Connect X" },
-  { slug: "linkedin", label: "Connect LinkedIn" },
-  { slug: "threads", label: "Connect Threads" },
-  { slug: "instagram", label: "Connect Instagram" },
-  { slug: "bluesky", label: "Connect Bluesky" },
+  { slug: "x", label: "Connect X", initiate: "/api/oauth/x/initiate" },
+  { slug: "linkedin", label: "Connect LinkedIn", initiate: "/api/oauth/linkedin/initiate" },
+  { slug: "threads", label: "Connect Threads", initiate: "/api/oauth/threads/initiate" },
+  { slug: "instagram", label: "Connect Instagram", initiate: "/api/oauth/instagram/initiate" },
+  { slug: "facebook", label: "Connect Facebook", initiate: "/api/oauth/facebook/initiate" },
+  { slug: "bluesky", label: "Connect Bluesky", initiate: null }, // app-password flow, not OAuth
 ] as const;
 
 export default async function ChannelsPage({
@@ -100,16 +107,35 @@ export default async function ChannelsPage({
       <section className="space-y-3">
         <h2 className="text-base font-medium">Add a channel</h2>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {CONNECTORS.map((c) => (
-            <Link
-              key={c.slug}
-              href={`/settings/channels/${c.slug}`}
-              className="card-hover flex items-center gap-3 rounded-md border bg-card px-3 py-2.5 text-sm font-medium"
-            >
-              <ChannelBadge channel={c.slug} />
-              <span>{c.label}</span>
-            </Link>
-          ))}
+          {CONNECTORS.map((c) =>
+            c.initiate ? (
+              // OAuth channel: tile is a POST form to the initiate route.
+              // One-click connect — submitting kicks the user straight to
+              // the provider's authorize screen.
+              <form key={c.slug} action={c.initiate} method="post">
+                <button
+                  type="submit"
+                  className="card-hover flex w-full items-center gap-3 rounded-md border bg-card px-3 py-2.5 text-left text-sm font-medium"
+                >
+                  <ChannelBadge channel={c.slug} />
+                  <span>{c.label}</span>
+                  <span aria-hidden className="ml-auto text-muted-foreground">→</span>
+                </button>
+              </form>
+            ) : (
+              // Bluesky: link to the channel page where the handle +
+              // app-password form lives.
+              <Link
+                key={c.slug}
+                href={`/settings/channels/${c.slug}`}
+                className="card-hover flex items-center gap-3 rounded-md border bg-card px-3 py-2.5 text-sm font-medium"
+              >
+                <ChannelBadge channel={c.slug} />
+                <span>{c.label}</span>
+                <span aria-hidden className="ml-auto text-muted-foreground">→</span>
+              </Link>
+            ),
+          )}
         </div>
       </section>
     </div>
