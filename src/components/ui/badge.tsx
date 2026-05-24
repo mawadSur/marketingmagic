@@ -73,6 +73,7 @@ const CHANNEL_LABEL: Record<string, string> = {
   linkedin: "LinkedIn",
   threads: "Threads",
   instagram: "Instagram",
+  facebook: "Facebook",
   bluesky: "Bluesky",
 };
 
@@ -84,6 +85,7 @@ const CHANNEL_STYLE: Record<string, string> = {
   linkedin: "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-400",
   threads: "border-zinc-500/30 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300",
   instagram: "border-pink-500/30 bg-pink-500/10 text-pink-700 dark:text-pink-400",
+  facebook: "border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-400",
   bluesky: "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-400",
 };
 
