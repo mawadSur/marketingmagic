@@ -81,7 +81,13 @@ async function handle(req: NextRequest) {
     }
 
     try {
-      const m = await dispatchMetrics(post.channel, account.credentials, post.external_id);
+      const m = await dispatchMetrics(
+        svc,
+        post.channel,
+        account.credentials,
+        post.external_id,
+        post.social_account_id,
+      );
       const engaged = m.likes + m.comments + m.shares;
       const engagement_rate = m.impressions > 0 ? engaged / m.impressions : null;
 

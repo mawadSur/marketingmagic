@@ -8,7 +8,7 @@ import { pollInstagram, pollThreads } from "@/lib/interactions/pollers/meta-stub
 import type { PollerResult, PollerInteraction } from "@/lib/interactions/pollers/types";
 import { MetaAppReviewPendingError } from "@/lib/interactions/errors";
 import { computePriorityScore } from "@/lib/interactions/priority";
-import type { XCredentials } from "@/lib/social/x";
+import { loadFreshXCredentials, type XCredentials } from "@/lib/social/x";
 import type { LinkedInCredentials } from "@/lib/social/linkedin";
 import type { BlueskyCredentials } from "@/lib/social/bluesky";
 import type { Database, InteractionChannel } from "@/lib/db/types";
@@ -231,7 +231,11 @@ async function runPoller(
   const channel = acct.channel as InteractionChannel;
   switch (channel) {
     case "x": {
-      const creds = acct.credentials as unknown as XCredentials;
+      const rawCreds = acct.credentials as unknown as XCredentials;
+      // Refresh proactively — this cron runs every 30min and X tokens last
+      // 2h, so without refresh the poll would 401 by the 4th run.
+      const svc = supabaseService();
+      const creds = await loadFreshXCredentials(svc, acct.id, rawCreds);
       return pollX(creds);
     }
     case "bluesky": {

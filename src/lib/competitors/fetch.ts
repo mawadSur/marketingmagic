@@ -28,6 +28,7 @@ import {
 import {
   xGetUserPosts,
   xResolveUsername,
+  loadFreshXCredentials,
   type XCredentials,
   type XPublicTweet,
 } from "@/lib/social/x";
@@ -109,13 +110,17 @@ async function fetchXCompetitor(
   handle: WatchHandleRow,
   count: number,
 ): Promise<FetchOutcome> {
-  const creds = await pickXCredsForWorkspace(handle.workspace_id);
-  if (!creds) {
+  const picked = await pickXCredsForWorkspace(handle.workspace_id);
+  if (!picked) {
     return {
       status: "failed",
       reason: "no_x_account_connected",
     };
   }
+  const svc = supabaseService();
+  // Refresh the access_token if it's near expiry — competitor watch runs
+  // hourly so any account untouched for >2h would otherwise fail with 401.
+  const creds = await loadFreshXCredentials(svc, picked.id, picked.creds);
   try {
     const resolved = await xResolveUsername(creds, handle.handle);
     const tweets = await xGetUserPosts(creds, resolved.id, count);
@@ -146,11 +151,13 @@ function normaliseXTweet(handle: string, t: XPublicTweet): FetchedCompetitorPost
   };
 }
 
-async function pickXCredsForWorkspace(workspaceId: string): Promise<XCredentials | null> {
+async function pickXCredsForWorkspace(
+  workspaceId: string,
+): Promise<{ id: string; creds: XCredentials } | null> {
   const svc = supabaseService();
   const { data } = await svc
     .from("social_accounts")
-    .select("credentials, status")
+    .select("id, credentials, status")
     .eq("workspace_id", workspaceId)
     .eq("channel", "x")
     .eq("status", "connected")
@@ -160,16 +167,17 @@ async function pickXCredsForWorkspace(workspaceId: string): Promise<XCredentials
   if (!row || !row.credentials || typeof row.credentials !== "object") return null;
   const c = row.credentials as Record<string, unknown>;
   if (
-    typeof c.apiKey === "string" &&
-    typeof c.apiSecret === "string" &&
     typeof c.accessToken === "string" &&
-    typeof c.accessTokenSecret === "string"
+    typeof c.refreshToken === "string" &&
+    typeof c.expiresAt === "number"
   ) {
     return {
-      apiKey: c.apiKey,
-      apiSecret: c.apiSecret,
-      accessToken: c.accessToken,
-      accessTokenSecret: c.accessTokenSecret,
+      id: row.id,
+      creds: {
+        accessToken: c.accessToken,
+        refreshToken: c.refreshToken,
+        expiresAt: c.expiresAt,
+      },
     };
   }
   return null;
