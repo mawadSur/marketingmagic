@@ -113,7 +113,7 @@ async function applySubscriptionState(args: {
 
   // No subscription (cancelled/deleted) → back to hobby.
   if (!sub) {
-    await svc
+    const { error } = await svc
       .from("workspaces")
       .update({
         plan: args.fallbackPlan ?? "hobby",
@@ -121,6 +121,11 @@ async function applySubscriptionState(args: {
         subscription_status: "canceled",
       })
       .eq("id", args.workspaceId);
+    if (error) {
+      throw new Error(
+        `[stripe-webhook] failed to clear plan on workspace ${args.workspaceId}: ${error.message}`,
+      );
+    }
     return;
   }
 
@@ -153,7 +158,7 @@ async function applySubscriptionState(args: {
       ? "hobby"
       : (planFromPrice ?? args.fallbackPlan ?? "hobby");
 
-  await svc
+  const { error } = await svc
     .from("workspaces")
     .update({
       plan: effectivePlan,
@@ -162,6 +167,15 @@ async function applySubscriptionState(args: {
       subscription_status: sub.status,
     })
     .eq("id", args.workspaceId);
+  // Surface DB errors (e.g. plan CHECK violations) instead of swallowing
+  // them — without throwing here, Stripe sees 200 and won't retry, and the
+  // workspace silently stays on its previous plan. This is the bug that hid
+  // the missing 'founder' CHECK constraint added in migration 025.
+  if (error) {
+    throw new Error(
+      `[stripe-webhook] failed to update workspace ${args.workspaceId} to plan=${effectivePlan} (sub ${sub.id}, status ${sub.status}): ${error.message}`,
+    );
+  }
 }
 
 async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session): Promise<void> {
