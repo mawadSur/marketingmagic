@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseService } from "@/lib/supabase/service";
+import { tierFor, type PlanId } from "@/lib/billing/tiers";
 import { ChannelBadge, statusBadgeVariant, Badge, statusBadgeLabel } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 
@@ -36,6 +38,24 @@ export default async function ChannelsPage({
     .order("created_at", { ascending: true });
 
   const hasAny = accounts && accounts.length > 0;
+  const connectedCount = accounts?.length ?? 0;
+
+  // Read the plan via service role so we get the billing column even when the
+  // user session client doesn't carry it. The OAuth callbacks ALREADY enforce
+  // the channel quota server-side (see assertWithinChannelQuota in
+  // lib/billing/limits.ts) — this banner is the UX shortcut that explains
+  // *why* connecting more would fail, before the user round-trips through
+  // the provider's consent screen and gets bounced back with ?error=.
+  const svc = supabaseService();
+  const { data: wsRow } = await svc
+    .from("workspaces")
+    .select("plan")
+    .eq("id", ws.id)
+    .maybeSingle();
+  const plan = (wsRow?.plan as PlanId | undefined) ?? "hobby";
+  const tier = tierFor(plan);
+  const channelLimit = tier.limits.channels;
+  const atChannelLimit = channelLimit !== -1 && connectedCount >= channelLimit;
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -104,6 +124,28 @@ export default async function ChannelsPage({
         )}
       </section>
 
+      {atChannelLimit ? (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-1">
+              <p className="font-medium">
+                Channel limit reached on the {tier.name} plan.
+              </p>
+              <p className="text-muted-foreground">
+                You&apos;re using {connectedCount} of {channelLimit} connected{" "}
+                {channelLimit === 1 ? "channel" : "channels"}. Upgrade to connect more.
+              </p>
+            </div>
+            <Link
+              href="/settings/billing"
+              className="shrink-0 inline-flex items-center rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              Upgrade plan
+            </Link>
+          </div>
+        </div>
+      ) : null}
+
       <section className="space-y-3">
         <h2 className="text-base font-medium">Add a channel</h2>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -111,17 +153,33 @@ export default async function ChannelsPage({
             c.initiate ? (
               // OAuth channel: tile is a POST form to the initiate route.
               // One-click connect — submitting kicks the user straight to
-              // the provider's authorize screen.
+              // the provider's authorize screen. When at the channel cap we
+              // disable the submit button so the user doesn't round-trip to
+              // the provider just to get bounced back with ?error=quota.
               <form key={c.slug} action={c.initiate} method="post">
                 <button
                   type="submit"
-                  className="card-hover flex w-full items-center gap-3 rounded-md border bg-card px-3 py-2.5 text-left text-sm font-medium"
+                  disabled={atChannelLimit}
+                  className="card-hover flex w-full items-center gap-3 rounded-md border bg-card px-3 py-2.5 text-left text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-card"
+                  aria-disabled={atChannelLimit}
                 >
                   <ChannelBadge channel={c.slug} />
                   <span>{c.label}</span>
                   <span aria-hidden className="ml-auto text-muted-foreground">→</span>
                 </button>
               </form>
+            ) : atChannelLimit ? (
+              // Bluesky tile mirrors the disabled state of the OAuth tiles
+              // when at-cap, so the grid stays visually uniform.
+              <span
+                key={c.slug}
+                aria-disabled="true"
+                className="flex items-center gap-3 rounded-md border bg-card px-3 py-2.5 text-sm font-medium opacity-50 cursor-not-allowed"
+              >
+                <ChannelBadge channel={c.slug} />
+                <span>{c.label}</span>
+                <span aria-hidden className="ml-auto text-muted-foreground">→</span>
+              </span>
             ) : (
               // Bluesky: link to the channel page where the handle +
               // app-password form lives.
