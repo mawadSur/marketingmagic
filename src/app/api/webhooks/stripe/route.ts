@@ -126,6 +126,26 @@ async function applySubscriptionState(args: {
 
   const priceId = extractPriceId(sub);
   const planFromPrice = planForPriceId(priceId);
+
+  // Loud warning when the price doesn't map to a known plan. This is the
+  // exact silent-failure path that left a paid Founder customer stuck on
+  // hobby (the webhook returned 200, the workspace stayed at hobby, the
+  // user couldn't connect more than one channel). Log so the operator can
+  // see the unmatched price ID in Vercel logs and fix the env vars.
+  if (
+    priceId &&
+    !planFromPrice &&
+    sub.status !== "canceled" &&
+    sub.status !== "incomplete_expired"
+  ) {
+    console.error(
+      `[stripe-webhook] price ${priceId} did not match any STRIPE_PRICE_* env var. ` +
+        `Subscription ${sub.id} for workspace ${args.workspaceId} is being downgraded to hobby. ` +
+        `Fix: set STRIPE_PRICE_PRO / STRIPE_PRICE_AGENCY / STRIPE_PRICE_FOUNDER on Vercel to ` +
+        `match the actual Stripe price ids, then re-run the subscription event from Stripe Dashboard.`,
+    );
+  }
+
   // If the subscription is fully canceled, force the plan back to hobby
   // even if the price still resolves — the customer no longer pays.
   const effectivePlan: PlanId =
