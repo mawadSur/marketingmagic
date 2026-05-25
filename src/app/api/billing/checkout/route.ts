@@ -14,7 +14,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const bodySchema = z.object({
-  planId: z.enum(["pro", "agency"]),
+  planId: z.enum(["pro", "agency", "founder"]),
   workspaceId: z.string().uuid(),
 });
 
