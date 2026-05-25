@@ -13,7 +13,7 @@ import {
   type ReplyInteractionInput,
   type ReplyWorkspaceContext,
 } from "@/lib/interactions/draft-reply";
-import { xReply, type XCredentials } from "@/lib/social/x";
+import { xReply, loadFreshXCredentials, type XCredentials } from "@/lib/social/x";
 import {
   linkedinReply,
   type LinkedInCredentials,
@@ -109,7 +109,9 @@ export async function sendReplyAction(
   try {
     switch (interaction.channel) {
       case "x": {
-        const creds = account.credentials as unknown as XCredentials;
+        const rawCreds = account.credentials as unknown as XCredentials;
+        // Refresh-if-needed before posting — X OAuth 2.0 tokens expire in ~2h.
+        const creds = await loadFreshXCredentials(svc, account.id, rawCreds);
         const r = await xReply(creds, replyParsed.data, interaction.external_id);
         externalId = r.id;
         break;

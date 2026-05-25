@@ -1,25 +1,31 @@
-// Twitter / X OAuth 1.0a posting client. Lifted from pitch-pit and trimmed.
+// Twitter / X OAuth 2.0 PKCE posting client.
+//
+// Migrated from OAuth 1.0a in commit (this PR) because X Free tier silently
+// rejects /oauth/authorize for OAuth 1.0a apps — `request_token` succeeds but
+// the user-facing authorize page redirects to /login/error?redirect_after_login=/.
+// OAuth 2.0 PKCE works on Free tier and uses simpler `Authorization: Bearer
+// <token>` headers in place of HMAC-SHA1 request signing.
 //
 // Per-workspace credentials live in social_accounts.credentials and have shape:
-//   { apiKey, apiSecret, accessToken, accessTokenSecret }
+//   { accessToken, refreshToken, expiresAt }
 //
-// Posting goes through POST /2/tweets with OAuth 1.0a user-context.
-// Verify uses GET /2/users/me with the same auth.
+// Access tokens expire in ~2 hours; refresh tokens are long-lived. Callers
+// should hit `loadFreshXCredentials` before any API call so an expired token
+// gets transparently refreshed and persisted back. The dispatcher does this.
 
-import OAuth from "oauth-1.0a";
 import crypto from "node:crypto";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { serverEnv } from "@/lib/env";
 
 export interface XCredentials {
-  apiKey: string;
-  apiSecret: string;
+  // OAuth 2.0 user-context Bearer token. Expires in ~7200 seconds (2 hours).
   accessToken: string;
-  accessTokenSecret: string;
+  // OAuth 2.0 refresh token. Long-lived; rotates on each refresh if X chooses.
+  refreshToken: string;
+  // Absolute expiry in unix ms (Date.now() + expires_in*1000 at issue time).
+  // We refresh proactively when within 5 minutes of expiry.
+  expiresAt: number;
 }
-
-// Extra metadata we tag onto credentials JSONB to distinguish manual-paste
-// from OAuth-issued tokens. Optional — older rows omit it. Used by the
-// settings UI to decide whether to surface a "re-authorize via OAuth" banner.
-export type XConnectionMethod = "oauth" | "manual";
 
 export interface XPostResult {
   id: string;
@@ -28,30 +34,181 @@ export interface XPostResult {
 
 const BASE_URL = "https://api.twitter.com";
 
-function client(creds: XCredentials) {
-  return new OAuth({
-    consumer: { key: creds.apiKey, secret: creds.apiSecret },
-    signature_method: "HMAC-SHA1",
-    hash_function(base, key) {
-      return crypto.createHmac("sha1", key).update(base).digest("base64");
-    },
-  });
+// ─── OAuth 2.0 PKCE primitives ──────────────────────────────────────────────
+//
+// Flow:
+//   1. /api/oauth/x/initiate generates a code_verifier (random) + code_challenge
+//      (SHA256(verifier), base64url), redirects to /i/oauth2/authorize.
+//   2. X redirects back with ?code=... &state=... — callback exchanges the
+//      code + original verifier at /2/oauth2/token for an access_token +
+//      refresh_token pair.
+//   3. Subsequent API calls send `Authorization: Bearer <access_token>`.
+//   4. Before any API call, loadFreshXCredentials checks expiry and refreshes
+//      via /2/oauth2/token if needed.
+
+const AUTHORIZE_URL = "https://twitter.com/i/oauth2/authorize";
+const TOKEN_URL = "https://api.twitter.com/2/oauth2/token";
+
+// Default scopes we ask for. tweet.write enables posting; offline.access is
+// required for X to issue a refresh_token (without it, the access token
+// expires in 2h with no way to renew). users.read powers /2/users/me for
+// handle resolution.
+//
+// If you add a feature that needs additional scopes (e.g. tweet.read for
+// metrics, like.write for engagement), append here AND have users re-auth.
+export const X_OAUTH_SCOPES = [
+  "tweet.read",
+  "tweet.write",
+  "users.read",
+  "offline.access",
+] as const;
+
+// Build a PKCE pair. The verifier is a high-entropy random string; the
+// challenge is its SHA256 hash base64url-encoded. Stored verifier never
+// leaves the server — it goes in an httpOnly cookie until the callback.
+export function xPkceChallenge(): { codeVerifier: string; codeChallenge: string } {
+  const codeVerifier = crypto.randomBytes(32).toString("base64url");
+  const codeChallenge = crypto
+    .createHash("sha256")
+    .update(codeVerifier)
+    .digest("base64url");
+  return { codeVerifier, codeChallenge };
 }
 
-function authorize(creds: XCredentials, url: string, method: "GET" | "POST") {
-  const oauth = client(creds);
-  return oauth.toHeader(
-    oauth.authorize({ url, method }, { key: creds.accessToken, secret: creds.accessTokenSecret }),
-  );
+// Step 2: produce the authorize URL the browser should navigate to.
+export function xAuthorizeUrl(opts: {
+  clientId: string;
+  redirectUri: string;
+  state: string;
+  codeChallenge: string;
+  scopes?: readonly string[];
+}): string {
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: opts.clientId,
+    redirect_uri: opts.redirectUri,
+    scope: (opts.scopes ?? X_OAUTH_SCOPES).join(" "),
+    state: opts.state,
+    code_challenge: opts.codeChallenge,
+    code_challenge_method: "S256",
+  });
+  return `${AUTHORIZE_URL}?${params}`;
+}
+
+interface XTokenResponse {
+  token_type: "bearer";
+  expires_in: number; // seconds
+  access_token: string;
+  refresh_token?: string;
+  scope: string;
+}
+
+// Step 3: exchange the authorization code for tokens. Confidential client
+// auth (clientId + clientSecret) is required since we registered the app
+// as a Web App in the X dev portal.
+export async function xExchangeCode(opts: {
+  clientId: string;
+  clientSecret: string;
+  code: string;
+  codeVerifier: string;
+  redirectUri: string;
+}): Promise<XTokenResponse> {
+  const body = new URLSearchParams({
+    grant_type: "authorization_code",
+    code: opts.code,
+    redirect_uri: opts.redirectUri,
+    code_verifier: opts.codeVerifier,
+    client_id: opts.clientId,
+  });
+  const basicAuth = Buffer.from(`${opts.clientId}:${opts.clientSecret}`).toString("base64");
+  const res = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${basicAuth}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: body.toString(),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`X token exchange failed (${res.status}): ${text.slice(0, 400)}`);
+  }
+  return (await res.json()) as XTokenResponse;
+}
+
+// Step 4: refresh the access token before it expires. X may or may not rotate
+// the refresh_token — fall back to the existing one if the response omits it.
+export async function xRefreshToken(opts: {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+}): Promise<XTokenResponse> {
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: opts.refreshToken,
+    client_id: opts.clientId,
+  });
+  const basicAuth = Buffer.from(`${opts.clientId}:${opts.clientSecret}`).toString("base64");
+  const res = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${basicAuth}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: body.toString(),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`X token refresh failed (${res.status}): ${text.slice(0, 400)}`);
+  }
+  return (await res.json()) as XTokenResponse;
+}
+
+// Refresh-if-needed helper called by anyone about to hit an X API endpoint.
+// 5-minute leeway means we'll refresh proactively rather than racing the
+// boundary; X tokens come in at exactly 7200s so the leeway costs us nothing
+// in practice and keeps us safe against ±clock skew.
+export async function loadFreshXCredentials(
+  svc: SupabaseClient,
+  socialAccountId: string,
+  creds: XCredentials,
+): Promise<XCredentials> {
+  if (creds.expiresAt - Date.now() > 5 * 60 * 1000) return creds;
+
+  const env = serverEnv();
+  if (!env.X_CLIENT_ID || !env.X_CLIENT_SECRET) {
+    throw new Error(
+      "Cannot refresh X token — X_CLIENT_ID / X_CLIENT_SECRET not set on this deployment.",
+    );
+  }
+  const refreshed = await xRefreshToken({
+    clientId: env.X_CLIENT_ID,
+    clientSecret: env.X_CLIENT_SECRET,
+    refreshToken: creds.refreshToken,
+  });
+  const next: XCredentials = {
+    accessToken: refreshed.access_token,
+    refreshToken: refreshed.refresh_token ?? creds.refreshToken,
+    expiresAt: Date.now() + refreshed.expires_in * 1000,
+  };
+  await svc
+    .from("social_accounts")
+    .update({ credentials: next as unknown as Record<string, unknown> })
+    .eq("id", socialAccountId);
+  return next;
+}
+
+// ─── API methods (all Bearer-authed) ────────────────────────────────────────
+
+function bearer(creds: XCredentials): HeadersInit {
+  return { Authorization: `Bearer ${creds.accessToken}` };
 }
 
 export async function xVerify(creds: XCredentials): Promise<{ id: string; username: string }> {
-  const url = `${BASE_URL}/2/users/me`;
-  const auth = authorize(creds, url, "GET");
-  const res = await fetch(url, { headers: { ...auth } });
+  const res = await fetch(`${BASE_URL}/2/users/me`, { headers: bearer(creds) });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`X verify failed (${res.status}): ${text}`);
+    throw new Error(`X verify failed (${res.status}): ${text.slice(0, 200)}`);
   }
   const body = (await res.json()) as { data: { id: string; username: string } };
   return { id: body.data.id, username: body.data.username };
@@ -64,7 +221,6 @@ export async function xPost(
   inReplyToTweetId?: string,
 ): Promise<XPostResult> {
   const url = `${BASE_URL}/2/tweets`;
-  const auth = authorize(creds, url, "POST");
   const body: {
     text: string;
     media?: { media_ids: string[] };
@@ -78,34 +234,24 @@ export async function xPost(
   }
   const res = await fetch(url, {
     method: "POST",
-    headers: { ...auth, "Content-Type": "application/json" },
+    headers: { ...bearer(creds), "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   const json = (await res.json()) as { data?: XPostResult; errors?: unknown };
   if (!res.ok || !json.data) {
-    throw new Error(`X post failed (${res.status}): ${JSON.stringify(json)}`);
+    throw new Error(`X post failed (${res.status}): ${JSON.stringify(json).slice(0, 400)}`);
   }
   return json.data;
 }
 
 // ─── Phase 6.8 — sequential thread posting ─────────────────────────────────
 //
-// `xPostThread` posts a thread by chaining `in_reply_to_tweet_id` on each
-// subsequent tweet. Sequential with a 1.2s delay between tweets so we
-// don't trip per-second rate caps, and so that the previous tweet has
-// time to settle before the next one references it.
-//
-// Partial-failure shape: on first failure, we return the tweet IDs we
-// did manage to post + a `lastError` describing the failing tweet index
-// (0-based). The caller is responsible for persisting partial state
-// (per-tweet `external_id`) and surfacing a retry affordance.
-//
-// `startInReplyTo` lets the caller resume a partially-published thread:
-// pass the last successfully-posted tweet id + slice `tweets[]` to the
-// unpublished tail. Idempotency itself sits one level up in the cron
-// (social_posts_ledger keyed by `post:<tweet-row-id>`).
+// Posts a thread by chaining in_reply_to_tweet_id. Sequential with a 1.2s
+// delay between tweets so we don't trip per-second rate caps and the
+// previous tweet has time to settle before the next one references it.
+// Partial-failure shape mirrors the OAuth 1.0a implementation it replaces.
 export interface XPostThreadResult {
-  tweetIds: string[]; // newly-posted tweet IDs in order
+  tweetIds: string[];
   lastError?: { tweetIndex: number; error: string };
 }
 
@@ -136,7 +282,6 @@ export async function xPostThread(
         },
       };
     }
-    // Inter-tweet delay — skip after the last tweet.
     if (i < tweets.length - 1) {
       await new Promise((r) => setTimeout(r, delayMs));
     }
@@ -144,10 +289,12 @@ export async function xPostThread(
   return { tweetIds };
 }
 
-// Single-shot media upload via v1.1 (v2 still has no media-upload endpoint as
-// of 2025/2026). For files ≤5MB we can use the simple form-encoded path.
-// Anything larger would need INIT/APPEND/FINALIZE — out of scope for stills.
-const UPLOAD_URL = "https://upload.twitter.com/1.1/media/upload.json";
+// X v2 media upload endpoint with OAuth 2.0 user-context Bearer auth.
+// As of 2025, X added /2/media/upload for OAuth 2.0; the legacy v1.1
+// upload.twitter.com endpoint still required OAuth 1.0a signing. For files
+// ≤5MB we can use the simple multipart path. Anything larger requires
+// chunked INIT/APPEND/FINALIZE — out of scope for stills.
+const UPLOAD_URL = `${BASE_URL}/2/media/upload`;
 
 export async function xUploadMedia(
   creds: XCredentials,
@@ -157,31 +304,32 @@ export async function xUploadMedia(
   if (bytes.byteLength > 5 * 1024 * 1024) {
     throw new Error("Media >5MB requires chunked upload (not implemented).");
   }
-  // OAuth 1.0a signs the URL; the body is multipart/form-data with a single
-  // `media` field. We don't include the body in the signature base string —
-  // standard for media upload.
-  const auth = authorize(creds, UPLOAD_URL, "POST");
   const form = new FormData();
   form.append("media", new Blob([bytes as BlobPart], { type: contentType }));
 
   const res = await fetch(UPLOAD_URL, {
     method: "POST",
-    headers: { ...auth },
+    headers: { ...bearer(creds) },
     body: form,
   });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`X media upload failed (${res.status}): ${text.slice(0, 400)}`);
   }
-  const json = (await res.json()) as { media_id_string?: string };
-  if (!json.media_id_string) {
-    throw new Error("X media upload returned no media_id_string.");
+  const json = (await res.json()) as { data?: { id?: string }; media_id_string?: string };
+  // v2 returns { data: { id } }, but some endpoints return the legacy shape.
+  // Normalise so the dispatcher doesn't care.
+  const id = json.data?.id ?? json.media_id_string;
+  if (!id) {
+    throw new Error("X media upload returned no media id.");
   }
-  return { media_id_string: json.media_id_string };
+  return { media_id_string: id };
 }
 
-// V1 — metrics pull. Tweet lookup with public + non-public metrics.
-// Non-public metrics (impressions, url_link_clicks) require user-context auth.
+// Metrics pull. Tweet lookup with public + non-public metrics.
+// Non-public metrics (impressions, url_link_clicks) require user-context auth
+// AND the user must be the author of the tweet (X privacy rule). Public
+// metrics are always returned.
 export interface XTweetMetrics {
   impressions: number;
   likes: number;
@@ -195,11 +343,10 @@ export async function xMetrics(creds: XCredentials, tweetId: string): Promise<XT
     "tweet.fields": "public_metrics,non_public_metrics,organic_metrics",
   });
   const url = `${BASE_URL}/2/tweets/${tweetId}?${params}`;
-  const auth = authorize(creds, url, "GET");
-  const res = await fetch(url, { headers: { ...auth } });
+  const res = await fetch(url, { headers: bearer(creds) });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`X metrics failed (${res.status}): ${text}`);
+    throw new Error(`X metrics failed (${res.status}): ${text.slice(0, 200)}`);
   }
   const json = (await res.json()) as {
     data?: {
@@ -229,160 +376,7 @@ export async function xMetrics(creds: XCredentials, tweetId: string): Promise<XT
   };
 }
 
-// ─── 3-legged OAuth 1.0a (V3 self-serve) ────────────────────────────────────
-//
-// Flow:
-//   1. POST /oauth/request_token — app-only signed, returns request token.
-//   2. Redirect user to /oauth/authorize?oauth_token=<token>.
-//   3. Twitter redirects back with oauth_token + oauth_verifier.
-//   4. POST /oauth/access_token — exchanges verifier for permanent user token.
-//
-// The consumer (app-level) key/secret come from env (X_CLIENT_ID/SECRET).
-// The user-level access_token/access_token_secret are persisted per workspace.
-
-const REQUEST_TOKEN_URL = "https://api.twitter.com/oauth/request_token";
-const AUTHORIZE_URL = "https://api.twitter.com/oauth/authorize";
-const ACCESS_TOKEN_URL = "https://api.twitter.com/oauth/access_token";
-
-function appClient(apiKey: string, apiSecret: string) {
-  return new OAuth({
-    consumer: { key: apiKey, secret: apiSecret },
-    signature_method: "HMAC-SHA1",
-    hash_function(base, key) {
-      return crypto.createHmac("sha1", key).update(base).digest("base64");
-    },
-  });
-}
-
-// Parse Twitter's `application/x-www-form-urlencoded` OAuth response bodies.
-// Throws when the response is missing required fields — callers translate
-// to user-facing errors at the route boundary.
-function parseOAuthBody(body: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const pair of body.split("&")) {
-    if (!pair) continue;
-    const [k, v] = pair.split("=");
-    if (k) out[decodeURIComponent(k)] = decodeURIComponent(v ?? "");
-  }
-  return out;
-}
-
-export interface XRequestTokenResult {
-  oauth_token: string;
-  oauth_token_secret: string;
-  oauth_callback_confirmed: boolean;
-}
-
-// Step 1: ask Twitter for a request token. Twitter signs the response with the
-// app credentials only — no user token yet. The returned oauth_token doubles
-// as the lookup key once Twitter redirects back; oauth_token_secret must be
-// stashed server-side until then.
-export async function xRequestToken(opts: {
-  apiKey: string;
-  apiSecret: string;
-  callbackUrl: string;
-}): Promise<XRequestTokenResult> {
-  const oauth = appClient(opts.apiKey, opts.apiSecret);
-  const reqData = {
-    url: REQUEST_TOKEN_URL,
-    method: "POST",
-    data: { oauth_callback: opts.callbackUrl },
-  };
-  // Pass empty token — request_token is app-only signed.
-  const header = oauth.toHeader(oauth.authorize(reqData));
-  const res = await fetch(REQUEST_TOKEN_URL, {
-    method: "POST",
-    headers: {
-      ...header,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({ oauth_callback: opts.callbackUrl }).toString(),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`X request_token failed (${res.status}): ${text.slice(0, 200)}`);
-  }
-  const parsed = parseOAuthBody(await res.text());
-  if (!parsed.oauth_token || !parsed.oauth_token_secret) {
-    throw new Error("X request_token response missing oauth_token / oauth_token_secret.");
-  }
-  return {
-    oauth_token: parsed.oauth_token,
-    oauth_token_secret: parsed.oauth_token_secret,
-    oauth_callback_confirmed: parsed.oauth_callback_confirmed === "true",
-  };
-}
-
-// Step 2: produce the URL we redirect the user to. Twitter prompts them to
-// approve; on approval, Twitter redirects back to our callback with
-// oauth_token + oauth_verifier on the query string.
-export function xAuthorizeUrl(oauthToken: string): string {
-  const params = new URLSearchParams({ oauth_token: oauthToken });
-  return `${AUTHORIZE_URL}?${params}`;
-}
-
-export interface XAccessTokenResult {
-  oauth_token: string; // user-scoped access token
-  oauth_token_secret: string;
-  user_id: string;
-  screen_name: string;
-}
-
-// Step 4: exchange verifier for permanent user token. We sign with the
-// app credentials *and* the request-token pair so Twitter can match the
-// callback to its original /authorize prompt.
-export async function xAccessToken(opts: {
-  apiKey: string;
-  apiSecret: string;
-  requestToken: string;
-  requestTokenSecret: string;
-  verifier: string;
-}): Promise<XAccessTokenResult> {
-  const oauth = appClient(opts.apiKey, opts.apiSecret);
-  const reqData = {
-    url: ACCESS_TOKEN_URL,
-    method: "POST",
-    data: { oauth_verifier: opts.verifier },
-  };
-  const header = oauth.toHeader(
-    oauth.authorize(reqData, { key: opts.requestToken, secret: opts.requestTokenSecret }),
-  );
-  const res = await fetch(ACCESS_TOKEN_URL, {
-    method: "POST",
-    headers: {
-      ...header,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({ oauth_verifier: opts.verifier }).toString(),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`X access_token failed (${res.status}): ${text.slice(0, 200)}`);
-  }
-  const parsed = parseOAuthBody(await res.text());
-  if (!parsed.oauth_token || !parsed.oauth_token_secret) {
-    throw new Error("X access_token response missing oauth_token / oauth_token_secret.");
-  }
-  return {
-    oauth_token: parsed.oauth_token,
-    oauth_token_secret: parsed.oauth_token_secret,
-    user_id: parsed.user_id ?? "",
-    screen_name: parsed.screen_name ?? "",
-  };
-}
-
 // ─── Phase 4.5 (Reply Inbox + Engagement Assistant) ─────────────────────
-//
-// xReply — adapt xPost for reply usage. Kept as its own helper rather
-// than reusing xPost directly so the call site in inbox/[id]/actions.ts
-// reads as a reply, not a post.
-//
-// Mentions + replies pull: `xMentions` returns recent mentions of the
-// authenticated user. We pull up to `count` (default 20) and let the
-// poller dedupe via the unique (channel, external_id) index.
-//
-// Both endpoints share the existing OAuth 1.0a auth chain — no new
-// scopes required.
 
 export interface XReplyResult {
   id: string;
@@ -407,9 +401,6 @@ export interface XInboundMention {
   author_name: string | null;
   author_verified: boolean;
   author_follower_count: number | null;
-  // True when this mention is a reply (in_reply_to_user_id is the
-  // authed user) rather than a top-level mention. Drives the
-  // parent_post_id linking in the poller.
   is_reply: boolean;
   in_reply_to_tweet_id: string | null;
 }
@@ -427,8 +418,7 @@ export async function xMentions(
     "user.fields": "verified,public_metrics,name",
   });
   const url = `${BASE_URL}/2/users/${encodeURIComponent(userId)}/mentions?${params}`;
-  const auth = authorize(creds, url, "GET");
-  const res = await fetch(url, { headers: { ...auth } });
+  const res = await fetch(url, { headers: bearer(creds) });
   if (!res.ok) {
     const text = await res.text();
     const err = new Error(`X mentions failed (${res.status}): ${text.slice(0, 200)}`);
@@ -478,14 +468,6 @@ export async function xMentions(
 }
 
 // ─── Phase 6.6 (Competitor Watch) ───────────────────────────────────────
-//
-// Uses GET /2/users/by/username/:username to resolve a screen name to an
-// id, then GET /2/users/:id/tweets for the timeline. Both require the
-// elevated tier; for free-tier credentials this returns 403 and the
-// competitor-watch cron flags the row failed.
-//
-// Bound results to `count` (max 100 per API docs). The competitor cron
-// uses 30 for daily polling and 100 for initial backfill.
 
 export interface XPublicTweet {
   id: string;
@@ -505,8 +487,7 @@ export async function xResolveUsername(
 ): Promise<{ id: string; username: string; name: string | null }> {
   const cleaned = username.replace(/^@/, "").trim();
   const url = `${BASE_URL}/2/users/by/username/${encodeURIComponent(cleaned)}`;
-  const auth = authorize(creds, url, "GET");
-  const res = await fetch(url, { headers: { ...auth } });
+  const res = await fetch(url, { headers: bearer(creds) });
   if (!res.ok) {
     const text = await res.text();
     const err = new Error(`X resolve username failed (${res.status}): ${text.slice(0, 200)}`);
@@ -532,12 +513,9 @@ export async function xGetUserPosts(
     exclude: "retweets,replies",
   });
   const url = `${BASE_URL}/2/users/${encodeURIComponent(userId)}/tweets?${params}`;
-  const auth = authorize(creds, url, "GET");
-  const res = await fetch(url, { headers: { ...auth } });
+  const res = await fetch(url, { headers: bearer(creds) });
   if (!res.ok) {
     const text = await res.text();
-    // Surface rate-limit + 403 distinctly so the caller can downgrade
-    // the watch row's status without retrying immediately.
     const err = new Error(`X get user tweets failed (${res.status}): ${text.slice(0, 200)}`);
     (err as Error & { status?: number }).status = res.status;
     throw err;

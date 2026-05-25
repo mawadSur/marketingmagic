@@ -4,7 +4,7 @@ import { supabaseService } from "@/lib/supabase/service";
 import { dispatchPost, type PostMediaItem } from "@/lib/social/dispatch";
 import { readThreadMeta } from "@/lib/threads/schema";
 import { postThread } from "@/lib/threads/post";
-import type { XCredentials } from "@/lib/social/x";
+import { loadFreshXCredentials, type XCredentials } from "@/lib/social/x";
 
 // Vercel Cron — POST to this every 5 minutes. Auth via Bearer CRON_SECRET.
 // Picks scheduled posts whose time has arrived, ships them via the per-channel
@@ -85,11 +85,15 @@ async function handle(req: NextRequest) {
       }
 
       try {
-        const outcome = await postThread(
+        // Refresh X token before the thread post — threads can take many
+        // seconds (1.2s between each tweet), but the access token doesn't
+        // expire mid-thread so a single refresh up-front is enough.
+        const freshXCreds = await loadFreshXCredentials(
           svc,
-          ideaId,
+          post.social_account_id,
           account.credentials as unknown as XCredentials,
         );
+        const outcome = await postThread(svc, ideaId, freshXCreds);
         if (outcome.failureAtIndex === null) {
           results.push({
             id: post.id,
@@ -178,6 +182,7 @@ async function handle(req: NextRequest) {
         account.credentials,
         post.text,
         media,
+        post.social_account_id,
       );
 
       const { error: ledgerErr } = await svc.from("social_posts_ledger").insert({

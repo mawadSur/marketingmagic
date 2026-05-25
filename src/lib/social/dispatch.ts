@@ -3,7 +3,7 @@
 // don't need a giant switch per channel.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { xPost, xUploadMedia, xMetrics, type XCredentials } from "./x";
+import { xPost, xUploadMedia, xMetrics, loadFreshXCredentials, type XCredentials } from "./x";
 import { linkedinPost, linkedinUploadImage, linkedinMetrics, type LinkedInCredentials } from "./linkedin";
 import { threadsPost, threadsMetrics, type ThreadsCredentials } from "./threads";
 import { instagramPost, instagramMetrics, type InstagramCredentials } from "./instagram";
@@ -66,12 +66,19 @@ export async function dispatchPost(
   credentials: unknown,
   text: string,
   mediaItems: PostMediaItem[],
+  socialAccountId: string,
 ): Promise<DispatchResult> {
   const media = await loadMedia(svc, mediaItems);
 
   switch (channel) {
     case "x": {
-      const creds = credentials as XCredentials;
+      // X OAuth 2.0 access tokens expire in ~2h; refresh proactively before
+      // the API calls so a 12h-stale token doesn't fail the post.
+      const creds = await loadFreshXCredentials(
+        svc,
+        socialAccountId,
+        credentials as XCredentials,
+      );
       const ids: string[] = [];
       for (const m of media) {
         const r = await xUploadMedia(creds, m.bytes, m.contentType);
@@ -129,13 +136,20 @@ export async function dispatchPost(
 }
 
 export async function dispatchMetrics(
+  svc: SupabaseClient,
   channel: string,
   credentials: unknown,
   externalId: string,
+  socialAccountId: string,
 ): Promise<UnifiedMetrics> {
   switch (channel) {
     case "x": {
-      const m = await xMetrics(credentials as XCredentials, externalId);
+      const creds = await loadFreshXCredentials(
+        svc,
+        socialAccountId,
+        credentials as XCredentials,
+      );
+      const m = await xMetrics(creds, externalId);
       return {
         impressions: m.impressions,
         likes: m.likes,
