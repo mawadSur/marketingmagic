@@ -11,10 +11,10 @@
 // Cadence: every 15 minutes via the cron route. We pull 20 per call;
 // the API has a 75-req/15min limit per user so this is well under.
 
-import { xMentions, xVerify, type XCredentials } from "@/lib/social/x";
+import { xMentions, xVerify, type XCredentialsAny } from "@/lib/social/x";
 import type { PollerResult, PollerInteraction } from "./types";
 
-export async function pollX(creds: XCredentials): Promise<PollerResult> {
+export async function pollX(creds: XCredentialsAny): Promise<PollerResult> {
   // We need the authed user id to ask for THEIR mentions. xVerify
   // returns it cheaply (1 request). We could cache this on the
   // social_accounts row in a follow-up, but for now the cost is a

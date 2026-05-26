@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+import { XConnectForm } from "./x-connect-form";
 import { Button } from "@/components/ui/button";
 import { serverEnv } from "@/lib/env";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
@@ -5,9 +7,6 @@ import { supabaseService } from "@/lib/supabase/service";
 
 export const dynamic = "force-dynamic";
 
-// Resolve whether this workspace already has a connected X account so we can
-// label the button "Connect with X" vs "Reconnect @handle". Read via the
-// service role since the credentials column is service-only.
 async function getXConnectionStatus(workspaceId: string): Promise<{
   connected: boolean;
   handle: string | null;
@@ -84,19 +83,42 @@ export default async function ConnectXPage({
           <p className="mt-1 text-muted-foreground">
             Set <code>X_CLIENT_ID</code> and <code>X_CLIENT_SECRET</code> in
             env (use the OAuth 2.0 Client ID/Secret from your X app, not the
-            OAuth 1.0a Consumer Keys), then restart. Register at{" "}
-            <a
-              className="underline-offset-4 hover:underline"
-              href="https://developer.x.com/en/portal/dashboard"
-              target="_blank"
-              rel="noreferrer"
-            >
-              developer.x.com
-            </a>
-            .
+            OAuth 1.0a Consumer Keys), then restart. The manual-paste
+            fallback below still works without OAuth env vars.
           </p>
         </div>
       )}
+
+      {/* Manual-paste OAuth 1.0a fallback. Useful when (a) PKCE consent
+          fails because the X app's User Auth Settings are misconfigured,
+          or (b) the user prefers permanent tokens over an OAuth round-trip.
+          Generates the credentials manually at developer.x.com → Keys and
+          tokens → "Consumer Keys" + "Access Token and Secret". */}
+      <details className="rounded-md border bg-card">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+          Advanced: paste API keys manually (OAuth 1.0a fallback)
+        </summary>
+        <div className="space-y-3 border-t px-4 py-4">
+          <p className="text-xs text-muted-foreground">
+            Generate the four values at{" "}
+            <a
+              href="https://developer.x.com/en/portal/dashboard"
+              target="_blank"
+              rel="noreferrer"
+              className="underline-offset-4 hover:underline"
+            >
+              developer.x.com
+            </a>{" "}
+            → your app → <strong>Keys and tokens</strong> → <strong>Consumer Keys</strong> (API
+            Key + Secret) and <strong>Access Token and Secret</strong>. App
+            permissions must be set to <strong>Read and write</strong>. We
+            verify the credentials before storing.
+          </p>
+          <Suspense fallback={null}>
+            <XConnectForm />
+          </Suspense>
+        </div>
+      </details>
     </div>
   );
 }
