@@ -13,10 +13,12 @@
 // should hit `loadFreshXCredentials` before any API call so an expired token
 // gets transparently refreshed and persisted back. The dispatcher does this.
 
+import OAuth from "oauth-1.0a";
 import crypto from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { serverEnv } from "@/lib/env";
 
+// Primary credential shape: OAuth 2.0 PKCE-issued tokens.
 export interface XCredentials {
   // OAuth 2.0 user-context Bearer token. Expires in ~7200 seconds (2 hours).
   accessToken: string;
@@ -25,6 +27,34 @@ export interface XCredentials {
   // Absolute expiry in unix ms (Date.now() + expires_in*1000 at issue time).
   // We refresh proactively when within 5 minutes of expiry.
   expiresAt: number;
+}
+
+// Legacy credential shape: OAuth 1.0a Consumer Keys + Access Token (and
+// Secret) pair. The user generates both pairs manually in the X dev portal
+// and pastes them via the "Advanced" form on the Connect X page. We keep
+// this path because (a) OAuth 2.0 PKCE consent flow can fail on
+// misconfigured apps, and (b) some users want to use a dedicated X
+// developer account with permanent tokens rather than running through OAuth.
+//
+// OAuth 1.0a tokens don't expire, so loadFreshXCredentials is a no-op for
+// these — the only "refresh" happens when the user manually pastes new
+// tokens after X rotates them.
+export interface XCredentialsLegacy {
+  apiKey: string; // OAuth 1.0a Consumer Key
+  apiSecret: string; // OAuth 1.0a Consumer Secret
+  accessToken: string;
+  accessTokenSecret: string;
+}
+
+// Union type used by every API method. The discriminator below decides
+// which auth scheme to use at call time.
+export type XCredentialsAny = XCredentials | XCredentialsLegacy;
+
+export function isLegacyXCreds(creds: XCredentialsAny): creds is XCredentialsLegacy {
+  return (
+    typeof (creds as XCredentialsLegacy).apiKey === "string" &&
+    typeof (creds as XCredentialsLegacy).accessTokenSecret === "string"
+  );
 }
 
 export interface XPostResult {
@@ -166,13 +196,17 @@ export async function xRefreshToken(opts: {
 
 // Refresh-if-needed helper called by anyone about to hit an X API endpoint.
 // 5-minute leeway means we'll refresh proactively rather than racing the
-// boundary; X tokens come in at exactly 7200s so the leeway costs us nothing
-// in practice and keeps us safe against ±clock skew.
+// boundary; OAuth 2.0 tokens come in at exactly 7200s so the leeway costs
+// us nothing in practice and keeps us safe against ±clock skew.
+//
+// For OAuth 1.0a legacy credentials, this is a no-op — those tokens don't
+// expire until the user revokes them in the X dev portal.
 export async function loadFreshXCredentials(
   svc: SupabaseClient,
   socialAccountId: string,
-  creds: XCredentials,
-): Promise<XCredentials> {
+  creds: XCredentialsAny,
+): Promise<XCredentialsAny> {
+  if (isLegacyXCreds(creds)) return creds;
   if (creds.expiresAt - Date.now() > 5 * 60 * 1000) return creds;
 
   const env = serverEnv();
@@ -198,14 +232,41 @@ export async function loadFreshXCredentials(
   return next;
 }
 
-// ─── API methods (all Bearer-authed) ────────────────────────────────────────
+// ─── Auth header builder ────────────────────────────────────────────────────
+//
+// Branches on credential shape: OAuth 2.0 uses a static Bearer header; OAuth
+// 1.0a builds a fresh HMAC-SHA1 signature per request (signature includes
+// the URL + method + nonce + timestamp).
 
-function bearer(creds: XCredentials): HeadersInit {
+function legacyOAuth(creds: XCredentialsLegacy): OAuth {
+  return new OAuth({
+    consumer: { key: creds.apiKey, secret: creds.apiSecret },
+    signature_method: "HMAC-SHA1",
+    hash_function(base, key) {
+      return crypto.createHmac("sha1", key).update(base).digest("base64");
+    },
+  });
+}
+
+function xAuth(creds: XCredentialsAny, url: string, method: "GET" | "POST"): HeadersInit {
+  if (isLegacyXCreds(creds)) {
+    const oauth = legacyOAuth(creds);
+    // oauth-1.0a's Header type ({Authorization: string}) doesn't quite match
+    // the Record<string,string> that HeadersInit expects; the runtime shape
+    // is identical so the cast is safe.
+    return { ...oauth.toHeader(
+      oauth.authorize(
+        { url, method },
+        { key: creds.accessToken, secret: creds.accessTokenSecret },
+      ),
+    ) } as Record<string, string>;
+  }
   return { Authorization: `Bearer ${creds.accessToken}` };
 }
 
-export async function xVerify(creds: XCredentials): Promise<{ id: string; username: string }> {
-  const res = await fetch(`${BASE_URL}/2/users/me`, { headers: bearer(creds) });
+export async function xVerify(creds: XCredentialsAny): Promise<{ id: string; username: string }> {
+  const url = `${BASE_URL}/2/users/me`;
+  const res = await fetch(url, { headers: xAuth(creds, url, "GET") });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`X verify failed (${res.status}): ${text.slice(0, 200)}`);
@@ -215,7 +276,7 @@ export async function xVerify(creds: XCredentials): Promise<{ id: string; userna
 }
 
 export async function xPost(
-  creds: XCredentials,
+  creds: XCredentialsAny,
   text: string,
   mediaIds?: string[],
   inReplyToTweetId?: string,
@@ -234,7 +295,7 @@ export async function xPost(
   }
   const res = await fetch(url, {
     method: "POST",
-    headers: { ...bearer(creds), "Content-Type": "application/json" },
+    headers: { ...xAuth(creds, url, "POST"), "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   const json = (await res.json()) as { data?: XPostResult; errors?: unknown };
@@ -256,7 +317,7 @@ export interface XPostThreadResult {
 }
 
 export async function xPostThread(
-  creds: XCredentials,
+  creds: XCredentialsAny,
   tweets: string[],
   opts: { startInReplyTo?: string; delayMs?: number } = {},
 ): Promise<XPostThreadResult> {
@@ -289,27 +350,29 @@ export async function xPostThread(
   return { tweetIds };
 }
 
-// X v2 media upload endpoint with OAuth 2.0 user-context Bearer auth.
-// As of 2025, X added /2/media/upload for OAuth 2.0; the legacy v1.1
-// upload.twitter.com endpoint still required OAuth 1.0a signing. For files
-// ≤5MB we can use the simple multipart path. Anything larger requires
-// chunked INIT/APPEND/FINALIZE — out of scope for stills.
-const UPLOAD_URL = `${BASE_URL}/2/media/upload`;
+// Media upload — endpoint depends on auth method. Legacy OAuth 1.0a creds
+// MUST use the v1.1 upload.twitter.com host (OAuth 2.0 Bearer rejected there
+// historically). OAuth 2.0 PKCE-issued tokens use /2/media/upload. Both
+// accept ≤5MB single-shot multipart; >5MB needs chunked INIT/APPEND/
+// FINALIZE which we don't support yet.
+const UPLOAD_URL_V2 = `${BASE_URL}/2/media/upload`;
+const UPLOAD_URL_V1 = "https://upload.twitter.com/1.1/media/upload.json";
 
 export async function xUploadMedia(
-  creds: XCredentials,
+  creds: XCredentialsAny,
   bytes: Uint8Array,
   contentType: string,
 ): Promise<{ media_id_string: string }> {
   if (bytes.byteLength > 5 * 1024 * 1024) {
     throw new Error("Media >5MB requires chunked upload (not implemented).");
   }
+  const url = isLegacyXCreds(creds) ? UPLOAD_URL_V1 : UPLOAD_URL_V2;
   const form = new FormData();
   form.append("media", new Blob([bytes as BlobPart], { type: contentType }));
 
-  const res = await fetch(UPLOAD_URL, {
+  const res = await fetch(url, {
     method: "POST",
-    headers: { ...bearer(creds) },
+    headers: { ...xAuth(creds, url, "POST") },
     body: form,
   });
   if (!res.ok) {
@@ -317,8 +380,8 @@ export async function xUploadMedia(
     throw new Error(`X media upload failed (${res.status}): ${text.slice(0, 400)}`);
   }
   const json = (await res.json()) as { data?: { id?: string }; media_id_string?: string };
-  // v2 returns { data: { id } }, but some endpoints return the legacy shape.
-  // Normalise so the dispatcher doesn't care.
+  // v2 returns { data: { id } }, v1.1 returns { media_id_string }. Normalise
+  // so the dispatcher doesn't need to know which auth method ran.
   const id = json.data?.id ?? json.media_id_string;
   if (!id) {
     throw new Error("X media upload returned no media id.");
@@ -338,12 +401,12 @@ export interface XTweetMetrics {
   clicks: number;
 }
 
-export async function xMetrics(creds: XCredentials, tweetId: string): Promise<XTweetMetrics> {
+export async function xMetrics(creds: XCredentialsAny, tweetId: string): Promise<XTweetMetrics> {
   const params = new URLSearchParams({
     "tweet.fields": "public_metrics,non_public_metrics,organic_metrics",
   });
   const url = `${BASE_URL}/2/tweets/${tweetId}?${params}`;
-  const res = await fetch(url, { headers: bearer(creds) });
+  const res = await fetch(url, { headers: xAuth(creds, url, "GET") });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`X metrics failed (${res.status}): ${text.slice(0, 200)}`);
@@ -384,7 +447,7 @@ export interface XReplyResult {
 }
 
 export async function xReply(
-  creds: XCredentials,
+  creds: XCredentialsAny,
   replyText: string,
   inReplyToTweetId: string,
 ): Promise<XReplyResult> {
@@ -406,7 +469,7 @@ export interface XInboundMention {
 }
 
 export async function xMentions(
-  creds: XCredentials,
+  creds: XCredentialsAny,
   userId: string,
   count = 20,
 ): Promise<XInboundMention[]> {
@@ -418,7 +481,7 @@ export async function xMentions(
     "user.fields": "verified,public_metrics,name",
   });
   const url = `${BASE_URL}/2/users/${encodeURIComponent(userId)}/mentions?${params}`;
-  const res = await fetch(url, { headers: bearer(creds) });
+  const res = await fetch(url, { headers: xAuth(creds, url, "GET") });
   if (!res.ok) {
     const text = await res.text();
     const err = new Error(`X mentions failed (${res.status}): ${text.slice(0, 200)}`);
@@ -482,12 +545,12 @@ export interface XPublicTweet {
 }
 
 export async function xResolveUsername(
-  creds: XCredentials,
+  creds: XCredentialsAny,
   username: string,
 ): Promise<{ id: string; username: string; name: string | null }> {
   const cleaned = username.replace(/^@/, "").trim();
   const url = `${BASE_URL}/2/users/by/username/${encodeURIComponent(cleaned)}`;
-  const res = await fetch(url, { headers: bearer(creds) });
+  const res = await fetch(url, { headers: xAuth(creds, url, "GET") });
   if (!res.ok) {
     const text = await res.text();
     const err = new Error(`X resolve username failed (${res.status}): ${text.slice(0, 200)}`);
@@ -502,7 +565,7 @@ export async function xResolveUsername(
 }
 
 export async function xGetUserPosts(
-  creds: XCredentials,
+  creds: XCredentialsAny,
   userId: string,
   count = 30,
 ): Promise<XPublicTweet[]> {
@@ -513,7 +576,7 @@ export async function xGetUserPosts(
     exclude: "retweets,replies",
   });
   const url = `${BASE_URL}/2/users/${encodeURIComponent(userId)}/tweets?${params}`;
-  const res = await fetch(url, { headers: bearer(creds) });
+  const res = await fetch(url, { headers: xAuth(creds, url, "GET") });
   if (!res.ok) {
     const text = await res.text();
     const err = new Error(`X get user tweets failed (${res.status}): ${text.slice(0, 200)}`);

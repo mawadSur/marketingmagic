@@ -13,7 +13,7 @@
 //   the database, so a crash mid-thread resumes against the right parent.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { xPostThread, type XCredentials } from "@/lib/social/x";
+import { xPostThread, type XCredentialsAny } from "@/lib/social/x";
 import { readThreadMeta, type ThreadRowMeta } from "./schema";
 
 export interface ThreadRow {
@@ -112,7 +112,7 @@ export interface PostThreadOutcome {
 export async function postThread(
   svc: SupabaseClient,
   ideaId: string,
-  creds: XCredentials,
+  creds: XCredentialsAny,
 ): Promise<PostThreadOutcome> {
   const rows = await loadThreadRows(svc, ideaId);
   const total = rows.length;
