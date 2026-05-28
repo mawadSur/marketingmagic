@@ -15,7 +15,12 @@ export default async function ConnectFacebookPage({
 }) {
   const params = await searchParams;
   const env = serverEnv();
-  const configured = Boolean(env.META_APP_ID && env.META_APP_SECRET);
+  // FLB binds permissions to a Configuration ID set in the Meta dashboard
+  // (not to a scope= param), so we need all three pieces for the OAuth dialog
+  // to render at all.
+  const hasAppCreds = Boolean(env.META_APP_ID && env.META_APP_SECRET);
+  const hasFlbConfig = Boolean(env.META_FB_LOGIN_CONFIG_ID);
+  const configured = hasAppCreds && hasFlbConfig;
 
   return (
     <div className="mx-auto max-w-xl space-y-6">
@@ -56,20 +61,35 @@ export default async function ConnectFacebookPage({
         </section>
       ) : (
         <div className="rounded-md border border-amber-500/50 bg-amber-500/5 p-4 text-sm">
-          <p className="font-medium">Meta OAuth keys are not configured.</p>
-          <p className="mt-1 text-muted-foreground">
-            Set <code>META_APP_ID</code> and <code>META_APP_SECRET</code> in <code>.env</code>{" "}
-            and add the Facebook Login + Manage Pages products to your Meta app at{" "}
-            <a
-              className="underline-offset-4 hover:underline"
-              href="https://developers.facebook.com/apps/"
-              target="_blank"
-              rel="noreferrer"
-            >
-              developers.facebook.com/apps
-            </a>
-            .
-          </p>
+          {!hasAppCreds ? (
+            <>
+              <p className="font-medium">Meta OAuth keys are not configured.</p>
+              <p className="mt-1 text-muted-foreground">
+                Set <code>META_APP_ID</code> and <code>META_APP_SECRET</code> in{" "}
+                <code>.env</code> and add the Facebook Login for Business product to your
+                Meta app at{" "}
+                <a
+                  className="underline-offset-4 hover:underline"
+                  href="https://developers.facebook.com/apps/"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  developers.facebook.com/apps
+                </a>
+                .
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="font-medium">Facebook Login Configuration ID is missing.</p>
+              <p className="mt-1 text-muted-foreground">
+                The Meta app uses Facebook Login for Business, which binds permissions to
+                a dashboard-configured Configuration. Create one under{" "}
+                <em>Facebook Login for Business → Configurations</em> in your Meta app,
+                then set <code>META_FB_LOGIN_CONFIG_ID</code> in <code>.env</code>.
+              </p>
+            </>
+          )}
         </div>
       )}
     </div>

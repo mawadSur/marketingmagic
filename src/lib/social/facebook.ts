@@ -39,10 +39,19 @@ export interface FacebookMetrics {
 export function facebookAuthorizeUrl(opts: { redirectUri: string; state: string }): string {
   const env = serverEnv();
   if (!env.META_APP_ID) throw new Error("META_APP_ID is not set.");
+  if (!env.META_FB_LOGIN_CONFIG_ID) {
+    throw new Error(
+      "META_FB_LOGIN_CONFIG_ID is not set. The Meta app uses Facebook Login for Business, which binds permissions/assets to a Configuration ID instead of the OAuth scope param.",
+    );
+  }
+  // Facebook Login for Business: permissions + asset types come from the
+  // Configuration in the dashboard, NOT from a scope= param. Sending scope=
+  // here while the app has FLB (not classic Facebook Login) causes FB's
+  // Comet dialog to crash with the generic "Something Went Wrong" page.
   const params = new URLSearchParams({
     client_id: env.META_APP_ID,
     redirect_uri: opts.redirectUri,
-    scope: "pages_show_list,pages_manage_posts,pages_read_engagement",
+    config_id: env.META_FB_LOGIN_CONFIG_ID,
     response_type: "code",
     state: opts.state,
   });
