@@ -12,6 +12,7 @@ import { collectRejectionSignals } from "@/lib/plan/rejection-signals";
 import { loadRecentPatterns } from "@/lib/explain/playbook";
 import { loadThemeWinners } from "@/lib/analytics/themes";
 import { recommendHashtagsForChannels } from "@/lib/hashtags/recommend";
+import { gatherCompetitorInsights } from "@/lib/plan/competitor-insights-gather";
 import { backfillHashtagsForPosts } from "@/lib/hashtags/backfill";
 import { channelSpec, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
 import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits";
@@ -140,6 +141,16 @@ export async function generatePlanAction(
     throw err;
   }
 
+  // Runs AFTER the quota check so we don't burn research tokens on an
+  // over-quota workspace.
+  const competitorInsights = await gatherCompetitorInsights({
+    formData,
+    workspaceId: ws.id,
+    brief: briefRes.data,
+    channelMix,
+    supabase: supabaseService(),
+  });
+
   // Best-of-3 retry loop. Generate, score, keep if average voice >=
   // threshold OR we've exhausted retries. We keep the best attempt so
   // far rather than throwing it away on the next pass.
@@ -173,6 +184,7 @@ export async function generatePlanAction(
         retryNote,
         hashtagSuggestions,
         themeWinners,
+        competitorInsights,
       });
 
       const avgVoice = averageVoiceScore(attemptResult);
