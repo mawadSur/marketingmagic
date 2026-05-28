@@ -2,6 +2,7 @@ import type { Database, VoiceProfile } from "@/lib/db/types";
 import { CHANNELS, type ChannelId } from "@/lib/channels/registry";
 import type { SavedPattern } from "@/lib/explain/playbook";
 import type { ExtractedQuote, ExtractedFact } from "@/lib/sources/schema";
+import type { CompetitorInsight } from "@/lib/plan/competitor-research";
 
 type Brief = Database["public"]["Tables"]["brand_briefs"]["Row"];
 
@@ -73,6 +74,12 @@ export interface PlanGenInputs {
   // Empty array = no statistically-meaningful winners yet — the block
   // is skipped entirely.
   themeWinners?: ThemeWinnerSignal[];
+  // Phase 7: live competitor research. One entry per active channel.
+  // Set when the user ticked "Compare what competitors are doing" on the
+  // plan-generation form. When undefined or empty, the system prompt is
+  // unchanged from current behaviour. The research pass is best-effort —
+  // failure produces undefined here, never throws into the planner.
+  competitorInsights?: CompetitorInsight[];
 }
 
 // Phase 6A — single row of the "themes that have been working" block.
@@ -129,6 +136,46 @@ function themeWinnersBlock(winners: ThemeWinnerSignal[] | undefined): string {
     lines.push(
       `- ${w.tag} — posterior ${pct(w.posterior_mean)} engagement (${w.lift.toFixed(2)}× baseline, CI ${pct(w.ci_low)}–${pct(w.ci_high)}, ${w.posts} post${w.posts === 1 ? "" : "s"})`,
     );
+  }
+  return lines.join("\n") + "\n";
+}
+
+// Phase 7: render the "what's working for competitors right now" block.
+// Distinct from themeWinnersBlock (which reflects this workspace's own
+// historical engagement) — these insights are external signal pulled
+// live from competitor research. We hedge the framing so Claude treats
+// them as directional hints, not templates to copy; the brief and voice
+// profile still override anything here. "Do not paraphrase" sample posts
+// is enforced inline — the existing voice/quotes guardrails carry the rest.
+function competitorInsightsBlock(insights: CompetitorInsight[] | undefined): string {
+  if (!insights || insights.length === 0) return "";
+  const lines: string[] = ["## What's working for competitors right now"];
+  lines.push(
+    "Live research on top performers in each channel. Treat these as directional hints — patterns to consider, not templates to copy. Voice rules and the brand brief still override anything here.",
+  );
+  for (const ins of insights) {
+    const label = CHANNELS[ins.channel].label;
+    lines.push("");
+    lines.push(`### ${label}`);
+    lines.push(ins.reasoning);
+    if (ins.topPatterns.length > 0) {
+      lines.push("");
+      lines.push("Patterns observed:");
+      for (const p of ins.topPatterns) lines.push(`- ${p}`);
+    }
+    if (ins.recommendedThemes.length > 0) {
+      lines.push("");
+      lines.push(
+        `Themes trending on this channel (consider as theme tags): ${ins.recommendedThemes.join(", ")}`,
+      );
+    }
+    if (ins.samplePosts.length > 0) {
+      lines.push("");
+      lines.push("Sample posts (for pattern reference — do NOT paraphrase):");
+      for (const s of ins.samplePosts) {
+        lines.push(`- "${s.text}" — ${s.why_it_worked}`);
+      }
+    }
   }
   return lines.join("\n") + "\n";
 }
@@ -318,6 +365,7 @@ export function planSystemPrompt(inputs: PlanGenInputs): string {
     voiceProfile ? voiceProfileBlock(voiceProfile) : "",
     savedPatternsBlock(inputs.savedPatterns),
     themeWinnersBlock(inputs.themeWinners),
+    competitorInsightsBlock(inputs.competitorInsights),
     sourceBlock(inputs.source),
     recommendedHashtagsBlock(inputs.hashtagSuggestions, activeChannels),
     "## Channel constraints",

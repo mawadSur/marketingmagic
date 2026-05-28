@@ -25,6 +25,7 @@ import type {
 import type { SavedPattern } from "@/lib/explain/playbook";
 import type { ChannelId } from "@/lib/channels/registry";
 import type { GoalStrategy } from "@/lib/goals/schema";
+import type { CompetitorInsight } from "@/lib/plan/competitor-research";
 
 type ContentGoalRow = Database["public"]["Tables"]["content_goals"]["Row"];
 
@@ -49,6 +50,10 @@ export interface GeneratePostsFromGoalInputs {
   // precedence as the planning anchor.
   themeWinners?: ThemeWinnerSignal[];
   retryNote?: string;
+  // Phase 7: live competitor research insights, forwarded straight through
+  // to PlanGenInputs. Best-effort upstream — undefined when the user didn't
+  // opt in or research failed.
+  competitorInsights?: CompetitorInsight[];
 }
 
 // Renders a "## Content goal" block injected into the planner prompt.
@@ -126,6 +131,7 @@ export async function generatePostsFromGoal(
     rejections: inputs.rejections,
     savedPatterns: inputs.savedPatterns,
     themeWinners: inputs.themeWinners,
+    competitorInsights: inputs.competitorInsights,
     retryNote,
   };
   return generatePlan(planInputs);

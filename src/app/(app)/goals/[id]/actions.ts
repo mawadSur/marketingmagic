@@ -12,6 +12,7 @@ import { collectThemeSignals } from "@/lib/plan/signals";
 import { collectRejectionSignals } from "@/lib/plan/rejection-signals";
 import { loadRecentPatterns } from "@/lib/explain/playbook";
 import { loadThemeWinners } from "@/lib/analytics/themes";
+import { gatherCompetitorInsights } from "@/lib/plan/competitor-insights-gather";
 import {
   channelSpec,
   ENABLED_CHANNELS,
@@ -175,6 +176,14 @@ export async function generatePostsAction(
     loadThemeWinners(ws.id, 5),
   ]);
 
+  const competitorInsights = await gatherCompetitorInsights({
+    formData,
+    workspaceId: ws.id,
+    brief: briefRes.data,
+    channelMix,
+    supabase: supabaseService(),
+  });
+
   // One-shot generation. The strategy itself is the quality contract;
   // re-running 3x for voice drift would burn tokens for marginal lift.
   let result;
@@ -191,6 +200,7 @@ export async function generatePostsAction(
       rejections,
       savedPatterns,
       themeWinners,
+      competitorInsights,
     });
   } catch (err) {
     return {

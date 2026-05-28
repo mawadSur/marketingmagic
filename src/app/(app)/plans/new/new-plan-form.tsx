@@ -120,6 +120,22 @@ export function NewPlanForm({ accounts }: { accounts: Account[] }) {
         </p>
       </div>
 
+      <div className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          name="compare_competitors"
+          id="compare_competitors"
+          value="1"
+          className="mt-0.5 h-4 w-4 shrink-0 rounded border-input transition-colors duration-200"
+        />
+        <Label htmlFor="compare_competitors" className="cursor-pointer">
+          <span className="block">Compare what competitors are doing</span>
+          <span className="block text-xs font-normal text-muted-foreground">
+            Analyze top performers on each channel and incorporate what&apos;s working.
+          </span>
+        </Label>
+      </div>
+
       {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
       {state.planId ? (
         <p className="text-sm text-emerald-600 dark:text-emerald-400">
