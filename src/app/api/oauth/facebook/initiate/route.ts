@@ -9,7 +9,7 @@ import { facebookAuthorizeUrl } from "@/lib/social/facebook";
 
 export async function POST(_req: NextRequest) {
   const env = serverEnv();
-  if (!env.META_APP_ID || !env.META_APP_SECRET) {
+  if (!env.META_APP_ID || !env.META_APP_SECRET || !env.META_FB_LOGIN_CONFIG_ID) {
     return NextResponse.redirect(
       new URL("/settings/channels/facebook?error=facebook_not_configured", siteUrl()),
     );

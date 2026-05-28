@@ -17,8 +17,17 @@ export async function GET(req: NextRequest) {
   const base = siteUrl();
   const code = req.nextUrl.searchParams.get("code");
   const state = req.nextUrl.searchParams.get("state");
-  const error = req.nextUrl.searchParams.get("error");
-  const errorDescription = req.nextUrl.searchParams.get("error_description");
+  // FB sends OAuth errors in two shapes depending on the dialog product:
+  //   - OAuth 2.0 spec:  ?error=&error_description=
+  //   - FB legacy/Comet: ?error_code=&error_message=
+  // Handle both — otherwise the real reason gets swallowed and the user
+  // sees "missing code/state" instead of the actual FB error string.
+  const error =
+    req.nextUrl.searchParams.get("error") ||
+    req.nextUrl.searchParams.get("error_code");
+  const errorDescription =
+    req.nextUrl.searchParams.get("error_description") ||
+    req.nextUrl.searchParams.get("error_message");
   if (error) {
     const msg = errorDescription || error;
     return NextResponse.redirect(

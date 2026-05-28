@@ -35,6 +35,13 @@ const serverSchema = z.object({
   //   Used by the Threads OAuth flow.
   META_APP_ID: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
   META_APP_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
+  // Facebook Login for Business "Configuration ID" — created under the FLB
+  // product in the Meta App Dashboard. FLB binds permissions/assets to the
+  // configuration rather than to the OAuth URL, so we send `config_id` in
+  // place of `scope=`. Without this set, /dialog/oauth crashes with the
+  // generic "Something Went Wrong" Comet error because the app has FLB
+  // (not classic Facebook Login) configured.
+  META_FB_LOGIN_CONFIG_ID: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
   INSTAGRAM_APP_ID: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
   INSTAGRAM_APP_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
   THREADS_APP_ID: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
