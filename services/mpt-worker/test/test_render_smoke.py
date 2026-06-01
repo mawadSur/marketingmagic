@@ -123,9 +123,20 @@ def client():
     from fastapi.testclient import TestClient
 
     from app.asgi import app as asgi_app
+    from app.config import config
 
-    with TestClient(asgi_app) as c:
-        yield c
+    # This smoke test runs in fail-open (auth-disabled) mode and sends no
+    # x-api-key. test_byo.py sets MPT_API_KEY/config.app["api_key"] at *import*
+    # time (a load-time singleton) and never clears it, so when both files run
+    # in one pytest process that leaked token makes verify_token reject our
+    # unauthenticated upload with 401. Force fail-open for this test, restore after.
+    _prev_api_key = config.app.get("api_key", "")
+    config.app["api_key"] = ""
+    try:
+        with TestClient(asgi_app) as c:
+            yield c
+    finally:
+        config.app["api_key"] = _prev_api_key
 
 
 def test_real_render_produces_valid_mp4(client, tmp_path):
