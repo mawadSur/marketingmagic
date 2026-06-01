@@ -78,6 +78,31 @@ export interface ExtractedFact {
 // in migration 006. `other` is the catch-all; `reason_note` carries the prose.
 export type RejectionReason = "off_voice" | "wrong_theme" | "factually_wrong" | "other";
 
+// PLG share (migration 032): the content persisted under a preview_shares.slug
+// so an anonymous /start preview can be re-rendered read-only and unfurled on
+// social. Mirrors the signed preview-token payload but is the SHAREABLE subset
+// only — preview content, never any account/workspace data.
+export interface PreviewSharePostItem {
+  channel: string;
+  text: string;
+  theme: string;
+  suggested_scheduled_at: string;
+  rationale: string;
+  image_prompt?: string;
+}
+export interface PreviewSharePayload {
+  channel: "x" | "linkedin" | "instagram" | "bluesky" | "threads";
+  handle: string;
+  niche_hint?: string;
+  plan: {
+    plan_name: string;
+    overview: string;
+    posts: PreviewSharePostItem[];
+  };
+  voice_summary: string;
+  source: "scrape" | "paste";
+}
+
 // Phase 1 (Voice Wedge): extracted from brand_briefs.reference_posts via a
 // Claude tool-use call. Shape is the source of truth — zod schema in
 // src/lib/voice/schema.ts mirrors this exactly. Stored as jsonb on
@@ -346,14 +371,41 @@ export interface Database {
           referred_workspace_id: string;
           code: string;
           created_at: string;
+          // PLG vesting (migration 032). NULL = reward pending (referred
+          // workspace hasn't shipped its first post). Set once when that first
+          // post reaches 'posted' and the +5 bonus is granted — the conditional
+          // null→now() flip is the idempotency key against double-granting.
+          vested_at: string | null;
         };
         Insert: {
           id?: string;
           referrer_workspace_id: string;
           referred_workspace_id: string;
           code: string;
+          vested_at?: string | null;
         };
-        Update: Partial<{ code: string }>;
+        Update: Partial<{ code: string; vested_at: string | null }>;
+        Relationships: [];
+      };
+      // PLG share (migration 032). A persisted, read-only snapshot of an
+      // anonymous /start preview plan, addressable by an unguessable slug at
+      // /p/<slug>. Holds ONLY preview content (no account data); writes + reads
+      // go through the service role (the slug is the capability).
+      preview_shares: {
+        Row: {
+          id: string;
+          slug: string;
+          payload: PreviewSharePayload;
+          created_at: string;
+          expires_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          slug: string;
+          payload: PreviewSharePayload;
+          expires_at?: string | null;
+        };
+        Update: Partial<{ payload: PreviewSharePayload; expires_at: string | null }>;
         Relationships: [];
       };
       memberships: {
