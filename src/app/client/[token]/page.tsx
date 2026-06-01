@@ -1,7 +1,12 @@
 import Link from "next/link";
 import Image from "next/image";
 import { resolvePortalToken, hasScope } from "@/lib/portal/token";
-import { getPortalBranding, listPendingPosts, getPortalReport } from "@/lib/portal/data";
+import {
+  getPortalBranding,
+  listPendingPosts,
+  getPortalReport,
+  getPortalInsights,
+} from "@/lib/portal/data";
 import { resolveTheme } from "@/lib/portal/branding";
 import { PortalApprovals } from "./portal-approvals";
 import { PortalReport } from "./portal-report";
@@ -31,9 +36,10 @@ export default async function ClientPortalPage({
   const canApprove = hasScope(ctx, "approve");
   const canViewReports = hasScope(ctx, "view_reports");
 
-  const [pending, report] = await Promise.all([
+  const [pending, report, insights] = await Promise.all([
     canApprove ? listPendingPosts(ctx) : Promise.resolve([]),
     canViewReports ? getPortalReport(ctx) : Promise.resolve(null),
+    canViewReports ? getPortalInsights(ctx) : Promise.resolve(null),
   ]);
 
   return (
@@ -87,7 +93,7 @@ export default async function ClientPortalPage({
               Download PDF
             </Link>
           </div>
-          <PortalReport report={report} accent={theme.accent} />
+          <PortalReport report={report} insights={insights} accent={theme.accent} />
         </section>
       ) : null}
 

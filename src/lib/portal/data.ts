@@ -20,6 +20,8 @@
 
 import { supabaseService } from "@/lib/supabase/service";
 import { assertScope, type PortalContext } from "@/lib/portal/token";
+import { getStatsByChannel, type ChannelStats } from "@/lib/dashboard/analytics";
+import { loadThemeWinners, type ThemeWinner } from "@/lib/analytics/themes";
 import type { Channel, PostStatus, RejectionReason } from "@/lib/db/types";
 
 // ─── Branding (white-label) ─────────────────────────────────────────────
@@ -371,4 +373,45 @@ export async function getPortalReport(ctx: PortalContext): Promise<PortalReport>
     rows,
     totals: { posts: rows.length, impressions, engagements, avgEngagementRate },
   };
+}
+
+// ─── Insights: per-channel breakdown + winning themes (scope: view_reports) ─
+//
+// The substance of the client report: a 30-day per-channel breakdown and the
+// Bayesian "winning themes" the workspace's content is winning on. Both reuse
+// the EXISTING analytics functions (src/lib/dashboard/analytics.ts and
+// src/lib/analytics/themes.ts) verbatim — the report consumes the same data the
+// in-app dashboard does, so the numbers never diverge.
+//
+// SECURITY: like every function in this module, the workspace comes ONLY from
+// the validated PortalContext. We pass ctx.workspaceId — and nothing the caller
+// controls — into the reused analytics, which each filter on that single id.
+// No workspaceId argument is accepted here, so the portal can never widen scope.
+
+export interface PortalInsights {
+  channels: ChannelStats[];
+  winningThemes: ThemeWinner[];
+}
+
+const INSIGHTS_WINDOW_DAYS = 30;
+const INSIGHTS_THEME_LIMIT = 5;
+
+/**
+ * Per-channel performance (30d) + the workspace's winning themes. Scope-gated on
+ * 'view_reports'. Pure read; reuses the dashboard + theme analytics so the
+ * client report and the operator dashboard show identical figures.
+ *
+ * Queries (all inside the reused analytics, each scoped to ctx.workspaceId):
+ *   • getStatsByChannel → post_metrics ⋈ posts WHERE posts.workspace_id == ctx.
+ *   • loadThemeWinners  → posts ⋈ post_metrics WHERE posts.workspace_id == ctx.
+ */
+export async function getPortalInsights(ctx: PortalContext): Promise<PortalInsights> {
+  assertScope(ctx, "view_reports");
+
+  const [channels, winningThemes] = await Promise.all([
+    getStatsByChannel(ctx.workspaceId, INSIGHTS_WINDOW_DAYS),
+    loadThemeWinners(ctx.workspaceId, INSIGHTS_THEME_LIMIT),
+  ]);
+
+  return { channels, winningThemes };
 }
