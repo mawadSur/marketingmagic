@@ -39,6 +39,7 @@ export default async function AnalyticsPage() {
   const insightLinks = [
     ...(hasCompetitorWatch(ws.plan) ? [{ href: "/competitors", label: "Competitors" }] : []),
     { href: "/portfolio", label: "Portfolio" },
+    { href: "/analytics/themes", label: "Themes" },
   ];
 
   return (
