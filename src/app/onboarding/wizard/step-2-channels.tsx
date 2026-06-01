@@ -7,36 +7,51 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
 interface ChannelOption {
-  slug: "x" | "linkedin" | "threads" | "instagram" | "bluesky";
+  slug: "facebook" | "bluesky" | "threads" | "x" | "linkedin" | "instagram";
   label: string;
   description: string;
+  // Shown as a small tag. "ready" = publishes today; "setup" = needs an extra
+  // account/approval step before it can post. Ordering below puts the
+  // ready-today channels first so a new user hits a guaranteed win.
+  badge?: "ready" | "setup";
 }
 
 const CHANNELS: ChannelOption[] = [
   {
-    slug: "x",
-    label: "X",
-    description: "Short-form posts. Manual API-key paste — keys stay server-side.",
-  },
-  {
-    slug: "linkedin",
-    label: "LinkedIn",
-    description: "Long-form professional. OAuth — no passwords to manage.",
-  },
-  {
-    slug: "threads",
-    label: "Threads",
-    description: "Meta's short-form network. OAuth.",
-  },
-  {
-    slug: "instagram",
-    label: "Instagram",
-    description: "Captions paired with images. OAuth, business account required.",
+    slug: "facebook",
+    label: "Facebook",
+    description: "Post to your Pages. One-click OAuth — live and ready.",
+    badge: "ready",
   },
   {
     slug: "bluesky",
     label: "Bluesky",
     description: "AT Protocol. Uses an app password — not your main login.",
+    badge: "ready",
+  },
+  {
+    slug: "threads",
+    label: "Threads",
+    description: "Meta's short-form network. One-click OAuth.",
+    badge: "ready",
+  },
+  {
+    slug: "x",
+    label: "X",
+    description: "Short-form posts. One-click OAuth (manual key paste available).",
+    badge: "ready",
+  },
+  {
+    slug: "linkedin",
+    label: "LinkedIn",
+    description: "Long-form professional. OAuth — no passwords to manage.",
+    badge: "ready",
+  },
+  {
+    slug: "instagram",
+    label: "Instagram",
+    description: "Captions paired with images. OAuth; business/creator account required.",
+    badge: "setup",
   },
 ];
 
@@ -47,11 +62,12 @@ interface Step2Props {
 }
 
 /**
- * Step 2: a card grid of the five supported channels. Each card links to
- * that channel's existing settings page. Connection state is read from
- * the DB (passed in by the server page), so connecting via any flow —
- * OAuth, X paste, Bluesky app password — lights up the right card on
- * return.
+ * Step 2: a card grid of the supported channels, ready-to-publish ones first
+ * so a new user hits a guaranteed win (Facebook/Bluesky/Threads/X/LinkedIn)
+ * before the setup-gated one (Instagram). Each card links to that
+ * channel's existing settings page. Connection state is read from the DB
+ * (passed in by the server page), so connecting via any flow — OAuth, X paste,
+ * Bluesky app password — lights up the right card on return.
  */
 export function Step2Channels({ connectedChannels, justConnected }: Step2Props) {
   const router = useRouter();
@@ -80,8 +96,19 @@ export function Step2Channels({ connectedChannels, justConnected }: Step2Props) 
             >
               <CardContent className="flex h-full flex-col gap-3 p-5">
                 <div className="flex items-start justify-between gap-2">
-                  <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
                     <h3 className="font-medium leading-none">{c.label}</h3>
+                    {!isConnected && c.badge ? (
+                      <span
+                        className={
+                          c.badge === "ready"
+                            ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-400"
+                            : "rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                        }
+                      >
+                        {c.badge === "ready" ? "Ready" : "Setup"}
+                      </span>
+                    ) : null}
                   </div>
                   {isConnected ? (
                     <CheckCircle2
