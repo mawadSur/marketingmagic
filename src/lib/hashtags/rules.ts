@@ -56,6 +56,13 @@ const POLICIES: Record<ChannelId, HashtagChannelRules> = {
     notes: "Bluesky: skip hashtags. The platform's culture and algorithm both reward plain prose.",
     showChips: false,
   },
+  facebook: {
+    channel: "facebook",
+    recommendedCount: [0, 2],
+    notes:
+      "Facebook: 0–2 hashtags. Tags add little reach on a Page — use only when load-bearing. Default to none.",
+    showChips: true,
+  },
 };
 
 export function getChannelHashtagPolicy(channel: ChannelId): HashtagChannelRules {
@@ -72,6 +79,7 @@ export const COLD_START_SEEDS: Record<ChannelId, string[]> = {
   threads: ["startup", "building"],
   instagram: ["entrepreneur", "startup", "smallbusiness", "founder", "buildinpublic", "marketing", "creator", "smallbiz"],
   bluesky: [], // never recommend tags on Bluesky
+  facebook: ["smallbusiness", "startup", "entrepreneur"],
 };
 
 // Tag-mix tier annotation for IG chips. Pure UI hint — derived from a

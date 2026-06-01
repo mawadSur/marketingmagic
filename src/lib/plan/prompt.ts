@@ -257,6 +257,7 @@ function recommendedHashtagsBlock(
     threads: "Threads: 1–2 conversational tags.",
     instagram: "Instagram: 8–15 mixed-tier tags (mega + mid + niche).",
     bluesky: "Bluesky: NO hashtags. Skip entirely.",
+    facebook: "Facebook: 0–2 tags. Hashtags add little on a Page — default to none unless load-bearing.",
   };
   for (const ch of activeChannels) {
     const tags = suggestions.get(ch) ?? [];
@@ -309,6 +310,8 @@ const CHANNEL_TONE: Record<ChannelId, string> = {
     "Image-led — caption supports the visual. First 125 chars carry the hook before the 'more' fold. Hashtags 3-8 only if useful.",
   bluesky:
     "Same energy as X but the audience is more tech/skeptical. No hashtags. Reward specificity over hype.",
+  facebook:
+    "Conversational and community-oriented. Lead with the hook; keep it to 1–2 short paragraphs with one clear CTA. Hashtags sparing.",
 };
 
 // LinkedIn long-form guidance — emitted only when LinkedIn is in the active

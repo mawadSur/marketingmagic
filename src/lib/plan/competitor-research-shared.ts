@@ -204,6 +204,7 @@ const HANDLE_PATTERNS: Record<ChannelId, RegExp> = {
   threads: /^[a-z0-9._]{1,30}$/,
   linkedin: /^[a-z0-9-]{3,100}$/,
   bluesky: /^[a-z0-9.-]{1,253}$/,
+  facebook: /^[a-z0-9.]{1,80}$/,
 };
 
 export function normaliseHandle(raw: string): string {
