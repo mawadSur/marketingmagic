@@ -19,6 +19,15 @@ import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits"
 import { incrementPostsGenerated } from "@/lib/billing/usage";
 import { getOptimalWindows, nextOptimalSlotIso } from "@/lib/timing/analyze";
 import type { OptimalWindowsResult } from "@/lib/timing/schema";
+import { mptConfigured, byoKeysConfigured } from "@/lib/env";
+import { getWorkspaceKeyStatus } from "@/lib/video/byo-keys";
+import {
+  parseVideoOptIns,
+  shouldGenerateVideoForPost,
+  remainingVideoQuota,
+  kickoffPlanVideos,
+  type PlanVideoTarget,
+} from "@/lib/video/plan-videos";
 
 // Voice-score threshold: posts below this auto-regenerate (up to MAX_RETRIES
 // passes); if still below after retries we keep the best-of-3 and flag as
@@ -390,6 +399,40 @@ export async function generatePlanAction(
     }
   }
 
+  // ── Plan videos — per-channel opt-in resolution ──────────────────────────
+  //
+  // Parse the `video_<accountId>="on"` flags off the form, then resolve whether
+  // video is actually AVAILABLE for this workspace (the same gate the page uses
+  // to show the checkboxes): render worker + BYO encryption wired up AND this
+  // workspace has its own LLM + Pexels keys. If unavailable, every opt-in is
+  // ignored — the plan saves as text-only. We collect kickoff targets as we
+  // build the posts payload below; each video post is FORCED to pending_approval
+  // (the video must render + be reviewed before it can publish, even on a
+  // trusted channel).
+  const videoOptIns = parseVideoOptIns(formData);
+  let videoAvailable = false;
+  if (videoOptIns.size > 0 && mptConfigured() && byoKeysConfigured()) {
+    try {
+      const keyStatus = await getWorkspaceKeyStatus(ws.id);
+      videoAvailable = keyStatus.llm && keyStatus.pexels;
+    } catch (err) {
+      // A key-status read failure must never block the plan — fall back to
+      // "no video" and let the text posts save.
+      console.warn("Plan video key-status check failed; skipping videos:", err);
+    }
+  }
+
+  // Per-payload-entry metadata, index-aligned with `postsPayload` (and therefore
+  // with `insertedPosts` below, since the insert preserves order). We use it to
+  // build the kickoff targets once we have real post ids.
+  const videoMeta: Array<{
+    wantsVideo: boolean;
+    socialAccountId: string;
+    channel: string;
+    videoSubject: string;
+    videoScript: string;
+  }> = [];
+
   const postsPayload = flatVariants.flatMap((p, idx) => {
     const acct = accountByChannel.get(p.channel);
     if (!acct) {
@@ -425,6 +468,29 @@ export async function generatePlanAction(
       timingSource = "claude_suggested";
     }
 
+    // Plan videos — does THIS post get a video? Only when video is available,
+    // this account was opted-in, and the channel is video-capable. A video post
+    // is FORCED to pending_approval even on a trusted channel: the render has to
+    // complete and be reviewed before it should publish. We record the kickoff
+    // target (subject = idea theme/label, script = the post's copy) so MPT
+    // narrates the exact text; the actual render fires AFTER insert, best-effort.
+    const wantsVideo = shouldGenerateVideoForPost({
+      videoAvailable,
+      optedInAccountIds: videoOptIns,
+      socialAccountId: acct.id,
+      channel: acct.channel,
+    });
+    const effectiveTrusted = trusted && !wantsVideo;
+    videoMeta.push({
+      wantsVideo,
+      socialAccountId: acct.id,
+      channel: acct.channel,
+      // Prefer the idea label (human-readable theme) for the stock-footage
+      // subject; fall back to the raw theme when there's no idea grouping.
+      videoSubject: p.idea_label ?? p.theme,
+      videoScript: text,
+    });
+
     return [
       {
         workspace_id: ws.id,
@@ -434,14 +500,16 @@ export async function generatePlanAction(
         text,
         theme: p.theme,
         scheduled_at: scheduledAt,
-        status: (trusted ? "scheduled" : "pending_approval") as "scheduled" | "pending_approval",
+        status: (effectiveTrusted ? "scheduled" : "pending_approval") as
+          | "scheduled"
+          | "pending_approval",
         voice_score: voiceScore,
         low_confidence: lowConfidence,
         idea_id: p.idea_id,
         generation_metadata: {
           rationale: p.rationale,
           cache_read_input_tokens: result.usage.cache_read_input_tokens ?? 0,
-          auto_scheduled: trusted,
+          auto_scheduled: effectiveTrusted,
           image_prompt: p.image_prompt ?? null,
           idea_label: p.idea_label,
           timing_source: timingSource,
@@ -482,6 +550,40 @@ export async function generatePlanAction(
     if (newIds.length > 0) await backfillHashtagsForPosts(newIds);
   } catch (err) {
     console.warn("Hashtag backfill on new plan failed:", err);
+  }
+
+  // ── Plan videos — best-effort kickoff phase (AFTER the posts insert) ──────
+  //
+  // For every inserted post that opted into a video, fire an MPT render that
+  // attaches to THAT post (postId → video_jobs.post_id → the cron UPDATEs the
+  // post's media[]). Two invariants, both owned by kickoffPlanVideos:
+  //   • QUOTA-BOUNDED: remaining = tier videosPerMonth − usage.videosGenerated,
+  //     computed ONCE; the loop never starts more than that, and stops on a
+  //     QuotaExceededError thrown by startVideoRender's own per-call assertion.
+  //   • BEST-EFFORT: the whole block is wrapped so a video failure can NEVER
+  //     abort the plan — the plan + its text posts are already committed above.
+  try {
+    const ids = (insertedPosts ?? []).map((r) => r.id);
+    const targets: PlanVideoTarget[] = [];
+    videoMeta.forEach((m, i) => {
+      const postId = ids[i];
+      if (!m.wantsVideo || !postId) return;
+      targets.push({
+        postId,
+        socialAccountId: m.socialAccountId,
+        channel: m.channel,
+        videoSubject: m.videoSubject,
+        videoScript: m.videoScript,
+      });
+    });
+    if (targets.length > 0) {
+      const remaining = await remainingVideoQuota(ws.id, ws.plan);
+      await kickoffPlanVideos(ws.id, targets, remaining);
+    }
+  } catch (err) {
+    // Defence in depth: even an unexpected throw in the kickoff setup must not
+    // sink the (already-saved) plan. Log and carry on to the redirect.
+    console.warn("Plan video kickoff phase failed; plan saved without videos:", err);
   }
 
   revalidatePath("/plans");
