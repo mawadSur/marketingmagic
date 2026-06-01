@@ -132,6 +132,15 @@ const serverSchema = z.object({
   // ships live. Accepts "1"/"true" (case-insensitive). Read through
   // referenceVideoEnabled() — never touch this field directly.
   REFERENCE_VIDEO_ENABLED: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
+  // Reference-image video (bet ④) — the fal.ai image-to-video model id the
+  // adapter submits to. Overridable so the model isn't hardcoded; defaults to a
+  // Kling image-to-video STANDARD tier (cheapest, good enough for "animate my
+  // photo" B-roll). Read through referenceVideoFalModel(). Only meaningful when
+  // REFERENCE_VIDEO_ENABLED is on.
+  REFERENCE_VIDEO_FAL_MODEL: z
+    .string()
+    .min(1)
+    .default("fal-ai/kling-video/v1.6/standard/image-to-video"),
 });
 
 const publicSchema = serverSchema.pick({
@@ -251,4 +260,12 @@ export function videoPublishEnabled(channel: string): boolean {
 export function referenceVideoEnabled(): boolean {
   const raw = serverEnv().REFERENCE_VIDEO_ENABLED?.trim().toLowerCase();
   return raw === "1" || raw === "true";
+}
+
+// Reference-image video (bet ④) — the fal.ai image-to-video model id the adapter
+// submits to. Overridable via REFERENCE_VIDEO_FAL_MODEL so it's not hardcoded;
+// defaults to a Kling image-to-video standard tier. Used by the fal video
+// adapter to build the queue endpoint URL.
+export function referenceVideoFalModel(): string {
+  return serverEnv().REFERENCE_VIDEO_FAL_MODEL;
 }

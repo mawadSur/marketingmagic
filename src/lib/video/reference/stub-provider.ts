@@ -12,6 +12,7 @@
 // until a real adapter is registered here.
 
 import { referenceVideoEnabled } from "@/lib/env";
+import { falReferenceVideoProvider } from "./fal-video-provider";
 import {
   ReferenceVideoNotEnabledError,
   type ReferenceVideoInputs,
@@ -46,11 +47,12 @@ export const stubReferenceVideoProvider = new StubReferenceVideoProvider();
 
 // Resolve the active reference-image video provider. Throws
 // ReferenceVideoNotEnabledError when the feature flag is off so call sites fail
-// loudly and uniformly. When ON, returns the stub today — a real adapter gets
-// registered here behind the same guard once a vendor is chosen.
+// loudly and uniformly. When ON, returns the live fal.ai image-to-video adapter
+// (Capability A — "animate the user's uploaded photo"). The stub is retained
+// only for typing/tests and is never returned once the flag is flipped.
 export function getReferenceVideoProvider(): ReferenceVideoProvider {
   if (!referenceVideoEnabled()) {
     throw new ReferenceVideoNotEnabledError();
   }
-  return stubReferenceVideoProvider;
+  return falReferenceVideoProvider;
 }

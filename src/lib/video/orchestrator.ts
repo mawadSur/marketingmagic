@@ -14,10 +14,12 @@
 import { assertWithinVideoQuota } from "@/lib/billing/limits";
 import { incrementVideosGenerated } from "@/lib/billing/usage";
 import type { Json } from "@/lib/db/types";
-import { mptConfigured } from "@/lib/env";
+import { mptConfigured, referenceVideoEnabled } from "@/lib/env";
 import { getWorkspaceKeys } from "@/lib/video/byo-keys";
 import { createJob, markFailed, markProcessing } from "@/lib/video/jobs";
 import { createRenderJob, type CreateRenderParams, type VideoAspect } from "@/lib/video/mpt-client";
+import { getReferenceVideoProvider } from "@/lib/video/reference/stub-provider";
+import type { ReferenceVideoInputs } from "@/lib/video/reference/provider";
 
 // Caller-facing render request. The BYO keys are NOT part of this — they're
 // pulled from workspace_byo_keys and decrypted internally so callers never
@@ -121,6 +123,138 @@ export async function startVideoRender(
   } catch (err) {
     // Surface the failure on the job so it isn't left dangling in `pending`.
     const reason = err instanceof Error ? err.message : "MPT render request failed";
+    await markFailed(job.id, reason);
+    throw new VideoRenderError(reason);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reference-image video (bet ④ · Capability A) — orchestration.
+//
+// MIRRORS startVideoRender for the NEW image-conditioned generation path
+// ("animate the user's uploaded photo into video" via fal.ai image-to-video).
+// startVideoRender above is left BYTE-FOR-BYTE untouched. This path:
+//   1. Gate on referenceVideoEnabled() + presence of the workspace's fal_video
+//      key (instead of MPT + LLM/Pexels keys).
+//   2. REQUIRE an explicit consent attestation (likeness/deepfake guard).
+//   3. assertWithinVideoQuota (same meter as the MPT path).
+//   4. Insert a video_jobs row with params.kind = "reference_image" + the
+//      reference pointer + the stored consent attestation.
+//   5. Submit to the fal adapter with the decrypted fal key → request_id.
+//   6. markProcessing(job.id, request_id); incrementVideosGenerated.
+// The poll-video-jobs cron branches on params.kind to finish reference jobs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Caller-facing reference-video render request. The fal key is NOT here — it's
+// pulled from workspace_byo_keys and decrypted internally, so callers never
+// handle plaintext credentials (same contract as StartVideoRenderInput).
+export interface StartReferenceVideoRenderInput {
+  // Public URL of the uploaded reference photo (reference-image bucket).
+  referenceImageUrl: string;
+  // Storage path of that photo (<workspace_id>/<id>/<file>) — persisted on the
+  // job for cleanup/lookup via video_jobs.reference_image_path.
+  referenceImagePath: string;
+  // Text prompt describing the desired motion/scene.
+  prompt: string;
+  videoAspect?: VideoAspect;
+  durationSeconds?: number;
+  // Short human-readable subject — seeds the eventual draft post caption, like
+  // the MPT path's videoSubject.
+  videoSubject?: string;
+  // REQUIRED consent attestation. Must be true — the user affirming
+  // "this is me / I have the right to use this person's likeness". Throws when
+  // false/absent so a render can never run without it.
+  consent: boolean;
+  // Who attested (user id) — stored alongside the timestamp for an audit trail.
+  consentBy?: string | null;
+  // Optional destination channel for the eventual publish.
+  socialAccountId?: string | null;
+}
+
+export interface StartReferenceVideoRenderResult {
+  jobId: string;
+  providerJobId: string;
+}
+
+export async function startReferenceVideoRender(
+  workspaceId: string,
+  input: StartReferenceVideoRenderInput,
+): Promise<StartReferenceVideoRenderResult> {
+  // Flag gate first — nothing runs unless the deployment opted in.
+  if (!referenceVideoEnabled()) {
+    throw new VideoRenderError("Reference-image video is not enabled on this deployment.");
+  }
+
+  // Validate inputs at the boundary.
+  const prompt = input.prompt?.trim();
+  if (!prompt) {
+    throw new VideoRenderError("A prompt is required to animate the reference photo.");
+  }
+  if (!input.referenceImageUrl?.trim() || !input.referenceImagePath?.trim()) {
+    throw new VideoRenderError("A reference photo is required.");
+  }
+
+  // Consent is REQUIRED — a render must never run without an explicit
+  // likeness attestation. Throw loudly when it's not affirmed.
+  if (input.consent !== true) {
+    throw new VideoRenderError(
+      "Consent is required: confirm this is you, or that you have the documented right to use this person's likeness.",
+    );
+  }
+
+  // Plan-gate BEFORE the DB / provider, exactly like the MPT path. Throws a
+  // typed QuotaExceededError the server action surfaces as an upgrade nudge.
+  await assertWithinVideoQuota(workspaceId, 1);
+
+  // Pull and decrypt the workspace's BYO fal video key.
+  const keys = await getWorkspaceKeys(workspaceId);
+  if (!keys.fal_video?.api_key) {
+    throw new VideoRenderError("No fal video API key configured for this workspace.");
+  }
+
+  const aspect: VideoAspect = input.videoAspect ?? "9:16";
+  const consentAttestedAt = new Date().toISOString();
+
+  // Persist only non-secret params on the job, including the consent attestation
+  // (stored for an audit trail) and the reference pointer.
+  const params: Json = {
+    kind: "reference_image",
+    provider: "fal_video",
+    reference_path: input.referenceImagePath,
+    reference_public_url: input.referenceImageUrl,
+    prompt,
+    aspect,
+    duration_seconds: input.durationSeconds ?? null,
+    consent_attested_at: consentAttestedAt,
+    consent_by: input.consentBy ?? null,
+    video_subject: input.videoSubject?.trim() || prompt.slice(0, 80),
+  };
+
+  const job = await createJob({
+    workspaceId,
+    socialAccountId: input.socialAccountId ?? null,
+    params,
+    referenceImagePath: input.referenceImagePath,
+  });
+
+  // Submit to the fal adapter with the decrypted key.
+  const provider = getReferenceVideoProvider();
+  const providerInput: ReferenceVideoInputs = {
+    referenceImageUrl: input.referenceImageUrl,
+    prompt,
+    aspect,
+    ...(input.durationSeconds ? { durationSeconds: input.durationSeconds } : {}),
+  };
+
+  try {
+    const { providerJobId } = await provider.submit(providerInput, keys.fal_video.api_key);
+    await markProcessing(job.id, providerJobId);
+    // Meter only once the provider accepted the render — a submit failure
+    // short-circuits to markFailed() and never burns the quota.
+    await incrementVideosGenerated(workspaceId, 1);
+    return { jobId: job.id, providerJobId };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : "Reference-video submit failed";
     await markFailed(job.id, reason);
     throw new VideoRenderError(reason);
   }
