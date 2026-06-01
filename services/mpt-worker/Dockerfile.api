@@ -40,6 +40,14 @@ RUN cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf resource/fonts/DejaVuSans
 # Scratch dirs for in-flight renders (also auto-created at runtime by utils.*_dir()).
 RUN mkdir -p storage/tasks storage/cache_videos storage/local_videos
 
+# CRITICAL: force MoviePy onto the apt-installed ffmpeg. By default MoviePy uses
+# imageio-ffmpeg's BUNDLED binary, whose Linux build (imageio-ffmpeg 0.6.0) fails
+# to read video frames on slim-bookworm ("0 frames / failed to read the first
+# frame") and breaks every render at the compose step. Debian's ffmpeg is the
+# version MoviePy is tested against and reads clips correctly. (Placed after the
+# pip layer so it doesn't bust the dependency build cache.)
+ENV IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
+
 # PaaS provides $PORT; fall back to 8080 for local `docker run`.
 ENV PORT=8080
 EXPOSE 8080
