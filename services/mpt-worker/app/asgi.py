@@ -102,9 +102,38 @@ def startup_event():
                       capture_output=True, text=True, timeout=40)
         logger.info(f"[FFDIAG] gen rc={gen.returncode} size={_os.path.getsize(test_mp4) if _os.path.exists(test_mp4) else 'NA'}")
         from moviepy import VideoFileClip as _VFC
-        c = _VFC(test_mp4)
-        n = getattr(c.reader, "n_frames", getattr(c.reader, "nframes", "?"))
-        logger.info(f"[FFDIAG] moviepy read ffdiag.mp4 -> duration={c.duration} fps={c.fps} nframes={n}")
-        c.close()
+
+        def _tryread(label, path):
+            try:
+                c = _VFC(path)
+                n = getattr(c.reader, "n_frames", getattr(c.reader, "nframes", "?"))
+                logger.info(f"[FFDIAG] READ {label} ({path}) -> dur={c.duration} fps={c.fps} nframes={n}")
+                c.close()
+            except Exception as e:
+                logger.info(f"[FFDIAG] READ {label} ({path}) -> FAILED: {str(e)[:160]}")
+
+        # A) baseline: apt-generated clip in /tmp
+        _tryread("A:apt-gen-/tmp", test_mp4)
+
+        # The uploaded material (Render persistent disk). May be absent on a fresh disk.
+        mat = "/MoneyPrinterTurbo/storage/local_videos/material.mp4"
+        if _os.path.exists(mat):
+            sz = _os.path.getsize(mat)
+            info = _sp.run([exe, "-i", mat], capture_output=True, text=True, timeout=30)
+            dline = [l for l in info.stderr.splitlines() if "Duration" in l or "Stream #0:0" in l]
+            logger.info(f"[FFDIAG] material on disk size={sz}; ffmpeg -i: {' | '.join(d.strip() for d in dline)[:200]}")
+            # B) read the uploaded file straight from the persistent disk
+            _tryread("B:upload-disk", mat)
+            # C) copy disk->/tmp, read from /tmp (isolates disk-mount vs file)
+            import shutil as _sh
+            _sh.copy(mat, "/tmp/mat_copy.mp4")
+            _tryread("C:upload-copied-to-/tmp", "/tmp/mat_copy.mp4")
+            # D) re-encode with apt ffmpeg, then read (does a remux/transcode fix it?)
+            re = _sp.run([exe, "-y", "-i", mat, "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                          "-an", "/tmp/mat_reenc.mp4"], capture_output=True, text=True, timeout=120)
+            logger.info(f"[FFDIAG] re-encode rc={re.returncode} err={re.stderr.splitlines()[-1][:160] if re.stderr else ''}")
+            _tryread("D:upload-reencoded", "/tmp/mat_reenc.mp4")
+        else:
+            logger.info(f"[FFDIAG] no uploaded material at {mat} (fresh disk)")
     except Exception as _e:
         logger.exception(f"[FFDIAG] diagnostic failed: {_e}")
