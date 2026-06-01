@@ -61,9 +61,15 @@ export async function POST(req: NextRequest) {
       { status: 403 },
     );
   }
-  if (org.owner_id !== user.id) {
+  // Org-admin gate (owner OR 'admin' org_membership), proven via the
+  // user_is_org_admin RPC under the caller's session — RLS readability alone
+  // (which a manager passes) is not sufficient to open the billing portal.
+  const { data: isAdmin, error: authzErr } = await supabase.rpc("user_is_org_admin", {
+    org_id: org.id,
+  });
+  if (authzErr || isAdmin !== true) {
     return NextResponse.json(
-      { error: "Only the organization owner can manage billing." },
+      { error: "Only an organization admin can manage billing." },
       { status: 403 },
     );
   }

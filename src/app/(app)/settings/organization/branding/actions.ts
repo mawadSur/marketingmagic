@@ -7,12 +7,15 @@ import { supabaseService } from "@/lib/supabase/service";
 import {
   mintPortalToken,
   revokePortalToken,
+  recordClientInvite,
 } from "@/lib/portal/manage";
 import {
   ORG_BRANDING_BUCKET,
   ALLOWED_LOGO_MIME,
   logoExtForMime,
 } from "@/lib/portal/branding";
+import { resolvePortalToken } from "@/lib/portal/token";
+import { renderInviteEmail, sendInviteEmail } from "@/lib/portal/invite-email";
 import { siteUrl } from "@/lib/env";
 import type { ClientPortalScope } from "@/lib/db/types";
 
@@ -219,4 +222,136 @@ export async function revokeTokenAction(
   if (error) return { error };
   revalidatePath("/settings/organization/branding");
   return { error: null };
+}
+
+// ─── Email the share link to the client ─────────────────────────────────
+//
+// Authorization model (org-admin-only): emailing a client their portal link is
+// gated on the org-admin role (owner OR 'admin' org_membership) via the
+// user_is_org_admin(org_id) RPC, evaluated under the caller's auth session
+// (SECURITY DEFINER). A 'manager' member or a non-member is rejected — same
+// gate as add-client / billing. We then re-validate the provided link by
+// resolving the raw token to a PortalContext and proving its workspace is in
+// THIS org (no emailing a token outside the org). The Resend send degrades
+// gracefully (skip, not throw) when RESEND_API_KEY is unset.
+
+export type EmailInviteState = { error: string | null; status: null | "sent" | "skipped" };
+
+const emailInviteSchema = z.object({
+  organization_id: z.string().uuid(),
+  recipient: z.string().trim().email(),
+  portal_url: z.string().trim().url(),
+});
+
+// Confirm the caller is an org admin (owner or 'admin'). Returns the caller's
+// user id on success, null otherwise — callers surface a single authz error.
+async function requireOrgAdmin(organizationId: string): Promise<{ userId: string } | null> {
+  if (!z.string().uuid().safeParse(organizationId).success) return null;
+  const supabase = await supabaseServer();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+  const { data: isAdmin, error } = await supabase.rpc("user_is_org_admin", {
+    org_id: organizationId,
+  });
+  if (error || isAdmin !== true) return null;
+  return { userId: user.id };
+}
+
+export async function emailInviteAction(
+  _prev: EmailInviteState,
+  formData: FormData,
+): Promise<EmailInviteState> {
+  const parsed = emailInviteSchema.safeParse({
+    organization_id: formData.get("organization_id"),
+    recipient: formData.get("recipient"),
+    portal_url: formData.get("portal_url"),
+  });
+  if (!parsed.success) {
+    return { error: "Enter a valid recipient email.", status: null };
+  }
+
+  const admin = await requireOrgAdmin(parsed.data.organization_id);
+  if (!admin) {
+    return { error: "Only an organization admin can email a client link.", status: null };
+  }
+
+  // Extract the raw token from the provided /client/<token> URL and resolve it.
+  // This proves the link is a live token AND yields its workspace + scopes — we
+  // then check the workspace belongs to this org before sending anywhere.
+  const rawToken = parsePortalToken(parsed.data.portal_url);
+  if (!rawToken) {
+    return { error: "That doesn't look like a portal link from this app.", status: null };
+  }
+  const ctx = await resolvePortalToken(rawToken);
+  if (!ctx) {
+    return { error: "That link is invalid, expired, or revoked.", status: null };
+  }
+
+  // The token's workspace must be a client of THIS org (authed read; RLS scopes
+  // it to the caller's orgs). Prevents emailing a token outside the org.
+  const supabase = await supabaseServer();
+  const { data: ws } = await supabase
+    .from("workspaces")
+    .select("id, name, organization_id")
+    .eq("id", ctx.workspaceId)
+    .maybeSingle();
+  if (!ws || ws.organization_id !== parsed.data.organization_id) {
+    return { error: "That link isn't for a client in your organization.", status: null };
+  }
+
+  // Org branding for the email (logo + accent). Read via the authed client —
+  // the caller is an admin of this org, so RLS allows it.
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("name, logo_url, color_accent")
+    .eq("id", parsed.data.organization_id)
+    .maybeSingle();
+
+  const rendered = renderInviteEmail({
+    workspaceName: ws.name,
+    portalUrl: parsed.data.portal_url,
+    scopes: [...ctx.scopes],
+    branding: {
+      orgName: org?.name ?? "",
+      logoUrl: org?.logo_url ?? null,
+      colorAccent: org?.color_accent ?? null,
+    },
+  });
+
+  const result = await sendInviteEmail(parsed.data.recipient, rendered);
+
+  if (result.status === "failed") {
+    return { error: `Couldn't send the email: ${result.reason}`, status: null };
+  }
+
+  // Record the invite for the audit trail (best-effort; never blocks the send).
+  // Only record an actually-sent email — a skipped (unconfigured) send isn't an
+  // invite that reached anyone.
+  if (result.status === "sent") {
+    await recordClientInvite({
+      workspaceId: ctx.workspaceId,
+      tokenId: ctx.tokenId,
+      recipientEmail: parsed.data.recipient,
+      createdBy: admin.userId,
+    });
+  }
+
+  return { error: null, status: result.status };
+}
+
+// Pull the raw token out of a /client/<token> URL. Returns null when the URL
+// isn't a portal link (wrong path shape), so a pasted arbitrary URL is rejected
+// before it reaches the token resolver.
+function parsePortalToken(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  if (segments.length !== 2 || segments[0] !== "client") return null;
+  return segments[1] ?? null;
 }

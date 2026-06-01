@@ -87,6 +87,35 @@ export async function listPortalTokens(workspaceId: string): Promise<ManagedToke
 }
 
 /**
+ * Record a sent client-invite email for the audit trail (migration 035). Best-
+ * effort: a write failure is logged and swallowed (returns the error string) so
+ * a successful email send is never reported as a failure just because the audit
+ * row didn't persist. Authorization MUST be checked by the caller first; the row
+ * is scoped to (workspaceId, tokenId) the caller already proved it controls.
+ */
+export async function recordClientInvite(input: {
+  workspaceId: string;
+  tokenId: string | null;
+  recipientEmail: string;
+  createdBy: string;
+}): Promise<{ error: string | null }> {
+  const svc = supabaseService();
+  const { error } = await svc.from("client_invites").insert({
+    workspace_id: input.workspaceId,
+    token_id: input.tokenId,
+    recipient_email: input.recipientEmail,
+    created_by: input.createdBy,
+  });
+  if (error) {
+    console.error(
+      `[portal-invite] audit insert failed for workspace ${input.workspaceId} ` +
+        `(email was still sent): ${error.message}`,
+    );
+  }
+  return { error: error?.message ?? null };
+}
+
+/**
  * Revoke a token. Scoped to BOTH the token id and the workspace_id so a caller
  * authorized for workspace A can never revoke workspace B's token by id.
  * Authorization MUST be checked by the caller first.
