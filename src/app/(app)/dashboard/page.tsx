@@ -16,6 +16,7 @@ import { NeglectedThemesWidget } from "./neglected-themes-widget";
 import { QuickExperimentsWidget } from "./quick-experiments-widget";
 import { GoalProgressWidget } from "./goal-progress-widget";
 import { EngagementDebtWidget } from "./engagement-debt-widget";
+import { WinningThemesWidget } from "./winning-themes-widget";
 import { isInRecommendedWindow } from "@/lib/channels/best-times";
 import { findNeglectedThemes } from "@/lib/themes/gaps";
 
@@ -88,6 +89,10 @@ export default async function DashboardPage() {
           }
         />
       </section>
+
+      {/* Bet ① — the learning loop, made visible. Hides until there are
+          statistically-confident winners, so it only appears with real signal. */}
+      <WinningThemesWidget workspaceId={ws.id} />
 
       <div className="grid gap-6 lg:grid-cols-3">
         <section className="space-y-3 lg:col-span-2">
