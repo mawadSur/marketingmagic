@@ -35,6 +35,14 @@ export interface ReferenceVideoInputs {
   voiceId?: string;
 }
 
+// Which of the two reference-image video sub-capabilities (spike §2) a render
+// is. Selects the concrete adapter at the factory:
+//   "animate" → fal.ai image-to-video  (Capability A — "animate a photo")
+//   "present" → D-ID talking avatar     (Capability B — "make it talk")
+// Defaults to "animate" everywhere so the already-shipped fal path is unchanged
+// when no capability is supplied.
+export type ReferenceVideoCapability = "animate" | "present";
+
 // Handle returned by submit(). Mirrors the MPT task-id contract so the new path
 // slots into the same poll-cron pattern (POST → id → poll → pull bytes).
 export interface ReferenceVideoSubmitResult {

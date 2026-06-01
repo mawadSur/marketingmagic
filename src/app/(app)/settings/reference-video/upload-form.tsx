@@ -1,13 +1,20 @@
 "use client";
 
-// Reference-image video (bet ④ · Capability A) — generate UI.
+// Reference-image video (bet ④) — generate UI with a MODE toggle:
+//   "Animate a photo"  (Capability A) — a reference photo + a motion PROMPT →
+//                       fal.ai image-to-video.
+//   "Make it talk"     (Capability B) — a reference photo + a SCRIPT (+ optional
+//                       voice) → D-ID talking avatar (the person appears to
+//                       speak the words).
 //
-// Upload a reference photo, describe the motion (prompt), pick aspect + duration,
-// and affirm the REQUIRED consent checkbox. Submit posts to
-// generateReferenceVideoAction, which uploads the photo to the workspace-scoped
-// reference-image bucket and calls startReferenceVideoRender (the orchestrator
-// re-checks consent and stores the attestation). Only rendered when the feature
+// Submit posts to generateReferenceVideoAction with the active `mode`, which
+// uploads the photo to the workspace-scoped reference-image bucket and calls
+// startReferenceVideoRender (the orchestrator re-checks consent, enforces the
+// per-mode input, and stores the attestation). Only rendered when the feature
 // flag is on; the page shows a "not enabled" notice otherwise.
+//
+// Consent is REQUIRED and STRICTER for "present" — the user is making a real
+// person APPEAR TO SPEAK words they may not have said.
 
 import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -27,13 +34,62 @@ const ASPECTS: Array<{ value: string; label: string }> = [
   { value: "1:1", label: "1:1 — square" },
 ];
 
-export function ReferenceImageUploadForm({ keyConfigured }: { keyConfigured: boolean }) {
+type Mode = "animate" | "present";
+
+// Strict, mode-specific consent copy (the orchestrator enforces the same intent
+// server-side). "present" is the stricter "appear to say these words" wording.
+const CONSENT_COPY: Record<Mode, string> = {
+  animate: "This is me, or I have the documented right to use this person's likeness.",
+  present:
+    "This is me, or I have the documented right to make this person appear to say these words.",
+};
+
+export function ReferenceImageUploadForm({
+  falConfigured,
+  didConfigured,
+}: {
+  falConfigured: boolean;
+  didConfigured: boolean;
+}) {
   const [state, action, pending] = useActionState(generateReferenceVideoAction, initial);
   const [fileName, setFileName] = useState<string | null>(null);
   const [consent, setConsent] = useState(false);
+  const [mode, setMode] = useState<Mode>("animate");
+
+  const isPresent = mode === "present";
+  const activeKeyConfigured = isPresent ? didConfigured : falConfigured;
 
   return (
     <form action={action} className="space-y-5">
+      {/* Mode toggle — the submitted `mode` field drives the capability. */}
+      <input type="hidden" name="mode" value={mode} />
+      <div className="inline-flex rounded-lg border bg-muted/30 p-1 text-sm">
+        <button
+          type="button"
+          onClick={() => setMode("animate")}
+          aria-pressed={mode === "animate"}
+          className={
+            mode === "animate"
+              ? "rounded-md bg-background px-3 py-1.5 font-medium shadow-sm"
+              : "rounded-md px-3 py-1.5 text-muted-foreground transition-colors hover:text-foreground"
+          }
+        >
+          Animate a photo
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("present")}
+          aria-pressed={mode === "present"}
+          className={
+            mode === "present"
+              ? "rounded-md bg-background px-3 py-1.5 font-medium shadow-sm"
+              : "rounded-md px-3 py-1.5 text-muted-foreground transition-colors hover:text-foreground"
+          }
+        >
+          Make it talk
+        </button>
+      </div>
+
       <div className="space-y-1.5">
         <Label htmlFor="reference_image">Reference photo</Label>
         <Input
@@ -45,48 +101,80 @@ export function ReferenceImageUploadForm({ keyConfigured }: { keyConfigured: boo
           required
         />
         <p className="text-xs text-muted-foreground">
-          A clear photo of the person to animate. JPEG, PNG, or WebP, up to 10MB.
+          {isPresent
+            ? "A clear, front-facing photo of the person who will speak. JPEG, PNG, or WebP, up to 10MB."
+            : "A clear photo of the person to animate. JPEG, PNG, or WebP, up to 10MB."}
         </p>
         {fileName ? <p className="text-xs text-muted-foreground">Selected: {fileName}</p> : null}
       </div>
 
-      <div className="space-y-1.5">
-        <Label htmlFor="prompt">Motion prompt</Label>
-        <Textarea
-          id="prompt"
-          name="prompt"
-          rows={3}
-          placeholder="e.g. slow cinematic push-in, subject smiles and nods, soft natural light"
-          required
-        />
-        <p className="text-xs text-muted-foreground">
-          Describe the camera + subject motion. The photo becomes the first frame.
-        </p>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
+      {isPresent ? (
+        <>
+          <div className="space-y-1.5">
+            <Label htmlFor="script">Script</Label>
+            <Textarea
+              id="script"
+              name="script"
+              rows={4}
+              placeholder="e.g. Hi, I'm launching something new this week — here's what it means for you."
+            />
+            <p className="text-xs text-muted-foreground">
+              The exact words the person should say. They&apos;ll be spoken and lip-synced.
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="voice_id">Voice (optional)</Label>
+            <Input
+              id="voice_id"
+              name="voice_id"
+              type="text"
+              placeholder="e.g. en-US-JennyNeural"
+            />
+            <p className="text-xs text-muted-foreground">
+              A Microsoft TTS voice id. Leave blank to use the deployment default.
+            </p>
+          </div>
+        </>
+      ) : (
         <div className="space-y-1.5">
-          <Label htmlFor="aspect">Aspect ratio</Label>
-          <select id="aspect" name="aspect" defaultValue="9:16" className={SELECT_CLASS}>
-            {ASPECTS.map((a) => (
-              <option key={a.value} value={a.value}>
-                {a.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="duration_seconds">Duration (seconds)</Label>
-          <Input
-            id="duration_seconds"
-            name="duration_seconds"
-            type="number"
-            min={1}
-            max={60}
-            placeholder="5"
+          <Label htmlFor="prompt">Motion prompt</Label>
+          <Textarea
+            id="prompt"
+            name="prompt"
+            rows={3}
+            placeholder="e.g. slow cinematic push-in, subject smiles and nods, soft natural light"
           />
+          <p className="text-xs text-muted-foreground">
+            Describe the camera + subject motion. The photo becomes the first frame.
+          </p>
         </div>
-      </div>
+      )}
+
+      {!isPresent ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="aspect">Aspect ratio</Label>
+            <select id="aspect" name="aspect" defaultValue="9:16" className={SELECT_CLASS}>
+              {ASPECTS.map((a) => (
+                <option key={a.value} value={a.value}>
+                  {a.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="duration_seconds">Duration (seconds)</Label>
+            <Input
+              id="duration_seconds"
+              name="duration_seconds"
+              type="number"
+              min={1}
+              max={60}
+              placeholder="5"
+            />
+          </div>
+        </div>
+      ) : null}
 
       <div className="flex items-start gap-2 rounded-md border border-input bg-muted/20 p-3">
         <input
@@ -99,19 +187,21 @@ export function ReferenceImageUploadForm({ keyConfigured }: { keyConfigured: boo
           required
         />
         <Label htmlFor="consent" className="text-sm font-normal leading-snug">
-          This is me, or I have the documented right to use this person&apos;s likeness.
+          {CONSENT_COPY[mode]}
         </Label>
       </div>
 
       {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
       {state.success ? <p className="text-sm text-emerald-600">{state.success}</p> : null}
 
-      <Button type="submit" disabled={pending || !consent || !keyConfigured}>
-        {pending ? "Starting render…" : "Generate video"}
+      <Button type="submit" disabled={pending || !consent || !activeKeyConfigured}>
+        {pending ? "Starting render…" : isPresent ? "Generate talking video" : "Generate video"}
       </Button>
-      {!keyConfigured ? (
+      {!activeKeyConfigured ? (
         <p className="text-xs text-muted-foreground">
-          Add your fal video key below before generating.
+          {isPresent
+            ? "Add your D-ID key below before generating a talking video."
+            : "Add your fal video key below before generating."}
         </p>
       ) : null}
     </form>

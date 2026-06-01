@@ -21,6 +21,7 @@ import {
   setWorkspaceKeys,
   removeWorkspaceKeys,
   type ByoFalVideoSecrets,
+  type ByoDidVideoSecrets,
 } from "@/lib/video/byo-keys";
 import {
   startReferenceVideoRender,
@@ -143,24 +144,91 @@ export async function removeFalVideoKeyAction(): Promise<void> {
   revalidatePath("/settings/reference-video");
 }
 
+// ── BYO D-ID key (Capability B "Make it talk") — save / remove. ──────────────
+// Identical machinery to the fal key actions, just the `did_video` provider row.
+
+const didKeySchema = z.object({
+  // D-ID keys are an opaque token; length-checked, never echoed back.
+  api_key: z.string().trim().min(8, "API key looks too short.").max(400),
+});
+
+export async function saveDidVideoKeyAction(
+  _prev: ReferenceVideoState,
+  formData: FormData,
+): Promise<ReferenceVideoState> {
+  const auth = await keyGuard();
+  if ("error" in auth) return { error: auth.error, success: null };
+
+  const parsed = didKeySchema.safeParse({ api_key: formData.get("api_key") });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input.", success: null };
+  }
+
+  const secrets: ByoDidVideoSecrets = { api_key: parsed.data.api_key };
+  try {
+    await setWorkspaceKeys(auth.workspaceId, "did_video", secrets, auth.userId);
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : "Failed to save D-ID key.",
+      success: null,
+    };
+  }
+
+  revalidatePath("/settings/reference-video");
+  return { error: null, success: "D-ID key saved." };
+}
+
+export async function removeDidVideoKeyAction(): Promise<void> {
+  const auth = await keyGuard();
+  if ("error" in auth) return;
+  await removeWorkspaceKeys(auth.workspaceId, "did_video");
+  revalidatePath("/settings/reference-video");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Generate — upload the reference photo AND kick off a render in one action.
 //
 // Validates the photo (mime/size), uploads it to the workspace-scoped
-// reference-image bucket, then calls startReferenceVideoRender with the prompt,
-// aspect, duration, and the REQUIRED consent checkbox. The orchestrator enforces
-// consent (throws if not true) and stores consent_attested_at + consent_by.
+// reference-image bucket, then calls startReferenceVideoRender. Two modes:
+//   "animate" (Capability A) → a motion PROMPT drives fal.ai image-to-video.
+//   "present" (Capability B) → a SCRIPT (+ optional voice) drives the D-ID
+//                              talking-avatar render.
+// The orchestrator enforces consent (throws if not true), enforces the
+// per-mode input (prompt vs script), and stores consent_attested_at + consent_by.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ASPECTS = ["9:16", "16:9", "1:1"] as const;
+const MODES = ["animate", "present"] as const;
 
-const generateSchema = z.object({
-  prompt: z.string().trim().min(3, "Describe the motion you want.").max(1000),
-  aspect: z.enum(ASPECTS).default("9:16"),
-  duration_seconds: z.coerce.number().int().min(1).max(60).optional(),
-  // The consent checkbox submits "on" when checked, nothing when unchecked.
-  consent: z.literal("on", { errorMap: () => ({ message: "You must confirm consent to continue." }) }),
-});
+// Mode-aware schema: prompt is required for "animate", script for "present".
+const generateSchema = z
+  .object({
+    mode: z.enum(MODES).default("animate"),
+    prompt: z.string().trim().max(1000).optional(),
+    script: z.string().trim().max(4000).optional(),
+    voice_id: z.string().trim().max(120).optional(),
+    aspect: z.enum(ASPECTS).default("9:16"),
+    duration_seconds: z.coerce.number().int().min(1).max(60).optional(),
+    // The consent checkbox submits "on" when checked, nothing when unchecked.
+    consent: z.literal("on", { errorMap: () => ({ message: "You must confirm consent to continue." }) }),
+  })
+  .superRefine((v, ctx) => {
+    if (v.mode === "present") {
+      if (!v.script || v.script.length < 3) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["script"],
+          message: "Enter the words the person should say.",
+        });
+      }
+    } else if (!v.prompt || v.prompt.length < 3) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["prompt"],
+        message: "Describe the motion you want.",
+      });
+    }
+  });
 
 export async function generateReferenceVideoAction(
   _prev: ReferenceVideoState,
@@ -175,7 +243,10 @@ export async function generateReferenceVideoAction(
 
   // Validate the non-file fields first so a missing consent box fails fast.
   const parsed = generateSchema.safeParse({
-    prompt: formData.get("prompt"),
+    mode: formData.get("mode") ?? "animate",
+    prompt: formData.get("prompt") || undefined,
+    script: formData.get("script") || undefined,
+    voice_id: formData.get("voice_id") || undefined,
     aspect: formData.get("aspect") ?? "9:16",
     duration_seconds: formData.get("duration_seconds") || undefined,
     consent: formData.get("consent"),
@@ -183,11 +254,12 @@ export async function generateReferenceVideoAction(
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid input.", success: null };
   }
+  const isPresent = parsed.data.mode === "present";
 
   // Validate + upload the photo.
   const file = formData.get("reference_image");
   if (!(file instanceof File) || file.size === 0) {
-    return { error: "Choose a photo to animate.", success: null };
+    return { error: isPresent ? "Choose a photo of the person to speak." : "Choose a photo to animate.", success: null };
   }
   if (file.size > MAX_BYTES) {
     return { error: "Image must be 10MB or smaller.", success: null };
@@ -211,9 +283,12 @@ export async function generateReferenceVideoAction(
 
   try {
     await startReferenceVideoRender(ws.id, {
+      capability: parsed.data.mode,
       referenceImageUrl: pub.publicUrl,
       referenceImagePath: path,
       prompt: parsed.data.prompt,
+      script: parsed.data.script,
+      voiceId: parsed.data.voice_id,
       videoAspect: parsed.data.aspect,
       durationSeconds: parsed.data.duration_seconds,
       consent: true, // enforced again in the orchestrator (defence in depth)

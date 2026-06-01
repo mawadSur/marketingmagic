@@ -40,8 +40,19 @@ export interface ByoPexelsSecrets {
 export interface ByoFalVideoSecrets {
   api_key: string;
 }
-export type ByoProvider = "llm" | "pexels" | "fal_video";
-export type ByoSecrets = ByoLlmSecrets | ByoPexelsSecrets | ByoFalVideoSecrets;
+// Reference-image video (bet ④ · Capability B "Make it talk"). The workspace's
+// own D-ID API key for the talking-avatar path. Same AES-256-GCM machinery as the
+// other BYO secrets; stored as its OWN provider row ('did_video') so it sits
+// alongside — never replaces — the fal_video key (a workspace can have both).
+export interface ByoDidVideoSecrets {
+  api_key: string;
+}
+export type ByoProvider = "llm" | "pexels" | "fal_video" | "did_video";
+export type ByoSecrets =
+  | ByoLlmSecrets
+  | ByoPexelsSecrets
+  | ByoFalVideoSecrets
+  | ByoDidVideoSecrets;
 
 // Thrown when BYO_ENCRYPTION_KEY is missing/wrong-length. Distinct type so
 // callers can surface "video keys not configured" vs a generic crypto error.
@@ -138,6 +149,10 @@ export interface WorkspaceKeys {
   // Reference-image video (bet ④) — the workspace's own fal.ai image-to-video
   // key. Absent for workspaces that haven't opted into the reference-video path.
   fal_video?: ByoFalVideoSecrets;
+  // Reference-image video (bet ④ · Capability B) — the workspace's own D-ID
+  // talking-avatar key. Independent of fal_video; a workspace can have either,
+  // both, or neither.
+  did_video?: ByoDidVideoSecrets;
 }
 
 export async function getWorkspaceKeys(workspaceId: string): Promise<WorkspaceKeys> {
@@ -155,6 +170,7 @@ export async function getWorkspaceKeys(workspaceId: string): Promise<WorkspaceKe
     if (row.provider === "llm") out.llm = parsed as ByoLlmSecrets;
     else if (row.provider === "pexels") out.pexels = parsed as ByoPexelsSecrets;
     else if (row.provider === "fal_video") out.fal_video = parsed as ByoFalVideoSecrets;
+    else if (row.provider === "did_video") out.did_video = parsed as ByoDidVideoSecrets;
   }
   return out;
 }
@@ -170,6 +186,9 @@ export interface WorkspaceKeyStatus {
   // Reference-image video (bet ④) fal key presence. Drives the settings UI's
   // Configured/Not pill for the reference-video key — never a value.
   fal_video: boolean;
+  // Reference-image video (bet ④ · Capability B) D-ID key presence. Drives the
+  // talking-avatar key form's Configured/Not pill — never a value.
+  did_video: boolean;
 }
 
 export async function getWorkspaceKeyStatus(workspaceId: string): Promise<WorkspaceKeyStatus> {
@@ -186,6 +205,7 @@ export async function getWorkspaceKeyStatus(workspaceId: string): Promise<Worksp
     llm: providers.has("llm"),
     pexels: providers.has("pexels"),
     fal_video: providers.has("fal_video"),
+    did_video: providers.has("did_video"),
   };
 }
 
