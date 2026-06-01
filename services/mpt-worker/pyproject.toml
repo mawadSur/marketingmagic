@@ -14,7 +14,6 @@ requires-python = ">=3.11,<3.13"
 license = { text = "MIT" }
 dependencies = [
     "moviepy==2.1.2",
-    "streamlit==1.45.0",
     "edge-tts==7.2.7",
     "fastapi==0.115.6",
     "uvicorn==0.32.1",
