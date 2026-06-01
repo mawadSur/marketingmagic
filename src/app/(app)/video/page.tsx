@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
-import { mptConfigured, byoKeysConfigured, videoPublishEnabled } from "@/lib/env";
+import { mptConfigured, byoKeysConfigured, videoPublishEnabled, referenceVideoEnabled } from "@/lib/env";
 import { CHANNELS, type ChannelId } from "@/lib/channels/registry";
 import { getWorkspaceKeyStatus } from "@/lib/video/byo-keys";
 import { tierFor } from "@/lib/billing/tiers";
@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { GenerateVideoForm } from "./generate-form";
 import { JobList, type JobListItem } from "./job-list";
+import { VideoModeTabs } from "./video-mode-tabs";
 
 export const dynamic = "force-dynamic";
 
@@ -71,20 +72,25 @@ export default async function VideoPage() {
   const supabase = await supabaseServer();
   const { data: rows } = await supabase
     .from("video_jobs")
-    .select("id, status, progress, params, failure_reason, created_at")
+    .select("id, status, progress, params, failure_reason, created_at, post_id")
     .eq("workspace_id", ws.id)
     .order("created_at", { ascending: false })
     .limit(50);
 
-  const jobs: JobListItem[] = (rows ?? []).map((r) => ({
-    id: r.id,
-    status: r.status as VideoJobStatus,
-    progress: r.progress ?? 0,
-    subject: paramString(r.params, "video_subject", "Untitled video"),
-    aspect: paramString(r.params, "video_aspect", "9:16"),
-    failureReason: r.failure_reason ?? null,
-    createdAt: r.created_at,
-  }));
+  // This is the "from a topic" (MPT) surface — exclude reference-image renders,
+  // which live on their own "Animate a photo" page so the two don't intermix.
+  const jobs: JobListItem[] = (rows ?? [])
+    .filter((r) => paramString(r.params, "kind", "") !== "reference_image")
+    .map((r) => ({
+      id: r.id,
+      status: r.status as VideoJobStatus,
+      progress: r.progress ?? 0,
+      subject: paramString(r.params, "video_subject", "Untitled video"),
+      aspect: paramString(r.params, "video_aspect", "9:16"),
+      failureReason: r.failure_reason ?? null,
+      createdAt: r.created_at,
+      postId: r.post_id,
+    }));
 
   // Connected, video-capable channels the user can publish the render to. The
   // chosen account flows to video_jobs.social_account_id so the poll cron can
@@ -122,6 +128,8 @@ export default async function VideoPage() {
           </p>
         </div>
       </header>
+
+      <VideoModeTabs active="topic" referenceEnabled={referenceVideoEnabled()} />
 
       {!keysReady ? (
         <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
