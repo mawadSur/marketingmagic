@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
-import { ENABLED_CHANNELS } from "@/lib/channels/registry";
+import { CHANNELS, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
+import { mptConfigured, byoKeysConfigured } from "@/lib/env";
+import { getWorkspaceKeyStatus } from "@/lib/video/byo-keys";
 import { EmptyState } from "@/components/ui/empty-state";
 import { NewPlanForm } from "./new-plan-form";
 
@@ -63,6 +65,22 @@ export default async function NewPlanPage() {
     );
   }
 
+  // Plan videos — surface a per-channel "generate a video" checkbox ONLY when
+  // video is actually available (the render worker + BYO encryption are wired
+  // up AND this workspace has its own LLM + Pexels keys). When unavailable we
+  // pass videoAvailable=false and the form shows a subtle "add keys" hint
+  // instead of the checkboxes. We also hand the form the set of accountIds whose
+  // channel supports video, so it only renders the checkbox where it can work.
+  const videoInfra = mptConfigured() && byoKeysConfigured();
+  let videoAvailable = false;
+  if (videoInfra) {
+    const keyStatus = await getWorkspaceKeyStatus(ws.id);
+    videoAvailable = keyStatus.llm && keyStatus.pexels;
+  }
+  const videoCapableAccountIds = accounts
+    .filter((a) => CHANNELS[a.channel as ChannelId]?.supportsVideo)
+    .map((a) => a.id);
+
   return (
     <div className="mx-auto max-w-2xl space-y-8">
       <header className="space-y-1">
@@ -73,7 +91,11 @@ export default async function NewPlanPage() {
           (or auto-scheduled for accounts in trust mode).
         </p>
       </header>
-      <NewPlanForm accounts={accounts} />
+      <NewPlanForm
+        accounts={accounts}
+        videoAvailable={videoAvailable}
+        videoCapableAccountIds={videoCapableAccountIds}
+      />
     </div>
   );
 }
