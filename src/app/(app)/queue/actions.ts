@@ -132,6 +132,56 @@ const reasonNoteSchema = z
   .optional()
   .transform((s) => (s && s.length > 0 ? s : null));
 
+// Reschedule — change the day/time a draft (pending) or approved post
+// (scheduled) goes out. The cron fires on scheduled_at, so this is the one
+// knob that controls "when." Allowed from pending_approval and scheduled;
+// posted/rejected rows are immutable. The client sends an ISO-8601 UTC
+// instant (already converted from the user's local datetime picker).
+const FUTURE_SKEW_MS = 60_000; // tolerate a minute of clock skew
+const MAX_AHEAD_MS = 365 * 24 * 60 * 60 * 1000; // 1 year cap
+
+export async function reschedulePostAction(
+  postId: string,
+  scheduledAtIso: string,
+): Promise<ActionResult> {
+  if (!uuid.safeParse(postId).success) return { error: "Bad post id." };
+
+  const when = new Date(scheduledAtIso);
+  if (Number.isNaN(when.getTime())) return { error: "Invalid date/time." };
+  const now = Date.now();
+  if (when.getTime() < now - FUTURE_SKEW_MS) {
+    return { error: "Pick a time in the future." };
+  }
+  if (when.getTime() > now + MAX_AHEAD_MS) {
+    return { error: "Pick a time within the next year." };
+  }
+
+  const { error, post, user, supabase } = await loadPostForWorkspace(postId);
+  if (error || !post) return { error };
+  if (post.status !== "pending_approval" && post.status !== "scheduled") {
+    return { error: `Cannot reschedule from ${post.status}.` };
+  }
+
+  const iso = when.toISOString();
+  if (post.scheduled_at === iso) return { error: null };
+
+  const { error: updateErr } = await supabase
+    .from("posts")
+    .update({ scheduled_at: iso })
+    .eq("id", postId);
+  if (updateErr) return { error: updateErr.message };
+
+  await supabase.from("approvals").insert({
+    post_id: postId,
+    user_id: user.id,
+    action: "edited",
+    diff: `scheduled_at: ${post.scheduled_at ?? "(none)"} → ${iso}`,
+  });
+
+  revalidatePath("/queue");
+  return { error: null };
+}
+
 export async function rejectPostAction(
   postId: string,
   reason: RejectionReason,

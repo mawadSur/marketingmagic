@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Badge, ChannelBadge, statusBadgeLabel, statusBadgeVariant } from "@/components/ui/badge";
 import type { RejectionReason } from "@/lib/db/types";
+import { maxCharsFor } from "@/lib/channels/registry";
 import {
   approveAllVariantsAction,
   approvePostAction,
@@ -14,10 +15,31 @@ import {
   editPostAction,
   generatePostImageAction,
   rejectPostAction,
+  reschedulePostAction,
   revokePostAction,
   runQuickExperimentAction,
   uploadPostImageAction,
 } from "./actions";
+
+// Time helpers — the DB stores scheduled_at as a UTC ISO instant; the user
+// thinks in their own timezone. We render + edit in local time and convert
+// back to UTC on save. datetime-local input value is "YYYY-MM-DDTHH:mm" in
+// local time, which `new Date()` parses as local → toISOString() gives UTC.
+function toLocalInputValue(iso: string | null): string {
+  const d = iso ? new Date(iso) : new Date(Date.now() + 60 * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function formatLocal(iso: string | null): string {
+  if (!iso) return "no time set";
+  return new Date(iso).toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 export interface QueueMediaItem {
   kind: "image";
@@ -75,6 +97,10 @@ export function QueueRow({
   const [rejecting, setRejecting] = useState(false);
   const [rejectReason, setRejectReason] = useState<RejectionReason | null>(null);
   const [rejectNote, setRejectNote] = useState("");
+
+  // Reschedule (edit day/time) state.
+  const [timeEditing, setTimeEditing] = useState(false);
+  const [timeDraft, setTimeDraft] = useState(() => toLocalInputValue(post.scheduled_at));
 
   // Image-gen state. `prompt` is what the user types/edits; seeded from the
   // saved media's prompt (when an image already exists), else from Claude's
@@ -149,6 +175,21 @@ export function QueueRow({
 
   const isPending = post.status === "pending_approval";
   const isScheduled = post.status === "scheduled";
+  // Day/time is editable while the post is still upcoming (draft or queued).
+  const canReschedule = isPending || isScheduled;
+
+  function saveReschedule() {
+    if (!timeDraft) {
+      setError("Pick a date and time.");
+      return;
+    }
+    const iso = new Date(timeDraft).toISOString();
+    run(async () => {
+      const r = await reschedulePostAction(post.id, iso);
+      if (!r.error) setTimeEditing(false);
+      return r;
+    });
+  }
   const hasImage = post.mediaPublicUrl !== null;
   // Phase 6B — show the experiment CTA on scheduled posts that aren't
   // themselves variants of another experiment. Spec says "per row", and
@@ -179,11 +220,49 @@ export function QueueRow({
         <div className="flex flex-wrap items-center gap-2">
           <ChannelBadge channel={post.channel} />
           {post.theme ? <span>#{post.theme}</span> : null}
-          <span className="tabular-nums">
-            {post.scheduled_at
-              ? post.scheduled_at.slice(0, 16).replace("T", " ")
-              : "no time set"}
-          </span>
+          {timeEditing ? (
+            <span className="flex items-center gap-1.5">
+              <Input
+                type="datetime-local"
+                value={timeDraft}
+                onChange={(e) => setTimeDraft(e.target.value)}
+                className="h-7 w-auto px-2 py-0 text-xs"
+              />
+              <Button size="sm" className="h-7" disabled={pending} onClick={saveReschedule}>
+                Save
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7"
+                disabled={pending}
+                onClick={() => {
+                  setTimeDraft(toLocalInputValue(post.scheduled_at));
+                  setTimeEditing(false);
+                  setError(null);
+                }}
+              >
+                Cancel
+              </Button>
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5">
+              <span className="tabular-nums">{formatLocal(post.scheduled_at)}</span>
+              {canReschedule ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTimeDraft(toLocalInputValue(post.scheduled_at));
+                    setTimeEditing(true);
+                  }}
+                  className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  title="Edit the day and time this posts"
+                >
+                  Edit time
+                </button>
+              ) : null}
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           {post.low_confidence ? (
@@ -209,7 +288,7 @@ export function QueueRow({
         <Textarea
           rows={4}
           value={draft}
-          maxLength={280}
+          maxLength={maxCharsFor(post.channel)}
           onChange={(event) => setDraft(event.target.value)}
         />
       ) : (
@@ -564,7 +643,7 @@ export function QueueIdeaRow({
           </span>
           {theme ? <span>#{theme}</span> : null}
           {earliestAt ? (
-            <span className="tabular-nums">{earliestAt.slice(0, 16).replace("T", " ")}</span>
+            <span className="tabular-nums">{formatLocal(earliestAt)}</span>
           ) : null}
         </button>
         <div className="flex flex-wrap items-center gap-2">
