@@ -169,6 +169,11 @@ export interface Database {
           stripe_customer_id: string | null;
           stripe_subscription_id: string | null;
           subscription_status: string | null;
+          // PLG loop (migration 030). referral_bonus_posts: extra monthly posts
+          // granted by referrals, added to the tier ceiling. attribution_enabled:
+          // the "Made with marketingmagic" toggle (only ever applied on hobby).
+          referral_bonus_posts: number;
+          attribution_enabled: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -183,6 +188,8 @@ export interface Database {
           stripe_customer_id?: string | null;
           stripe_subscription_id?: string | null;
           subscription_status?: string | null;
+          referral_bonus_posts?: number;
+          attribution_enabled?: boolean;
         };
         Update: Partial<{
           slug: string;
@@ -193,6 +200,8 @@ export interface Database {
           stripe_customer_id: string | null;
           stripe_subscription_id: string | null;
           subscription_status: string | null;
+          referral_bonus_posts: number;
+          attribution_enabled: boolean;
         }>;
         Relationships: [];
       };
@@ -311,6 +320,40 @@ export interface Database {
           images_generated: number;
           videos_generated: number;
         }>;
+        Relationships: [];
+      };
+      // PLG loop (migration 030). One stable invite code per workspace; the
+      // /settings/referrals page renders ?ref=<code> against it. Writes are
+      // service-role only (minted lazily in the settings action).
+      referral_codes: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          code: string;
+          created_at: string;
+        };
+        Insert: { id?: string; workspace_id: string; code: string };
+        Update: Partial<{ code: string }>;
+        Relationships: [];
+      };
+      // PLG loop (migration 030). One row per attributed signup.
+      // referred_workspace_id is UNIQUE → a workspace is attributed at most
+      // once (idempotency key for the reward grant). Writes service-role only.
+      referrals: {
+        Row: {
+          id: string;
+          referrer_workspace_id: string;
+          referred_workspace_id: string;
+          code: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          referrer_workspace_id: string;
+          referred_workspace_id: string;
+          code: string;
+        };
+        Update: Partial<{ code: string }>;
         Relationships: [];
       };
       memberships: {
