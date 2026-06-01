@@ -37,6 +37,11 @@ export interface StartVideoRenderInput {
   videoCount?: number;
   // Optional destination channel for the eventual publish (P3).
   socialAccountId?: string | null;
+  // Plan videos — the EXISTING plan post this render attaches to. When set it
+  // flows to video_jobs.post_id and the poll cron UPDATEs that post's media[]
+  // instead of minting a new draft. Absent for ad-hoc /video renders, which
+  // keep their existing "create a draft post" behaviour unchanged.
+  postId?: string | null;
 }
 
 export class VideoRenderError extends Error {
@@ -95,6 +100,9 @@ export async function startVideoRender(
     workspaceId,
     socialAccountId: input.socialAccountId ?? null,
     params,
+    // Only set when a plan post asked for a video; absent for ad-hoc renders,
+    // so post_id stays null and existing "create a draft" behaviour is unchanged.
+    postId: input.postId ?? null,
   });
 
   // Build the MPT request body: non-secret params + decrypted BYO keys.
