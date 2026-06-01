@@ -3,7 +3,7 @@ import { resolvePlanForWorkspace } from "@/lib/billing/entitlements";
 import { siteUrl } from "@/lib/env";
 import {
   getOrCreateReferralCode,
-  countReferrals,
+  countReferralsByVesting,
   REFERRAL_BONUS_POSTS,
 } from "@/lib/growth/referrals";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,13 +15,16 @@ export default async function ReferralsPage() {
   const ws = await getActiveWorkspaceOrRedirect();
 
   // Mint the code lazily on first visit, then assemble the shareable link.
-  const [code, signups, plan] = await Promise.all([
+  const [code, counts, plan] = await Promise.all([
     getOrCreateReferralCode(ws.id),
-    countReferrals(ws.id),
+    countReferralsByVesting(ws.id),
     resolvePlanForWorkspace(ws.id),
   ]);
   const inviteUrl = `${siteUrl()}/signup?ref=${encodeURIComponent(code)}`;
-  const earned = signups * REFERRAL_BONUS_POSTS;
+  // Bonus is only earned once a referral VESTS (the referred workspace ships
+  // its first post). Pending signups haven't paid out yet — that's the
+  // anti-farming guarantee made visible.
+  const earned = counts.vested * REFERRAL_BONUS_POSTS;
   const isHobby = plan === "hobby";
 
   return (
@@ -29,8 +32,9 @@ export default async function ReferralsPage() {
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Refer &amp; earn</h1>
         <p className="text-sm text-muted-foreground">
-          Share your invite link. Every workspace that signs up through it earns you{" "}
-          {REFERRAL_BONUS_POSTS} bonus posts a month, forever.
+          Share your invite link. Every workspace that signs up through it and
+          ships their first post earns you {REFERRAL_BONUS_POSTS} bonus posts a
+          month, forever.
         </p>
       </header>
 
@@ -46,13 +50,23 @@ export default async function ReferralsPage() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Signups driven</CardDescription>
+            <CardDescription>Vested signups</CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-semibold tabular-nums">{signups}</p>
+            <p className="text-3xl font-semibold tabular-nums">{counts.vested}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Posted &amp; paid out</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Pending signups</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-3xl font-semibold tabular-nums">{counts.pending}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Awaiting first post</p>
           </CardContent>
         </Card>
         <Card>
