@@ -37,8 +37,13 @@ async function getPlanForWorkspace(workspaceId: string): Promise<PlanId> {
 
 export async function assertWithinPostQuota(workspaceId: string, requested = 1): Promise<void> {
   const plan = await getPlanForWorkspace(workspaceId);
-  const limit = tierFor(plan).limits.postsPerMonth;
-  if (limit === -1) return;
+  const baseLimit = tierFor(plan).limits.postsPerMonth;
+  if (baseLimit === -1) return;
+  // PLG referral reward (migration 030): bonus monthly posts earned by driving
+  // signups are added on top of the tier ceiling. The bonus is a per-workspace
+  // perk (read off the workspace row), not inherited from an org plan.
+  const bonus = await getReferralBonusPosts(workspaceId);
+  const limit = baseLimit + bonus;
   const usage = await getUsageSnapshot(workspaceId);
   if (usage.postsGenerated + requested > limit) {
     throw new QuotaExceededError({
@@ -49,6 +54,18 @@ export async function assertWithinPostQuota(workspaceId: string, requested = 1):
       message: `Generating ${requested} more post(s) would exceed your ${plan} plan limit of ${limit} per month. Upgrade in Settings → Billing.`,
     });
   }
+}
+
+// The referral bonus posts granted to this workspace (0 if none / row missing).
+// Service-role read, mirroring the other quota lookups in this module.
+async function getReferralBonusPosts(workspaceId: string): Promise<number> {
+  const svc = supabaseService();
+  const { data } = await svc
+    .from("workspaces")
+    .select("referral_bonus_posts")
+    .eq("id", workspaceId)
+    .maybeSingle();
+  return data?.referral_bonus_posts ?? 0;
 }
 
 export async function assertWithinImageQuota(workspaceId: string, requested = 1): Promise<void> {

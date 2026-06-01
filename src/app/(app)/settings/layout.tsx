@@ -18,6 +18,7 @@ const settingsNav = [
   { href: "/settings/events", label: "Events" },
   { href: "/integrations", label: "Integrations" },
   { href: "/settings/billing", label: "Billing" },
+  { href: "/settings/referrals", label: "Refer & earn" },
   { href: "/settings/team", label: "Team" },
   { href: "/settings/organization", label: "Organization" },
 ];

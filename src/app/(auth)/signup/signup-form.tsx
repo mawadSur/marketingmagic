@@ -13,11 +13,16 @@ export function SignupForm() {
   const search = useSearchParams();
   const invite = search.get("invite") ?? "";
   const prefillEmail = search.get("email") ?? "";
+  // PLG: a ?ref=<code> arriving on the signup URL is carried through as a hidden
+  // field; the action stashes it in a cookie for attribution at workspace
+  // creation. Ignored for invite signups (they join, not create).
+  const ref = search.get("ref") ?? "";
   const [state, formAction, pending] = useActionState(signupAction, initialState);
 
   return (
     <form action={formAction} className="space-y-4">
       {invite ? <input type="hidden" name="invite" value={invite} /> : null}
+      {!invite && ref ? <input type="hidden" name="ref" value={ref} /> : null}
       <div className="space-y-2">
         <Label htmlFor="email">Email</Label>
         <Input
