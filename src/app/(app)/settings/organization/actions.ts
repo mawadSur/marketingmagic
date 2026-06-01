@@ -57,11 +57,22 @@ const addClientSchema = z.object({
 });
 
 /**
- * Create a new client workspace under an organization. The caller must be a
- * member (owner / admin / manager) of the org — enforced by checking the org
- * is readable (RLS hides orgs the caller isn't in) before inserting.
+ * Create a new client workspace under an organization. ADDING A CLIENT IS AN
+ * ORG-ADMIN-ONLY action: the caller must be the org owner OR hold an 'admin'
+ * org_membership role. A 'manager' member (who can run existing client
+ * workspaces but not change org structure) is explicitly NOT allowed — adding a
+ * client bumps the billed seat count (locked decision #1), so it sits with the
+ * same people who control billing/membership.
  *
- * Phase C (billing) will hook the Stripe subscription-quantity bump here.
+ * Authorization is enforced server-side via the user_is_org_admin(org_id) RPC
+ * (SECURITY DEFINER, owner-or-'admin'), evaluated under the caller's auth
+ * session. We do NOT rely on RLS readability alone (which a manager would also
+ * pass) and we do NOT take the org id from any trusted source other than the
+ * form — the RPC re-derives the caller's role from auth.uid(), so a forged or
+ * manager-level request can't escalate. The service-role insert path is never
+ * used here, so there is no way to bypass the gate.
+ *
+ * Phase C (billing) hooks the Stripe subscription-quantity bump after the gate.
  */
 export async function addClientAction(
   _prev: AddClientState,
@@ -79,14 +90,15 @@ export async function addClientAction(
   } = await supabase.auth.getUser();
   if (!user) return { error: "You must be signed in." };
 
-  // Authorization: confirm the caller can see (is a member of) the org. RLS on
-  // organizations returns no row otherwise, so this doubles as the access gate.
-  const { data: org } = await supabase
-    .from("organizations")
-    .select("id")
-    .eq("id", parsed.data.organization_id)
-    .maybeSingle();
-  if (!org) return { error: "You don't have access to that organization." };
+  // Authorization (org-admin-only): owner or 'admin' role. The RPC runs under
+  // the caller's session and re-derives the role from auth.uid(), so a
+  // 'manager' member or a non-member is rejected — no privilege escalation.
+  const { data: isAdmin, error: authzErr } = await supabase.rpc("user_is_org_admin", {
+    org_id: parsed.data.organization_id,
+  });
+  if (authzErr || isAdmin !== true) {
+    return { error: "Only an organization admin can add a client." };
+  }
 
   const slug = await uniqueWorkspaceSlug(slugify(parsed.data.name) || "client");
 

@@ -1309,6 +1309,8 @@ export interface Database {
       // Phase A (migration 029) org-access helpers.
       user_owns_organization: { Args: { org_id: string }; Returns: boolean };
       user_is_org_member: { Args: { org_id: string }; Returns: boolean };
+      // Phase E (migration 033) tight org-admin gate (owner or 'admin' role).
+      user_is_org_admin: { Args: { org_id: string }; Returns: boolean };
     };
     Enums: Record<string, never>;
   };
