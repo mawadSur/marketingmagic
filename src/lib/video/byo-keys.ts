@@ -135,6 +135,9 @@ export async function setWorkspaceKeys(
 export interface WorkspaceKeys {
   llm?: ByoLlmSecrets;
   pexels?: ByoPexelsSecrets;
+  // Reference-image video (bet ④) — the workspace's own fal.ai image-to-video
+  // key. Absent for workspaces that haven't opted into the reference-video path.
+  fal_video?: ByoFalVideoSecrets;
 }
 
 export async function getWorkspaceKeys(workspaceId: string): Promise<WorkspaceKeys> {
@@ -151,6 +154,7 @@ export async function getWorkspaceKeys(workspaceId: string): Promise<WorkspaceKe
     const parsed = JSON.parse(decrypt(row.ciphertext)) as ByoSecrets;
     if (row.provider === "llm") out.llm = parsed as ByoLlmSecrets;
     else if (row.provider === "pexels") out.pexels = parsed as ByoPexelsSecrets;
+    else if (row.provider === "fal_video") out.fal_video = parsed as ByoFalVideoSecrets;
   }
   return out;
 }
@@ -163,6 +167,9 @@ export async function getWorkspaceKeys(workspaceId: string): Promise<WorkspaceKe
 export interface WorkspaceKeyStatus {
   llm: boolean;
   pexels: boolean;
+  // Reference-image video (bet ④) fal key presence. Drives the settings UI's
+  // Configured/Not pill for the reference-video key — never a value.
+  fal_video: boolean;
 }
 
 export async function getWorkspaceKeyStatus(workspaceId: string): Promise<WorkspaceKeyStatus> {
@@ -175,7 +182,11 @@ export async function getWorkspaceKeyStatus(workspaceId: string): Promise<Worksp
     throw new Error(`getWorkspaceKeyStatus failed: ${error.message}`);
   }
   const providers = new Set((data ?? []).map((r) => r.provider));
-  return { llm: providers.has("llm"), pexels: providers.has("pexels") };
+  return {
+    llm: providers.has("llm"),
+    pexels: providers.has("pexels"),
+    fal_video: providers.has("fal_video"),
+  };
 }
 
 // Delete a provider's stored credentials for a workspace. Service-role only;

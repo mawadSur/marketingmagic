@@ -157,7 +157,7 @@ describe("byo-keys: getWorkspaceKeyStatus never leaks plaintext", () => {
   it("returns presence booleans only, with no decryption", async () => {
     await setWorkspaceKeys(WS, "llm", LLM);
     const status = await getWorkspaceKeyStatus(WS);
-    expect(status).toEqual({ llm: true, pexels: false });
+    expect(status).toEqual({ llm: true, pexels: false, fal_video: false });
     // Serialise the whole result and assert the secret can't appear in it.
     expect(JSON.stringify(status)).not.toContain(LLM.api_key);
   });
@@ -165,7 +165,7 @@ describe("byo-keys: getWorkspaceKeyStatus never leaks plaintext", () => {
   it("reports both providers once present", async () => {
     await setWorkspaceKeys(WS, "llm", LLM);
     await setWorkspaceKeys(WS, "pexels", PEXELS);
-    expect(await getWorkspaceKeyStatus(WS)).toEqual({ llm: true, pexels: true });
+    expect(await getWorkspaceKeyStatus(WS)).toEqual({ llm: true, pexels: true, fal_video: false });
   });
 
   it("works even when the encryption key is absent (status reads no ciphertext)", async () => {
@@ -173,6 +173,6 @@ describe("byo-keys: getWorkspaceKeyStatus never leaks plaintext", () => {
     // throwing because it never decrypts.
     store.push({ workspace_id: WS, provider: "llm", ciphertext: "iv:tag:ct", created_by: null });
     envHolder.BYO_ENCRYPTION_KEY = undefined;
-    expect(await getWorkspaceKeyStatus(WS)).toEqual({ llm: true, pexels: false });
+    expect(await getWorkspaceKeyStatus(WS)).toEqual({ llm: true, pexels: false, fal_video: false });
   });
 });

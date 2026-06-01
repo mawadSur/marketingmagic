@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { serverEnv, mptConfigured } from "@/lib/env";
+import { serverEnv, mptConfigured, referenceVideoEnabled } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import {
   getTask,
@@ -16,6 +16,8 @@ import {
   markFailed,
   type VideoJobRow,
 } from "@/lib/video/jobs";
+import { getWorkspaceKeys } from "@/lib/video/byo-keys";
+import { getReferenceVideoProvider } from "@/lib/video/reference/stub-provider";
 import type { PostMediaItem } from "@/lib/social/dispatch";
 
 // Vercel/GitHub-Actions Cron — POST every 1-2 minutes. Auth via Bearer
@@ -51,9 +53,12 @@ async function handle(req: NextRequest) {
   if (!authorized(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  // Cleanly no-op when MPT isn't wired up rather than throwing.
-  if (!mptConfigured()) {
-    return NextResponse.json({ skipped: "mpt-not-configured", checked: 0, results: [] });
+  // Cleanly no-op when NEITHER pipeline is wired up rather than throwing. The
+  // reference-image video path (bet ④) runs without MPT, so we only early-return
+  // when MPT is unconfigured AND the reference path is also disabled — otherwise
+  // a reference-only deployment (no MPT) must still drain its jobs.
+  if (!mptConfigured() && !referenceVideoEnabled()) {
+    return NextResponse.json({ skipped: "no-video-pipeline-configured", checked: 0, results: [] });
   }
 
   const svc = supabaseService();
@@ -67,6 +72,16 @@ async function handle(req: NextRequest) {
 
   for (const job of jobs) {
     try {
+      // Reference-image video (bet ④) — these jobs are NOT MPT tasks. Route them
+      // to the fal-adapter poller and skip the entire MPT branch below. The MPT
+      // path stays exactly as-is for params.kind !== "reference_image".
+      if (jobKind(job) === "reference_image") {
+        const r = await processReferenceJob(svc, job);
+        results.push(r);
+        continue;
+      }
+
+      // ── MPT path (unchanged) ──────────────────────────────────────────────
       if (!job.mpt_task_id) {
         await markFailed(job.id, "processing job has no mpt_task_id");
         results.push({ id: job.id, status: "failed", reason: "missing mpt_task_id" });
@@ -153,6 +168,83 @@ async function handle(req: NextRequest) {
   }
 
   return NextResponse.json({ checked: jobs.length, results, at: new Date().toISOString() });
+}
+
+// Read the params.kind discriminator off a job row. MPT jobs predate the
+// discriminator (params has no `kind`), so anything that isn't explicitly
+// "reference_image" falls through to the unchanged MPT branch.
+function jobKind(job: VideoJobRow): string {
+  const p = job.params;
+  if (p && typeof p === "object" && !Array.isArray(p)) {
+    const k = (p as Record<string, unknown>).kind;
+    if (typeof k === "string") return k;
+  }
+  return "mpt";
+}
+
+// Reference-image video (bet ④) — poll one fal job and finalise it. Mirrors the
+// MPT finalize: stale-guard → poll the provider → on ready pull the mp4 into the
+// post-media-video bucket and attach a DRAFT post → markReady; on failed
+// markFailed. The fal key is the workspace's own BYO key (service-role decrypt).
+async function processReferenceJob(
+  svc: ReturnType<typeof supabaseService>,
+  job: VideoJobRow,
+): Promise<{ id: string; status: "ready" | "processing" | "failed" | "error"; reason?: string }> {
+  // mpt_task_id holds the fal request_id for reference jobs (set by
+  // markProcessing). Without it there's nothing to poll.
+  if (!job.mpt_task_id) {
+    await markFailed(job.id, "reference job has no provider request id");
+    return { id: job.id, status: "failed", reason: "missing request id" };
+  }
+
+  // Same stale-guard as the MPT path — fail renders that never terminate.
+  if (Date.now() - new Date(job.created_at).getTime() > MAX_PROCESSING_MS) {
+    await markFailed(job.id, "reference render timed out (no completion from the provider)");
+    return { id: job.id, status: "failed", reason: "timed out" };
+  }
+
+  // The provider needs the workspace's decrypted fal key.
+  const keys = await getWorkspaceKeys(job.workspace_id);
+  if (!keys.fal_video?.api_key) {
+    await markFailed(job.id, "no fal video key for workspace (key removed mid-render?)");
+    return { id: job.id, status: "failed", reason: "missing fal key" };
+  }
+
+  const provider = getReferenceVideoProvider();
+  const poll = await provider.poll(job.mpt_task_id, keys.fal_video.api_key);
+
+  if (typeof poll.progress === "number") {
+    await updateProgress(job.id, poll.progress).catch(() => {});
+  }
+
+  if (poll.status === "failed") {
+    await markFailed(job.id, poll.failureReason ?? "provider reported render failed");
+    return { id: job.id, status: "failed", reason: poll.failureReason ?? "provider failed" };
+  }
+
+  if (poll.status !== "ready" || !poll.videoUrl) {
+    // Still rendering — try again next tick.
+    return { id: job.id, status: "processing" };
+  }
+
+  // READY — pull the mp4 immediately (CDN URL can expire) and own the asset.
+  const { bytes, contentType } = await provider.fetchBytes(poll.videoUrl, keys.fal_video.api_key);
+  const storagePath = `${job.workspace_id}/${job.id}/final.mp4`;
+
+  const { error: upErr } = await svc.storage.from(BUCKET).upload(storagePath, bytes, {
+    contentType: contentType || "video/mp4",
+    upsert: true,
+  });
+  if (upErr) {
+    await markFailed(job.id, `storage upload failed: ${upErr.message}`);
+    return { id: job.id, status: "failed", reason: "upload failed" };
+  }
+
+  // Reuse the same draft-post attachment as the MPT path — the post lands as
+  // pending_approval (already the case in attachDraftPost).
+  const postId = await attachDraftPost(svc, job, storagePath);
+  await markReady(job.id, storagePath, postId);
+  return { id: job.id, status: "ready" };
 }
 
 // Create or update a DRAFT post carrying the rendered video as a media item.
