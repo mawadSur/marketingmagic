@@ -165,13 +165,20 @@ export function publicEnv(): PublicEnv {
 
 // Resolve the effective public site URL. Preferred sources in order:
 //   1. NEXT_PUBLIC_SITE_URL — operator-set; needed for custom domains and
-//      OAuth redirect URIs that must match a registered value.
-//   2. VERCEL_URL — auto-injected on every Vercel deployment, no scheme.
-//   3. localhost — final fallback so dev/builds without any URL still work.
+//      OAuth redirect URIs / auth email links that must match a registered value.
+//   2. VERCEL_PROJECT_PRODUCTION_URL — the STABLE production domain, auto-injected
+//      on every Vercel deployment (incl. previews). Unlike VERCEL_URL it does not
+//      change per deploy, so auth-email redirect_to values stay allowlistable —
+//      using the ephemeral VERCEL_URL here is what makes Supabase reject the
+//      redirect and fall back to its (often localhost) Site URL.
+//   3. VERCEL_URL — ephemeral per-deployment URL; last Vercel resort.
+//   4. localhost — final fallback so dev/builds without any URL still work.
 // Always returns a value with a protocol and no trailing slash.
 export function siteUrl(): string {
   const explicit = process.env.NEXT_PUBLIC_SITE_URL?.trim();
   if (explicit) return explicit.replace(/\/$/, "");
+  const prod = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  if (prod) return `https://${prod.replace(/\/$/, "")}`;
   const vercel = process.env.VERCEL_URL?.trim();
   if (vercel) return `https://${vercel.replace(/\/$/, "")}`;
   return "http://localhost:3000";
