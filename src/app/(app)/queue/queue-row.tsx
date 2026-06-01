@@ -14,6 +14,7 @@ import {
   clearPostImageAction,
   editPostAction,
   generatePostImageAction,
+  publishNowAction,
   rejectPostAction,
   reschedulePostAction,
   revokePostAction,
@@ -117,6 +118,22 @@ export function QueueRow({
   // away or hits the queue refresh.
   const [expBusy, expStart] = useTransition();
   const [expFlash, setExpFlash] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
+
+  // "Publish now" — manual override that skips the up-to-5-min wait for the
+  // cron tick. Own transition so a (potentially slow) platform call doesn't
+  // disable the unrelated approve/edit/reject buttons.
+  const [publishBusy, publishStart] = useTransition();
+  function publishNow() {
+    setError(null);
+    publishStart(async () => {
+      const r = await publishNowAction(post.id);
+      if (r.error) {
+        setError(r.error);
+        return;
+      }
+      router.refresh();
+    });
+  }
 
   function run(action: () => Promise<{ error: string | null }>) {
     start(async () => {
@@ -467,10 +484,19 @@ export function QueueRow({
           <>
             <Button
               size="sm"
-              disabled={pending}
+              disabled={pending || publishBusy}
               onClick={() => run(() => approvePostAction(post.id))}
             >
               Approve
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={pending || publishBusy}
+              onClick={publishNow}
+              title="Skip the schedule and publish this post right now."
+            >
+              {publishBusy ? "Publishing…" : "Publish now"}
             </Button>
             <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
               Edit
@@ -518,14 +544,25 @@ export function QueueRow({
         ) : null}
 
         {isScheduled ? (
-          <Button
-            size="sm"
-            variant="destructive"
-            disabled={pending}
-            onClick={() => run(() => revokePostAction(post.id))}
-          >
-            Revoke
-          </Button>
+          <>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={pending || publishBusy}
+              onClick={publishNow}
+              title="Skip the schedule and publish this post right now."
+            >
+              {publishBusy ? "Publishing…" : "Publish now"}
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={pending || publishBusy}
+              onClick={() => run(() => revokePostAction(post.id))}
+            >
+              Revoke
+            </Button>
+          </>
         ) : null}
 
         {canRunExperiment ? (

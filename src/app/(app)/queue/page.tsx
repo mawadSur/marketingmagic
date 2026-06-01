@@ -207,12 +207,20 @@ export default async function QueuePage() {
 
   return (
     <div className="space-y-10">
-      <header className="space-y-1">
-        <p className="label-eyebrow">Drafts &amp; schedule</p>
-        <h1 className="text-3xl font-semibold tracking-tight">Approval queue</h1>
-        <p className="text-sm text-muted-foreground">
-          Approve, edit, or reject. Approved drafts go straight to the schedule — you keep the kill switch.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <p className="label-eyebrow">Drafts &amp; schedule</p>
+          <h1 className="text-3xl font-semibold tracking-tight">Approval queue</h1>
+          <p className="text-sm text-muted-foreground">
+            Approve, edit, or reject. Approved drafts go straight to the schedule — you keep the kill switch.
+          </p>
+        </div>
+        <Link
+          href="/queue/new"
+          className="inline-flex h-9 shrink-0 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity duration-200 hover:opacity-90"
+        >
+          New post
+        </Link>
       </header>
 
       <Section
