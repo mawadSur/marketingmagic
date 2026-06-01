@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { VideoJobStatus } from "@/lib/video/jobs";
 
@@ -14,6 +15,9 @@ export interface JobListItem {
   aspect: string;
   failureReason: string | null;
   createdAt: string;
+  // Set once the finished render is attached to a draft post, so a "ready" row
+  // can deep-link the user to review/approve it in the queue.
+  postId?: string | null;
 }
 
 const STATUS_STYLE: Record<VideoJobStatus, string> = {
@@ -77,6 +81,14 @@ export function JobList({ jobs }: { jobs: JobListItem[] }) {
                   {job.progress}%
                 </span>
               </div>
+            ) : null}
+            {job.status === "ready" && job.postId ? (
+              <Link
+                href="/queue"
+                className="text-xs font-medium text-primary underline-offset-4 hover:underline"
+              >
+                Review in queue →
+              </Link>
             ) : null}
             <span
               className={
