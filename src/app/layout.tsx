@@ -1,6 +1,15 @@
 import type { Metadata } from "next";
+import { Plus_Jakarta_Sans } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
+
+// Brand typeface. Friendly, modern, geometric sans — reads as a polished SaaS
+// product rather than the default system stack. Self-hosted + swap by next/font.
+const sans = Plus_Jakarta_Sans({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-sans",
+});
 
 export const metadata: Metadata = {
   title: "marketingmagic",
@@ -19,8 +28,8 @@ export const viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className="min-h-screen bg-background antialiased">
+    <html lang="en" className={sans.variable} suppressHydrationWarning>
+      <body className="min-h-screen bg-background font-sans antialiased">
         {children}
         <Analytics />
       </body>
