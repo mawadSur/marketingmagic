@@ -60,9 +60,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  // Authn + authorization: the user must be the OWNER of the org (only the
-  // owner manages billing). RLS lets any org member read the row; we then check
-  // owner_id explicitly so a manager can't start/redirect billing.
+  // Authn + authorization: the user must be an org ADMIN (owner OR 'admin'
+  // org_membership) to manage billing — the same gate as add-client (which also
+  // moves the seat count). We prove it via the user_is_org_admin(org_id) RPC
+  // (SECURITY DEFINER, owner-or-'admin') under the caller's session, NOT by RLS
+  // readability alone (a manager would also pass that), so a manager or
+  // non-member can't start/redirect billing.
   const supabase = await supabaseServer();
   const {
     data: { user },
@@ -82,9 +85,12 @@ export async function POST(req: NextRequest) {
       { status: 403 },
     );
   }
-  if (org.owner_id !== user.id) {
+  const { data: isAdmin, error: authzErr } = await supabase.rpc("user_is_org_admin", {
+    org_id: org.id,
+  });
+  if (authzErr || isAdmin !== true) {
     return NextResponse.json(
-      { error: "Only the organization owner can manage billing." },
+      { error: "Only an organization admin can manage billing." },
       { status: 403 },
     );
   }

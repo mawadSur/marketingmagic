@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { getAuthedUserOrRedirect, listOrganizations } from "@/lib/workspace";
+import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseService } from "@/lib/supabase/service";
 import { TIERS, orgSeatPriceId } from "@/lib/billing/tiers";
 import { billingConfigured } from "@/lib/billing/stripe";
-import { OrgBillingActions } from "./org-billing-actions";
+import { getOrgSubscriptionQuantity } from "@/lib/billing/org-subscription";
+import { OrgBillingActions, ResyncQuantityButton } from "./org-billing-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -63,10 +65,27 @@ export default async function OrgBillingPage({
     .eq("organization_id", org.id);
 
   const seats = clientCount ?? 0;
-  const isOwner = org.owner_id === user.id;
+
+  // Management is org-admin-gated (owner OR 'admin' org_membership), matching
+  // the add-client / re-sync server actions. Resolved via the same
+  // user_is_org_admin RPC under the caller's session so the UI affordances
+  // exactly mirror what the actions will allow — a 'manager' sees read-only.
+  const authed = await supabaseServer();
+  const { data: isAdminRpc } = await authed.rpc("user_is_org_admin", { org_id: org.id });
+  const canManage = isAdminRpc === true;
+
   const configured = billingConfigured() && orgSeatPriceId() !== null;
   const hasActiveSub = Boolean(orgRow?.stripe_subscription_id);
   const tier = TIERS.agency; // The org tier; clients inherit these ceilings.
+
+  // Live Stripe seat quantity (what Stripe is actually billing). null = no
+  // subscription yet, or the lookup failed (read-only-safe — we just hide the
+  // drift check then). Drift = the active-client seat count disagrees with the
+  // quantity Stripe holds, e.g. a best-effort sync failed during add-client.
+  const stripeQuantity = hasActiveSub ? await getOrgSubscriptionQuantity(org.id) : null;
+  const expectedQuantity = Math.max(seats, 1); // Stripe floor of 1 (no qty 0).
+  const hasDrift =
+    canManage && stripeQuantity !== null && stripeQuantity !== expectedQuantity;
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -121,8 +140,32 @@ export default async function OrgBillingPage({
               {seats === 1 ? "1 client workspace" : `${seats} client workspaces`}
               {" · "}${tier.priceMonthly}/seat/mo
             </p>
+            {hasActiveSub ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Stripe quantity:{" "}
+                <span className="font-mono">
+                  {stripeQuantity === null ? "—" : stripeQuantity}
+                </span>
+              </p>
+            ) : null}
           </div>
         </div>
+
+        {hasDrift ? (
+          <div className="mt-4 rounded-md border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
+            <p className="font-medium">Seat count and Stripe quantity disagree.</p>
+            <p className="mt-1 text-muted-foreground">
+              You have <strong>{expectedQuantity}</strong> billable seat
+              {expectedQuantity === 1 ? "" : "s"} (active client workspaces), but
+              Stripe is billing <strong>{stripeQuantity}</strong>. This usually
+              means a quantity update didn&apos;t reach Stripe; re-sync to fix the
+              bill (Stripe prorates).
+            </p>
+            <div className="mt-3">
+              <ResyncQuantityButton organizationId={org.id} />
+            </div>
+          </div>
+        ) : null}
 
         <ul className="mt-5 grid gap-2 text-sm sm:grid-cols-2">
           {tier.features.map((f) => (
@@ -135,7 +178,7 @@ export default async function OrgBillingPage({
           ))}
         </ul>
 
-        {isOwner ? (
+        {canManage ? (
           <div className="mt-6 border-t pt-5">
             {!configured ? (
               <p className="text-sm text-muted-foreground">
@@ -161,7 +204,8 @@ export default async function OrgBillingPage({
           </div>
         ) : (
           <p className="mt-6 border-t pt-5 text-xs text-muted-foreground">
-            Only the organization owner can manage billing.
+            Only an organization admin can manage billing. You can see the current
+            plan and seat count above.
           </p>
         )}
       </section>

@@ -1,7 +1,9 @@
 "use client";
 
 import * as React from "react";
+import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
+import { resyncOrgQuantityAction, type ResyncState } from "./resync-action";
 
 type Props =
   | { organizationId: string; mode: "checkout"; label: string }
@@ -56,5 +58,28 @@ export function OrgBillingActions(props: Props) {
       </Button>
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
+  );
+}
+
+const resyncInitial: ResyncState = { error: null, ok: false };
+
+// Drift re-sync island. Rendered only when the live Stripe quantity disagrees
+// with the seat count. Pushes the current active-client count to Stripe via the
+// org-admin-gated server action; a Stripe failure is surfaced inline.
+export function ResyncQuantityButton({ organizationId }: { organizationId: string }) {
+  const [state, formAction, pending] = useActionState(resyncOrgQuantityAction, resyncInitial);
+  return (
+    <form action={formAction} className="space-y-1">
+      <input type="hidden" name="organization_id" value={organizationId} />
+      <Button type="submit" variant="outline" size="sm" disabled={pending}>
+        {pending ? "Re-syncing…" : "Re-sync seats with Stripe"}
+      </Button>
+      {state.error ? <p className="text-xs text-destructive">{state.error}</p> : null}
+      {state.ok ? (
+        <p className="text-xs text-emerald-600">
+          Seats re-synced. It may take a moment for Stripe to reflect the change.
+        </p>
+      ) : null}
+    </form>
   );
 }
