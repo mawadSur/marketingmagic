@@ -151,6 +151,36 @@ export async function syncOrgSubscriptionQuantity(organizationId: string): Promi
   }
 }
 
+// Read the live subscription quantity from Stripe (the seat count Stripe is
+// actually billing). Returns null when the org has no subscription yet, or when
+// Stripe billing isn't configured / the lookup fails — the caller treats a null
+// as "unknown" and simply hides the drift comparison rather than erroring the
+// whole billing page. This is a READ-ONLY-SAFE call: it never mutates Stripe.
+export async function getOrgSubscriptionQuantity(
+  organizationId: string,
+): Promise<number | null> {
+  let org: Awaited<ReturnType<typeof getOrgBilling>>;
+  try {
+    org = await getOrgBilling(organizationId);
+  } catch {
+    return null;
+  }
+  if (!org?.stripe_subscription_id) return null;
+
+  try {
+    const sub = await stripeClient().subscriptions.retrieve(org.stripe_subscription_id);
+    const item = sub.items?.data?.[0];
+    return item?.quantity ?? null;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "unknown error";
+    console.error(
+      `[org-billing] failed to read live subscription quantity for org ${organizationId} ` +
+        `(billing page will hide the drift check): ${msg}`,
+    );
+    return null;
+  }
+}
+
 // Convenience wrapper for the server-action side-effect path: sync quantity but
 // never throw — log loudly instead so a Stripe hiccup can't roll back a
 // successful add/remove-client. The webhook + billing-page render reconcile

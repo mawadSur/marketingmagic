@@ -324,6 +324,32 @@ export interface Database {
         }>;
         Relationships: [];
       };
+      // Client portal invite audit trail (migration 035). One row per time the
+      // agency emails a client their portal/report link. Audit only — never
+      // gates portal access. RLS is org-scoped via is_workspace_member.
+      client_invites: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          token_id: string | null;
+          recipient_email: string;
+          created_by: string | null;
+          sent_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          token_id?: string | null;
+          recipient_email: string;
+          created_by?: string | null;
+          sent_at?: string;
+        };
+        Update: Partial<{
+          token_id: string | null;
+          recipient_email: string;
+        }>;
+        Relationships: [];
+      };
       usage_counters: {
         Row: {
           workspace_id: string;

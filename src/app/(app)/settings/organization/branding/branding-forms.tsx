@@ -9,15 +9,18 @@ import {
   updateBrandingAction,
   mintTokenAction,
   revokeTokenAction,
+  emailInviteAction,
   type BrandingState,
   type MintTokenState,
   type RevokeTokenState,
+  type EmailInviteState,
 } from "./actions";
 import type { ClientPortalScope } from "@/lib/db/types";
 
 const brandingInitial: BrandingState = { error: null, ok: false };
 const mintInitial: MintTokenState = { error: null, rawUrl: null };
 const revokeInitial: RevokeTokenState = { error: null };
+const emailInviteInitial: EmailInviteState = { error: null, status: null };
 
 export function BrandingForm({
   organizationId,
@@ -266,17 +269,74 @@ function MintLinkForm({
 
       {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
       {state.rawUrl ? (
-        <div className="space-y-1 rounded-md border bg-background p-2">
-          <p className="text-xs font-medium text-emerald-600">
-            Link created — copy it now, it won&apos;t be shown again:
-          </p>
-          <code className="block break-all text-xs">{state.rawUrl}</code>
+        <div className="space-y-2 rounded-md border bg-background p-2">
+          <div className="space-y-1">
+            <p className="text-xs font-medium text-emerald-600">
+              Link created — copy it now, it won&apos;t be shown again:
+            </p>
+            <code className="block break-all text-xs">{state.rawUrl}</code>
+          </div>
+          <EmailInviteForm
+            organizationId={organizationId}
+            portalUrl={state.rawUrl}
+            disabled={disabled}
+          />
         </div>
       ) : null}
 
       <Button type="submit" size="sm" disabled={disabled || pending}>
         {pending ? "Creating…" : "Create link"}
       </Button>
+    </form>
+  );
+}
+
+// Email the freshly-minted share link to a client contact. Lives inline under
+// the minted-link block because the raw link is only available at mint time
+// (only its hash is stored). Org-admin gated server-side; degrades to a clear
+// "email not configured" notice when RESEND_API_KEY is unset (status
+// "skipped"). The link is always copyable above regardless of email config.
+function EmailInviteForm({
+  organizationId,
+  portalUrl,
+  disabled,
+}: {
+  organizationId: string;
+  portalUrl: string;
+  disabled: boolean;
+}) {
+  const [state, formAction, pending] = useActionState(emailInviteAction, emailInviteInitial);
+  return (
+    <form action={formAction} className="space-y-2 border-t pt-2">
+      <input type="hidden" name="organization_id" value={organizationId} />
+      <input type="hidden" name="portal_url" value={portalUrl} />
+      <Label htmlFor={`invite-${organizationId}`} className="text-xs">
+        Email this link to the client
+      </Label>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          id={`invite-${organizationId}`}
+          name="recipient"
+          type="email"
+          placeholder="jane@client.co"
+          className="h-8 flex-1 text-sm"
+          disabled={disabled}
+          required
+        />
+        <Button type="submit" size="sm" variant="outline" disabled={disabled || pending}>
+          {pending ? "Sending…" : "Send"}
+        </Button>
+      </div>
+      {state.error ? <p className="text-xs text-destructive">{state.error}</p> : null}
+      {state.status === "sent" ? (
+        <p className="text-xs text-emerald-600">Sent. The client now has their link.</p>
+      ) : null}
+      {state.status === "skipped" ? (
+        <p className="text-xs text-amber-600">
+          Email isn&apos;t configured on this deployment, so nothing was sent —
+          copy the link above and share it manually.
+        </p>
+      ) : null}
     </form>
   );
 }
