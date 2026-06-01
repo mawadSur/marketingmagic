@@ -767,6 +767,10 @@ def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
             else:
                 # 普通视频素材只需要读取尺寸做校验，校验完成后立即释放句柄即可。
                 close_clip(clip)
+                # material.url 入参可能只是文件名或相对路径，但后续 combine_videos
+                # 会直接用它打开素材。这里回填解析后的绝对路径，否则非图片素材会以
+                # 相对路径传给 MoviePy/ffmpeg，定位不到文件而读出 0 帧导致渲染失败。
+                material.url = material_source_path
         except Exception:
             close_clip(clip)
             raise
