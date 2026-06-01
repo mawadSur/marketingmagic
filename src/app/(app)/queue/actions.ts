@@ -13,6 +13,9 @@ import { incrementImagesGenerated } from "@/lib/billing/usage";
 import type { RejectionReason } from "@/lib/db/types";
 import { runQuickExperiment } from "@/lib/experiments/run";
 import { MAX_VARIANT_COUNT, MIN_VARIANT_COUNT } from "@/lib/experiments/generate";
+import { dispatchPost, type PostMediaItem } from "@/lib/social/dispatch";
+import { isRetryableError } from "@/lib/social/errors";
+import { readThreadMeta } from "@/lib/threads/schema";
 
 type ActionResult = { error: string | null };
 type GenerateImageResult = { error: string | null; publicUrl: string | null };
@@ -659,6 +662,148 @@ export async function setPostHashtagsAction(
     console.warn("hashtag_usage upsert failed:", err);
   }
 
+  revalidatePath("/queue");
+  return { error: null };
+}
+
+// ─────────────────────────────────────────────────────────────
+// publishNowAction — manual "ship it right now" override
+// ─────────────────────────────────────────────────────────────
+//
+// Approving a post only schedules it; the GitHub Actions cron
+// (/api/cron/post-scheduled, every 5 min) is what actually publishes
+// scheduled rows whose scheduled_at <= now(). That means a freshly
+// approved post can sit up to 5 minutes before it goes live. This action
+// gives the user a manual override.
+//
+// Approach — DIRECT DISPATCH. For a single (non-thread) post we replicate
+// the cron's standard publish sequence inline: idempotency-ledger check →
+// load the account → dispatchPost() → write the ledger row → flip the post
+// to 'posted'/'failed'. dispatchPost() is the same channel-agnostic entry
+// point the cron uses, so behaviour (token refresh, media upload, retryable
+// transcode handling) is identical. On a RetryableError (async video
+// transcode still running) we fall back to scheduled_at=now() so the next
+// cron tick resumes — never marking a still-processing render as failed.
+//
+// X THREADS are the one case we DON'T dispatch directly: they ship via
+// postThread() (the cron buckets all tweets of an idea and posts them in
+// one ordered pass). Reproducing that orchestration here would be risky, so
+// for a thread member we fall back to scheduled_at=now() and let the next
+// cron tick run the proper thread path.
+export async function publishNowAction(postId: string): Promise<ActionResult> {
+  if (!uuid.safeParse(postId).success) return { error: "Bad post id." };
+  const { error, post } = await loadPostForWorkspace(postId);
+  if (error || !post) return { error };
+  if (post.status !== "pending_approval" && post.status !== "scheduled") {
+    return { error: `Cannot publish from ${post.status}.` };
+  }
+
+  const svc = supabaseService();
+  const nowIso = new Date().toISOString();
+
+  // Fall back to the cron for X threads — postThread() owns the ordered
+  // multi-tweet path; replicating it here is out of scope and error-prone.
+  const isThreadMember =
+    post.channel === "x" && readThreadMeta(post.generation_metadata) !== null;
+  if (isThreadMember) {
+    return scheduleNow(svc, post.id, nowIso);
+  }
+
+  // Idempotency: if the ledger already has this post (e.g. a prior cron tick
+  // posted it but the status update lost a race), reconcile and return.
+  const { data: existing } = await svc
+    .from("social_posts_ledger")
+    .select("external_id")
+    .eq("workspace_id", post.workspace_id)
+    .eq("channel", post.channel)
+    .eq("event_key", `post:${post.id}`)
+    .maybeSingle();
+  if (existing) {
+    await svc
+      .from("posts")
+      .update({ status: "posted", external_id: existing.external_id, posted_at: nowIso })
+      .eq("id", post.id);
+    revalidatePath("/queue");
+    return { error: null };
+  }
+
+  const { data: account, error: acctErr } = await svc
+    .from("social_accounts")
+    .select("credentials, successful_post_count")
+    .eq("id", post.social_account_id)
+    .maybeSingle();
+  if (acctErr || !account) {
+    await svc
+      .from("posts")
+      .update({ status: "failed", failure_reason: (acctErr?.message ?? "account missing").slice(0, 1000) })
+      .eq("id", post.id);
+    revalidatePath("/queue");
+    return { error: "No connected account for this post's channel." };
+  }
+
+  try {
+    const media = ((post.media ?? []) as unknown) as PostMediaItem[];
+    const sent = await dispatchPost(
+      svc,
+      post.channel,
+      account.credentials,
+      post.text,
+      media,
+      post.social_account_id,
+    );
+
+    const { error: ledgerErr } = await svc.from("social_posts_ledger").insert({
+      workspace_id: post.workspace_id,
+      channel: post.channel,
+      event_key: `post:${post.id}`,
+      external_id: sent.externalId,
+      payload: { text: post.text },
+    });
+    if (ledgerErr && !ledgerErr.message.includes("duplicate")) {
+      throw new Error(`ledger write failed: ${ledgerErr.message}`);
+    }
+
+    await svc
+      .from("posts")
+      .update({ status: "posted", external_id: sent.externalId, posted_at: new Date().toISOString() })
+      .eq("id", post.id);
+
+    await svc
+      .from("social_accounts")
+      .update({ successful_post_count: (account.successful_post_count ?? 0) + 1 })
+      .eq("id", post.social_account_id);
+
+    revalidatePath("/queue");
+    return { error: null };
+  } catch (err) {
+    // Retryable (async transcode still running): don't fail the post. Leave
+    // it scheduled with scheduled_at=now() so the next cron tick resumes.
+    if (isRetryableError(err)) {
+      return scheduleNow(svc, post.id, new Date().toISOString());
+    }
+    const reason = err instanceof Error ? err.message : "publish failed";
+    await svc
+      .from("posts")
+      .update({ status: "failed", failure_reason: reason.slice(0, 1000) })
+      .eq("id", post.id);
+    revalidatePath("/queue");
+    return { error: reason };
+  }
+}
+
+// Fallback path: mark the post scheduled-for-now so the next cron tick (≤5
+// min) publishes it through the normal pipeline. Used for thread members and
+// in-flight video transcodes where direct one-shot dispatch isn't safe.
+async function scheduleNow(
+  svc: ReturnType<typeof supabaseService>,
+  postId: string,
+  nowIso: string,
+): Promise<ActionResult> {
+  const { error: updateErr } = await svc
+    .from("posts")
+    .update({ status: "scheduled", scheduled_at: nowIso, approved_at: nowIso })
+    .eq("id", postId);
+  if (updateErr) return { error: updateErr.message };
   revalidatePath("/queue");
   return { error: null };
 }
