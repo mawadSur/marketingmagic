@@ -125,6 +125,13 @@ const serverSchema = z.object({
   // field directly so the default allowlist is honoured. Default (when unset)
   // is the three channels that need no new app-review grant.
   VIDEO_PUBLISH_CHANNELS: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
+  // SPIKE — Reference-image video (bet ④). Master kill-switch for the NEW
+  // image-conditioned / talking-avatar generation path (distinct from the MPT
+  // Pexels-stitch pipeline). Off by default: when unset/false the provider stub
+  // throws and the upload UI renders a "not yet enabled" state, so nothing
+  // ships live. Accepts "1"/"true" (case-insensitive). Read through
+  // referenceVideoEnabled() — never touch this field directly.
+  REFERENCE_VIDEO_ENABLED: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
 });
 
 const publicSchema = serverSchema.pick({
@@ -233,4 +240,15 @@ export function videoPublishEnabled(channel: string): boolean {
       .filter(Boolean),
   );
   return allow.has(channel.trim().toLowerCase());
+}
+
+// SPIKE — True when the reference-image video path (bet ④) is enabled on this
+// deployment. Off by default. The provider stub and the upload UI both gate on
+// this so the feature stays dark until an operator flips REFERENCE_VIDEO_ENABLED
+// AND a real provider adapter is wired (see
+// docs/designs/reference-image-video-spike.md). Mirrors the graceful-degrade
+// shape of mptConfigured() / videoPublishEnabled().
+export function referenceVideoEnabled(): boolean {
+  const raw = serverEnv().REFERENCE_VIDEO_ENABLED?.trim().toLowerCase();
+  return raw === "1" || raw === "true";
 }

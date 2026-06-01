@@ -32,8 +32,16 @@ export interface ByoLlmSecrets {
 export interface ByoPexelsSecrets {
   api_keys: string[];
 }
-export type ByoProvider = "llm" | "pexels";
-export type ByoSecrets = ByoLlmSecrets | ByoPexelsSecrets;
+// SPIKE — Reference-image video (bet ④). The workspace's own image-to-video
+// provider key (recommended: a fal.ai key — see the spike doc). Defined here so
+// it rides the SAME AES-256-GCM machinery as the other BYO secrets, but NOT yet
+// added to the live getWorkspaceKeys decode switch (the shipped MPT path must
+// stay untouched until a vendor is wired). Gated by REFERENCE_VIDEO_ENABLED.
+export interface ByoFalVideoSecrets {
+  api_key: string;
+}
+export type ByoProvider = "llm" | "pexels" | "fal_video";
+export type ByoSecrets = ByoLlmSecrets | ByoPexelsSecrets | ByoFalVideoSecrets;
 
 // Thrown when BYO_ENCRYPTION_KEY is missing/wrong-length. Distinct type so
 // callers can surface "video keys not configured" vs a generic crypto error.
