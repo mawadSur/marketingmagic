@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { serverEnv } from "@/lib/env";
 import { planSchema, type GeneratedPlan } from "@/lib/plan/schema";
 import { planSystemPrompt, planUserPrompt, type PlanGenInputs } from "@/lib/plan/prompt";
+import { ENABLED_CHANNELS } from "@/lib/channels/registry";
 
 const MODEL = "claude-sonnet-4-6";
 
@@ -76,13 +77,13 @@ const PLAN_TOOL = {
                 properties: {
                   channel: {
                     type: "string",
-                    enum: ["x", "linkedin", "threads", "instagram", "bluesky"],
+                    enum: [...ENABLED_CHANNELS],
                   },
                   text: {
                     type: "string",
                     maxLength: 3000,
                     description:
-                      "Channel-adapted post body. Stay under the channel's character cap (X 280, Bluesky 300, Threads 500, IG 2200, LinkedIn 3000). May be empty when skip=true.",
+                      "Channel-adapted post body. Stay under the channel's character cap (X 280, Bluesky 300, Threads 500, IG 2200, LinkedIn 3000, Facebook keep short ~500). May be empty when skip=true.",
                   },
                   skip: {
                     type: "boolean",

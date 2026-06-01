@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
 
 // ─────────────────────────────────────────────────────────────
 // Content-goal schemas (Phase 2.1 — Reverse-Plan from a Goal)
@@ -87,7 +88,7 @@ export type ThemeWeight = z.infer<typeof themeWeightSchema>;
 // implicitly 0 — the strategy may legitimately skip a channel ("LinkedIn
 // is wrong for this audience"); the rationale should explain why.
 export const channelCadenceSchema = z.object({
-  channel: z.enum(["x", "linkedin", "threads", "instagram", "bluesky"]),
+  channel: z.enum(ENABLED_CHANNELS as [ChannelId, ...ChannelId[]]),
   posts_per_week: z.number().int().min(0).max(28),
   rationale: z.string().trim().min(1).max(400),
 });
