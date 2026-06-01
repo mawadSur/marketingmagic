@@ -53,6 +53,7 @@ const SOURCE_CLUSTER_CADENCE: Record<ChannelId, number> = {
   threads: 3,
   linkedin: 2,
   instagram: 2,
+  facebook: 2,
 };
 
 export async function generateClusterAction(

@@ -54,6 +54,7 @@ const VOICE_MEMO_CADENCE: Record<ChannelId, number> = {
   threads: 3,
   linkedin: 2,
   instagram: 2,
+  facebook: 2,
 };
 
 export type GenerateFromVoiceMemoState = {

@@ -6,8 +6,9 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/lib/db/types";
+import type { Database, CompetitorWatchChannel } from "@/lib/db/types";
 import { CHANNELS, type ChannelId } from "@/lib/channels/registry";
+import { isCompetitorChannelSupported } from "@/lib/competitors/schema";
 import {
   client,
   extractAndValidate,
@@ -124,11 +125,17 @@ export async function discoverAndInsightFor(
   // Persist freshly discovered handles. Conflict on
   // (workspace_id, channel, handle) → do nothing — matches the existing
   // unique constraint and keeps this best-effort.
-  if (discoveredHandles.length > 0) {
+  //
+  // watch_handles.channel is the CompetitorWatchChannel DB enum, which does
+  // NOT include facebook — competitor-watch isn't wired for Facebook Pages.
+  // Discovery research above still runs and feeds the planner; we just skip
+  // persisting the handles for channels the watch table can't store.
+  if (discoveredHandles.length > 0 && isCompetitorChannelSupported(channel as CompetitorWatchChannel)) {
+    const watchChannel = channel as CompetitorWatchChannel;
     try {
       const rows = discoveredHandles.map((h) => ({
         workspace_id: workspaceId,
-        channel,
+        channel: watchChannel,
         handle: h.handle,
         display_name: h.display_name,
         status: "active" as const,

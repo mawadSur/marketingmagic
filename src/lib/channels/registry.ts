@@ -6,7 +6,7 @@
 // prompt, queue UI, char-count validation, metrics dashboard) reads from
 // this registry.
 
-export type ChannelId = "x" | "linkedin" | "threads" | "instagram" | "bluesky";
+export type ChannelId = "x" | "linkedin" | "threads" | "instagram" | "bluesky" | "facebook";
 
 export interface ChannelSpec {
   id: ChannelId;
@@ -114,6 +114,27 @@ export const CHANNELS: Record<ChannelId, ChannelSpec> = {
     oauthEnvPrefix: null, // Bluesky uses app passwords, not OAuth
     promptConstraint:
       "Max 300 characters. Same shape as X but the audience is more tech/skeptical. No hashtags.",
+  },
+  facebook: {
+    id: "facebook",
+    // Hard limit is 63,206 chars, but Page posts perform best short — the
+    // promptConstraint biases Claude to 1-2 tight paragraphs.
+    label: "Facebook",
+    maxChars: 63206,
+    supportsImages: true,
+    supportsVideo: true,
+    recommendedWindows: [
+      // Sprout's Facebook Page windows skew weekday mid-morning to mid-
+      // afternoon. Monday is a strong slot — kept first/widest.
+      { weekday: 1, ranges: [["09:00", "12:00"], ["13:00", "15:00"]] },
+      { weekday: 2, ranges: [["09:00", "13:00"]] },
+      { weekday: 3, ranges: [["09:00", "15:00"]] },
+      { weekday: 4, ranges: [["09:00", "12:00"]] },
+      { weekday: 5, ranges: [["09:00", "11:00"]] },
+    ],
+    oauthEnvPrefix: "META_",
+    promptConstraint:
+      "Hard cap 63206 chars but write short: 1-2 tight paragraphs, ideally under ~500 chars. Conversational and community-oriented, hook first, one clear CTA. Hashtags sparing (0-2); emoji only if the brand uses them.",
   },
 };
 

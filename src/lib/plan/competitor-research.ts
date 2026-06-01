@@ -12,7 +12,7 @@
 // with the "Competitor research:" prefix for grep-ability in prod logs.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/lib/db/types";
+import type { Database, CompetitorWatchChannel } from "@/lib/db/types";
 import type { ChannelId } from "@/lib/channels/registry";
 import { type Brief, type CompetitorInsight } from "./competitor-research-shared";
 import { summariseFromCache } from "./competitor-research-summarise";
@@ -89,7 +89,9 @@ async function researchOneChannel(
     .from("watch_handles")
     .select("id, handle, display_name")
     .eq("workspace_id", workspaceId)
-    .eq("channel", channel)
+    // watch_handles.channel is the CompetitorWatchChannel enum (no facebook).
+    // For unsupported channels this simply returns no rows → discovery path.
+    .eq("channel", channel as CompetitorWatchChannel)
     .eq("status", "active");
   if (handlesErr) {
     console.warn(
