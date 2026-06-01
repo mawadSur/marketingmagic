@@ -3,74 +3,27 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { Database } from "@/lib/db/types";
-import { hasCompetitorWatch } from "@/lib/billing/tiers";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { cn } from "@/lib/utils";
 
 type Workspace = Database["public"]["Tables"]["workspaces"]["Row"];
 
-const baseNav = [
+// Consolidated top nav — was 16 flat, horizontally-scrolling items. Now 7:
+//   • Settings absorbs Brief, Channels, Video keys, Events, Integrations,
+//     Billing, Team & Organization (see the settings sub-nav / layout).
+//   • Goals + Sources are entry points on the Plans page.
+//   • Competitors + Portfolio are tabs on the Analytics page.
+// /settings prefix-matches in isActive(), so any settings sub-page keeps
+// "Settings" lit; likewise /plans, /analytics for their sub-routes.
+const nav = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/analytics", label: "Analytics" },
   { href: "/plans", label: "Plans" },
-  // Phase 2.1 — Reverse-Plan from a Goal. Sits before Sources because a
-  // goal is a higher-level frame ("I want X by Y"); sources are inputs to
-  // a cluster, goals are inputs to a multi-week plan.
-  { href: "/goals", label: "Goals" },
-  // Phase 2.5 — Source-to-Posts. Sits between Plans and Queue because the
-  // mental model is: paste a source → generate a cluster → approve in queue.
-  { href: "/sources", label: "Sources" },
   { href: "/queue", label: "Queue" },
-  // Phase 4 (P4) — BYO-key video generation. Sits after Queue because a
-  // rendered video is another piece of content that flows into the same
-  // approve-and-ship pipeline.
   { href: "/video", label: "Video" },
-  // Phase 4.5 — Reply Inbox + Engagement Assistant. Lives between Queue
-  // and Brief: queue is "ship our content", inbox is "respond to theirs."
-  // Brief sits right after so the user can adjust voice if the inbox
-  // suggests their drafter is off.
   { href: "/inbox", label: "Inbox" },
-  { href: "/settings/brief", label: "Brief" },
-  { href: "/settings/channels", label: "Channels" },
-  // P4 — BYO LLM + Pexels credential management for the video pipeline.
-  { href: "/settings/video-keys", label: "Video keys" },
-  { href: "/settings/events", label: "Events" },
-  { href: "/integrations", label: "Integrations" },
-  { href: "/settings/billing", label: "Billing" },
+  { href: "/analytics", label: "Analytics" },
+  { href: "/settings", label: "Settings" },
 ];
-
-// Portfolio only makes sense when the user is in ≥2 workspaces. We sneak
-// it in right after Dashboard so the agency-lite users can flip between
-// per-client and roll-up views without hunting.
-//
-// Team is owner-only (the page itself redirects non-owners). Surfaced
-// next to Billing so settings-y links cluster together.
-//
-// Competitors is Founder-tier-gated (`hasCompetitorWatch()`). We insert
-// it right after Sources because the mental model is: a competitor
-// winner can be promoted to a Source via the "Draft response" action.
-function buildNav(showPortfolio: boolean, showTeam: boolean, showCompetitors: boolean) {
-  let items = baseNav;
-  if (showPortfolio) {
-    items = [baseNav[0]!, { href: "/portfolio", label: "Portfolio" }, ...baseNav.slice(1)];
-  }
-  if (showCompetitors) {
-    const sourcesIdx = items.findIndex((i) => i.href === "/sources");
-    if (sourcesIdx !== -1) {
-      items = [
-        ...items.slice(0, sourcesIdx + 1),
-        { href: "/competitors", label: "Competitors" },
-        ...items.slice(sourcesIdx + 1),
-      ];
-    } else {
-      items = [...items, { href: "/competitors", label: "Competitors" }];
-    }
-  }
-  if (showTeam) {
-    items = [...items, { href: "/settings/team", label: "Team" }];
-  }
-  return items;
-}
 
 function isActive(pathname: string, href: string): boolean {
   // Exact match, or prefix match if the nav item itself is a section root.
@@ -84,14 +37,12 @@ function isActive(pathname: string, href: string): boolean {
 export function AppHeader({
   active,
   workspaces,
-  isOwner = false,
 }: {
   active: Workspace;
   workspaces: Workspace[];
-  isOwner?: boolean;
+  isOwner?: boolean; // accepted for caller compat; the top nav no longer owner-gates
 }) {
   const pathname = usePathname();
-  const nav = buildNav(workspaces.length >= 2, isOwner, hasCompetitorWatch(active.plan));
 
   return (
     <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
