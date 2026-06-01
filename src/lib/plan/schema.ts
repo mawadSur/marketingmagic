@@ -1,11 +1,16 @@
 import { z } from "zod";
-import { CHANNELS } from "@/lib/channels/registry";
+import { CHANNELS, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
 
 // Per-channel character cap, sourced from the registry so adding a channel
 // (or tweaking a limit) only touches one place. The generator's tool schema
 // hardcodes the upper bound (LinkedIn's 3000) because JSON Schema can't
 // express per-enum-value max-length; we re-validate per-channel here.
 const MAX_TEXT = Math.max(...Object.values(CHANNELS).map((c) => c.maxChars));
+
+// Derive the channel enum from the registry so it never drifts when a new
+// channel is added (the source of an earlier "Invalid enum value: facebook"
+// validation failure).
+const channelEnum = z.enum(ENABLED_CHANNELS as [ChannelId, ...ChannelId[]]);
 
 // ─────────────────────────────────────────────────────────────
 // Variant — one channel-tuned rendering of an idea.
@@ -17,7 +22,7 @@ const MAX_TEXT = Math.max(...Object.values(CHANNELS).map((c) => c.maxChars));
 // model can report *why* it skipped via `rationale`.
 export const planVariantSchema = z
   .object({
-    channel: z.enum(["x", "linkedin", "threads", "instagram", "bluesky"]),
+    channel: channelEnum,
     text: z.string().max(MAX_TEXT),
     skip: z.boolean().optional().default(false),
     rationale: z.string().min(1).max(1000),
@@ -81,7 +86,7 @@ export const planSchema = z
 // Kept so the system stays backward-compatible if the model regresses.
 function planVariantLegacyPostSchema() {
   return z.object({
-    channel: z.enum(["x", "linkedin", "threads", "instagram", "bluesky"]),
+    channel: channelEnum,
     text: z.string().min(1).max(MAX_TEXT),
     theme: z.string().min(1).max(60),
     suggested_scheduled_at: z.string().datetime(),
