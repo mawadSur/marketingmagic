@@ -26,6 +26,19 @@ RUN if [ -f /etc/ImageMagick-6/policy.xml ]; then \
         sed -i '/<policy domain="path" rights="none" pattern="@\*"/d' /etc/ImageMagick-6/policy.xml; \
     fi
 
+# GUARD: MoviePy 2.1.2 cannot read frames from ffmpeg >= 8 ("0 frames"), which
+# silently breaks EVERY render. apt on bookworm currently ships ffmpeg 5.x (safe),
+# but `apt-get install ffmpeg` is unpinned, so a future base-image refresh could
+# pull a breaking major. Fail the BUILD loudly here rather than ship a worker that
+# renders nothing. (Path-pinning via IMAGEIO_FFMPEG_EXE below ensures MoviePy uses
+# THIS ffmpeg, so checking it here is authoritative.)
+RUN ffmpeg_major="$(ffmpeg -version | sed -n 's/^ffmpeg version n\?\([0-9]\+\).*/\1/p')" \
+    && echo "Detected apt ffmpeg major version: ${ffmpeg_major:-unknown}" \
+    && if [ -z "$ffmpeg_major" ] || [ "$ffmpeg_major" -ge 8 ]; then \
+         echo "FATAL: ffmpeg major '${ffmpeg_major:-unknown}' is incompatible with MoviePy 2.1.2 (requires < 8); renders would read 0 frames. Pin a compatible ffmpeg before building." >&2; \
+         exit 1; \
+       fi
+
 # Install Python deps first for better layer caching.
 COPY requirements.txt ./
 RUN pip install --retries 3 --timeout 60 -r requirements.txt

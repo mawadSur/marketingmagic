@@ -111,19 +111,17 @@ elif not _moviepy_can_read_frames():
         f"ffmpeg); the BYO + functional tests still run and gate regressions. To "
         f"exercise the render in CI, pin a MoviePy-compatible ffmpeg build."
     )
-
-# Skip in CI: the render currently fails on a deeper MPT material-preprocess
-# bug — the *uploaded* material.mp4 reads 0 frames even with IMAGEIO_FFMPEG_EXE
-# pinned to apt ffmpeg (a freshly-synthesized clip reads fine), so the failure
-# is in preprocess_video/combine, not the ffmpeg binary. Tracked separately.
-# Skipping keeps the workflow green; the BYO + functional tests still gate
-# regressions, and the real render is exercised on the deployed Render worker.
-# Still runs locally (no CI env) so the preprocess bug can be debugged there.
-if _skip_reason is None and os.getenv("CI"):
+elif not (Path(__file__).parent.parent / "resource" / "fonts" / "DejaVuSans.ttf").exists():
+    # The render enables subtitles, which need the schema-default DejaVuSans.ttf.
+    # The vendored repo keeps fonts lean and doesn't track it; the Dockerfile and
+    # the CI workflow (mpt-byo-e2e.yml) install fonts-dejavu-core and copy it into
+    # resource/fonts/ before running. Without it the subtitle step fails the render.
+    # Skip (don't fail) when it's absent so local runs degrade cleanly — the probe
+    # above can pass via imageio's bundled ffmpeg even on an ffmpeg-8 host, which
+    # would otherwise let this test RUN locally and then die on the missing font.
     _skip_reason = (
-        "render smoke skipped in CI: known material-preprocess read bug "
-        "(uploaded material.mp4 -> 0 frames) under investigation; functional "
-        "tests still run and the real render is validated on the deployed worker."
+        "subtitle font resource/fonts/DejaVuSans.ttf not present; CI installs "
+        "fonts-dejavu-core and copies it in before running. Skipping local render."
     )
 
 pytestmark = pytest.mark.skipif(_skip_reason is not None, reason=_skip_reason or "")
