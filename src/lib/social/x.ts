@@ -17,6 +17,7 @@ import OAuth from "oauth-1.0a";
 import crypto from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { serverEnv } from "@/lib/env";
+import { RetryableError } from "./errors";
 
 // Primary credential shape: OAuth 2.0 PKCE-issued tokens.
 export interface XCredentials {
@@ -82,14 +83,23 @@ const TOKEN_URL = "https://api.twitter.com/2/oauth2/token";
 // Default scopes we ask for. tweet.write enables posting; offline.access is
 // required for X to issue a refresh_token (without it, the access token
 // expires in 2h with no way to renew). users.read powers /2/users/me for
-// handle resolution.
+// handle resolution. media.write is required for the OAuth 2.0 media-upload
+// endpoints (both single-shot images AND chunked video) — without it the X
+// API rejects /2/media/upload* for OAuth 2.0 tokens with a 403.
 //
-// If you add a feature that needs additional scopes (e.g. tweet.read for
-// metrics, like.write for engagement), append here AND have users re-auth.
+// NOTE: adding media.write changes the requested scope set, so every already-
+// connected OAuth 2.0 X account must RE-AUTH to obtain a token that carries it.
+// Until a re-auth prompt exists, X video stays flag-gated OFF (it's not in the
+// default VIDEO_PUBLISH_CHANNELS allowlist) and the OAuth 1.0a legacy path
+// (which never needed this scope) keeps working as a fallback for media.
+//
+// If you add a feature that needs additional scopes (e.g. like.write for
+// engagement), append here AND have users re-auth.
 export const X_OAUTH_SCOPES = [
   "tweet.read",
   "tweet.write",
   "users.read",
+  "media.write",
   "offline.access",
 ] as const;
 
@@ -350,13 +360,17 @@ export async function xPostThread(
   return { tweetIds };
 }
 
-// Media upload — endpoint depends on auth method. Legacy OAuth 1.0a creds
-// MUST use the v1.1 upload.twitter.com host (OAuth 2.0 Bearer rejected there
-// historically). OAuth 2.0 PKCE-issued tokens use /2/media/upload. Both
-// accept ≤5MB single-shot multipart; >5MB needs chunked INIT/APPEND/
-// FINALIZE which we don't support yet.
-const UPLOAD_URL_V2 = `${BASE_URL}/2/media/upload`;
-const UPLOAD_URL_V1 = "https://upload.twitter.com/1.1/media/upload.json";
+// Media upload — endpoint depends on auth method. Legacy OAuth 1.0a creds use
+// the v1.1 media-upload host; OAuth 2.0 PKCE-issued tokens use the v2 media
+// endpoints. Both accept ≤5MB single-shot multipart for images; video (and
+// images >5MB) needs the chunked INIT/APPEND/FINALIZE flow in xUploadVideo.
+//
+// X moved the public API onto the api.x.com host; the v1.1 upload.twitter.com
+// host was deprecated 2025-06-09. v1.1 media upload now lives under
+// api.x.com/1.1/media/upload.json.
+const X_API_HOST = "https://api.x.com";
+const UPLOAD_URL_V2 = `${X_API_HOST}/2/media/upload`;
+const UPLOAD_URL_V1 = `${X_API_HOST}/1.1/media/upload.json`;
 
 export async function xUploadMedia(
   creds: XCredentialsAny,
@@ -387,6 +401,137 @@ export async function xUploadMedia(
     throw new Error("X media upload returned no media id.");
   }
   return { media_id_string: id };
+}
+
+// ─── Video (chunked upload) ──────────────────────────────────────────────────
+//
+// Chunked sibling to xUploadMedia for video. INIT → APPEND (per ≤5MB chunk) →
+// FINALIZE → STATUS poll → media id, attached to a tweet via xPost(creds, text,
+// [media_id]). Uses the v2 media endpoints on api.x.com, which require the
+// media.write scope (see X_OAUTH_SCOPES) — so this path needs an OAuth 2.0
+// token re-issued WITH that scope. X video constraints: ≤140s duration
+// (Premium-only above that) and ≤512MB; we can only enforce the size cap here
+// (duration is server-validated and surfaced as a clear error on FINALIZE).
+const X_VIDEO_CHUNK_BYTES = 5 * 1024 * 1024; // ≤5MB per APPEND segment
+const X_VIDEO_MAX_BYTES = 512 * 1024 * 1024; // hard platform cap
+const X_VIDEO_STATUS_TIMEOUT_MS = 120 * 1000; // ~120s transcode budget
+
+export async function xUploadVideo(
+  creds: XCredentialsAny,
+  bytes: Uint8Array,
+  contentType: string,
+): Promise<{ media_id_string: string }> {
+  if (bytes.byteLength > X_VIDEO_MAX_BYTES) {
+    throw new Error(
+      `X video exceeds the 512MB limit (got ${(bytes.byteLength / 1024 / 1024).toFixed(0)}MB).`,
+    );
+  }
+  const baseHeaders = (url: string, method: "GET" | "POST") => xAuth(creds, url, method);
+
+  // INIT — declare the upload up front. media_category=tweet_video routes it
+  // through the video transcode pipeline.
+  const initUrl = `${X_API_HOST}/2/media/upload/initialize`;
+  const initRes = await fetch(initUrl, {
+    method: "POST",
+    headers: { ...baseHeaders(initUrl, "POST"), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      media_type: contentType || "video/mp4",
+      total_bytes: bytes.byteLength,
+      media_category: "tweet_video",
+    }),
+  });
+  if (!initRes.ok) {
+    throw new Error(`X video INIT failed (${initRes.status}): ${(await initRes.text()).slice(0, 400)}`);
+  }
+  const initJson = (await initRes.json()) as { data?: { id?: string } };
+  const mediaId = initJson.data?.id;
+  if (!mediaId) throw new Error("X video INIT returned no media id.");
+
+  // APPEND — upload each ≤5MB chunk in order, indexed by segment_index.
+  let segmentIndex = 0;
+  for (let offset = 0; offset < bytes.byteLength; offset += X_VIDEO_CHUNK_BYTES) {
+    const chunk = bytes.subarray(offset, Math.min(offset + X_VIDEO_CHUNK_BYTES, bytes.byteLength));
+    const appendUrl = `${X_API_HOST}/2/media/upload/${mediaId}/append`;
+    const form = new FormData();
+    form.append("media", new Blob([chunk as BlobPart], { type: contentType || "video/mp4" }));
+    form.append("segment_index", String(segmentIndex));
+    const appendRes = await fetch(appendUrl, {
+      method: "POST",
+      headers: { ...baseHeaders(appendUrl, "POST") },
+      body: form,
+    });
+    if (!appendRes.ok) {
+      throw new Error(
+        `X video APPEND (segment ${segmentIndex}) failed (${appendRes.status}): ${(await appendRes.text()).slice(0, 400)}`,
+      );
+    }
+    segmentIndex += 1;
+  }
+
+  // FINALIZE — closes the upload. The response may carry processing_info, in
+  // which case the media is NOT ready to attach until STATUS reports succeeded.
+  const finalizeUrl = `${X_API_HOST}/2/media/upload/${mediaId}/finalize`;
+  const finalizeRes = await fetch(finalizeUrl, {
+    method: "POST",
+    headers: { ...baseHeaders(finalizeUrl, "POST") },
+  });
+  if (!finalizeRes.ok) {
+    throw new Error(
+      `X video FINALIZE failed (${finalizeRes.status}): ${(await finalizeRes.text()).slice(0, 400)}`,
+    );
+  }
+  const finalizeJson = (await finalizeRes.json()) as {
+    data?: { id?: string; processing_info?: { state?: string; check_after_secs?: number } };
+  };
+  const processing = finalizeJson.data?.processing_info;
+  if (processing && processing.state !== "succeeded") {
+    await pollMediaStatus(creds, mediaId, processing.check_after_secs ?? 1);
+  }
+  return { media_id_string: mediaId };
+}
+
+// Poll the async media transcode (command=STATUS) until succeeded. X tells us
+// how long to wait between checks via check_after_secs. Throws on `failed`, and
+// throws RetryableError when the time budget is exhausted so the cron retries.
+//
+// Hardening path (NOT built now): persist the media_id and resume STATUS polling
+// on a later tick instead of re-running INIT/APPEND/FINALIZE.
+async function pollMediaStatus(
+  creds: XCredentialsAny,
+  mediaId: string,
+  firstWaitSecs: number,
+): Promise<void> {
+  const deadline = Date.now() + X_VIDEO_STATUS_TIMEOUT_MS;
+  let waitSecs = Math.max(1, firstWaitSecs);
+  for (;;) {
+    await new Promise((r) => setTimeout(r, waitSecs * 1000));
+    const params = new URLSearchParams({ command: "STATUS", media_id: mediaId });
+    const statusUrl = `${X_API_HOST}/2/media/upload?${params}`;
+    const res = await fetch(statusUrl, { headers: xAuth(creds, statusUrl, "GET") });
+    if (!res.ok) {
+      throw new Error(`X video STATUS failed (${res.status}): ${(await res.text()).slice(0, 400)}`);
+    }
+    const json = (await res.json()) as {
+      data?: { processing_info?: { state?: string; check_after_secs?: number; error?: { message?: string } } };
+    };
+    const info = json.data?.processing_info;
+    const state = info?.state;
+    if (state === "succeeded") return;
+    if (state === "failed") {
+      throw new Error(
+        `X video processing failed${info?.error?.message ? `: ${info.error.message}` : ""}.`,
+      );
+    }
+    // pending / in_progress → wait the server-recommended interval and retry.
+    waitSecs = Math.max(1, info?.check_after_secs ?? waitSecs);
+    if (Date.now() + waitSecs * 1000 >= deadline) {
+      throw new RetryableError(
+        `X video ${mediaId} still processing after ${Math.round(
+          X_VIDEO_STATUS_TIMEOUT_MS / 1000,
+        )}s; will retry next tick.`,
+      );
+    }
+  }
 }
 
 // Metrics pull. Tweet lookup with public + non-public metrics.

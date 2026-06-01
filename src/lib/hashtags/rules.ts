@@ -63,6 +63,15 @@ const POLICIES: Record<ChannelId, HashtagChannelRules> = {
       "Facebook: 0–2 hashtags. Tags add little reach on a Page — use only when load-bearing. Default to none.",
     showChips: true,
   },
+  tiktok: {
+    channel: "tiktok",
+    // [3, 6] — TikTok's discovery leans on hashtags; a focused niche mix plus
+    // one or two broad tags is the sweet spot. Engagement falls off past ~6.
+    recommendedCount: [3, 6],
+    notes:
+      "TikTok: 3–6 hashtags. Blend 1–2 broad discovery tags with niche, on-topic ones. Tags carry real reach here.",
+    showChips: true,
+  },
 };
 
 export function getChannelHashtagPolicy(channel: ChannelId): HashtagChannelRules {
@@ -80,6 +89,7 @@ export const COLD_START_SEEDS: Record<ChannelId, string[]> = {
   instagram: ["entrepreneur", "startup", "smallbusiness", "founder", "buildinpublic", "marketing", "creator", "smallbiz"],
   bluesky: [], // never recommend tags on Bluesky
   facebook: ["smallbusiness", "startup", "entrepreneur"],
+  tiktok: ["smallbusiness", "startup", "buildinpublic", "founder", "marketing"],
 };
 
 // Tag-mix tier annotation for IG chips. Pure UI hint — derived from a

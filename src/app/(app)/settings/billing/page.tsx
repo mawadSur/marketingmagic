@@ -10,6 +10,7 @@ export const dynamic = "force-dynamic";
 interface UsageRow {
   posts_generated: number;
   images_generated: number;
+  videos_generated: number;
 }
 
 export default async function BillingPage({
@@ -35,13 +36,14 @@ export default async function BillingPage({
   const month = currentMonthBucket();
   const { data: usageRow } = await svc
     .from("usage_counters")
-    .select("posts_generated, images_generated")
+    .select("posts_generated, images_generated, videos_generated")
     .eq("workspace_id", ws.id)
     .eq("month", month)
     .maybeSingle();
   const usage: UsageRow = {
     posts_generated: usageRow?.posts_generated ?? 0,
     images_generated: usageRow?.images_generated ?? 0,
+    videos_generated: usageRow?.videos_generated ?? 0,
   };
 
   const currentPlan = (wsRow?.plan ?? "hobby") as PlanId;
@@ -102,6 +104,11 @@ export default async function BillingPage({
               label="AI images"
               value={usage.images_generated}
               limit={currentTier.limits.imageGensPerMonth}
+            />
+            <UsageRow
+              label="Videos"
+              value={usage.videos_generated}
+              limit={currentTier.limits.videosPerMonth}
             />
           </div>
         </div>

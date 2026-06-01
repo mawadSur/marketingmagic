@@ -3,7 +3,7 @@ import type Stripe from "stripe";
 import { serverEnv } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { stripeClient, BillingNotConfiguredError } from "@/lib/billing/stripe";
-import { planForPriceId, type PlanId } from "@/lib/billing/tiers";
+import { planForPriceId, isOrgSeatPrice, type PlanId } from "@/lib/billing/tiers";
 
 // Stripe webhook endpoint. The Stripe Node SDK's constructEvent() works in
 // the Next.js Node runtime as long as we hand it the RAW body (NOT parsed
@@ -103,6 +103,120 @@ function extractPriceId(subscription: Stripe.Subscription): string | null {
   return item?.price?.id ?? null;
 }
 
+// ─── Org (agency) subscription handling ───────────────────────────────────
+// Phase C: an org holds ONE subscription priced per active client workspace.
+// A subscription event belongs to an ORG (not a workspace) when any of:
+//   * subscription.metadata.organization_id is set (we stamp this at checkout),
+//   * its price is the configured org seat price, or
+//   * its customer id maps to an organizations row.
+// We check those signals and, when matched, route to the org handler which
+// writes organizations.subscription_status / plan instead of a workspace.
+
+// Resolve an organization id from a subscription's identifiers. Mirrors
+// resolveWorkspaceId: metadata first (most reliable), then the customer id we
+// mirror onto organizations at checkout time.
+async function resolveOrganizationId(args: {
+  metadataOrganizationId?: string | null;
+  customerId?: string | null;
+}): Promise<string | null> {
+  if (args.metadataOrganizationId) return args.metadataOrganizationId;
+  if (!args.customerId) return null;
+  const svc = supabaseService();
+  const { data } = await svc
+    .from("organizations")
+    .select("id")
+    .eq("stripe_customer_id", args.customerId)
+    .maybeSingle();
+  return data?.id ?? null;
+}
+
+// True iff this subscription should be handled as an org subscription. Checks
+// the cheap signals (metadata, price) first; only falls back to a DB lookup by
+// customer id when neither is conclusive.
+async function isOrgSubscription(subscription: Stripe.Subscription): Promise<boolean> {
+  if (subscription.metadata?.organization_id) return true;
+  if (isOrgSeatPrice(extractPriceId(subscription))) return true;
+  const customerId =
+    typeof subscription.customer === "string" ? subscription.customer : subscription.customer?.id;
+  const orgId = await resolveOrganizationId({ customerId });
+  return orgId != null;
+}
+
+// Apply an org subscription's state to the organizations row: the org's
+// subscription_status drives whether inherited client workspaces keep the
+// agency plan (see entitlements.ts). The org always resolves to the 'agency'
+// plan while the subscription pays; a fully-cancelled sub drops it to 'hobby'
+// so inherited clients lose agency ceilings.
+async function applyOrgSubscriptionState(args: {
+  organizationId: string;
+  subscription: Stripe.Subscription | null;
+}): Promise<void> {
+  const svc = supabaseService();
+  const sub = args.subscription;
+
+  // No subscription (cancelled/deleted) → org back to hobby, status canceled.
+  if (!sub) {
+    const { error } = await svc
+      .from("organizations")
+      .update({
+        plan: "hobby",
+        stripe_subscription_id: null,
+        subscription_status: "canceled",
+      })
+      .eq("id", args.organizationId);
+    if (error) {
+      throw new Error(
+        `[stripe-webhook] failed to clear plan on organization ${args.organizationId}: ${error.message}`,
+      );
+    }
+    return;
+  }
+
+  const priceId = extractPriceId(sub);
+
+  // Loud warning when an org subscription's price isn't the configured org seat
+  // price — same silent-failure class as the workspace path. The org would be
+  // downgraded to hobby and every client workspace would lose agency ceilings,
+  // so make the unmatched price id visible in Vercel logs.
+  if (
+    priceId &&
+    !isOrgSeatPrice(priceId) &&
+    sub.status !== "canceled" &&
+    sub.status !== "incomplete_expired"
+  ) {
+    console.error(
+      `[stripe-webhook] org subscription ${sub.id} (org ${args.organizationId}) has price ` +
+        `${priceId} which is not STRIPE_PRICE_ORG_SEAT. The org is being downgraded to hobby, ` +
+        `which drops every client workspace to hobby ceilings. Fix: set STRIPE_PRICE_ORG_SEAT ` +
+        `on Vercel to match the org per-seat price id, then re-run the event from the Stripe Dashboard.`,
+    );
+  }
+
+  // A paying org subscription → agency plan. Canceled/expired → hobby even if
+  // the price still resolves, mirroring the workspace path.
+  const effectivePlan: PlanId =
+    sub.status === "canceled" || sub.status === "incomplete_expired"
+      ? "hobby"
+      : isOrgSeatPrice(priceId)
+        ? "agency"
+        : "hobby";
+
+  const { error } = await svc
+    .from("organizations")
+    .update({
+      plan: effectivePlan,
+      stripe_customer_id: typeof sub.customer === "string" ? sub.customer : sub.customer?.id,
+      stripe_subscription_id: sub.id,
+      subscription_status: sub.status,
+    })
+    .eq("id", args.organizationId);
+  if (error) {
+    throw new Error(
+      `[stripe-webhook] failed to update organization ${args.organizationId} to plan=${effectivePlan} (sub ${sub.id}, status ${sub.status}): ${error.message}`,
+    );
+  }
+}
+
 async function applySubscriptionState(args: {
   workspaceId: string;
   subscription: Stripe.Subscription | null;
@@ -181,13 +295,6 @@ async function applySubscriptionState(args: {
 async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session): Promise<void> {
   const customerId =
     typeof session.customer === "string" ? session.customer : session.customer?.id ?? null;
-  const metadataWorkspaceId = (session.metadata?.workspace_id as string | undefined) ?? null;
-
-  const workspaceId = await resolveWorkspaceId({ metadataWorkspaceId, customerId });
-  if (!workspaceId) {
-    // Unknown workspace — ack and move on so Stripe doesn't retry forever.
-    return;
-  }
 
   // Pull the actual subscription so we resolve the plan from a fresh price
   // rather than trusting checkout's line items snapshot.
@@ -198,12 +305,44 @@ async function handleCheckoutSessionCompleted(session: Stripe.Checkout.Session):
     subscription = session.subscription;
   }
 
+  // Org checkout stamps metadata.organization_id on both the session and the
+  // subscription; route those to the org handler. We trust the session metadata
+  // first (set on org-checkout), then fall back to inspecting the subscription.
+  const metadataOrganizationId =
+    (session.metadata?.organization_id as string | undefined) ?? null;
+  if (metadataOrganizationId || (subscription && (await isOrgSubscription(subscription)))) {
+    const organizationId = await resolveOrganizationId({
+      metadataOrganizationId,
+      customerId,
+    });
+    if (!organizationId) return; // Unknown org — ack so Stripe stops retrying.
+    await applyOrgSubscriptionState({ organizationId, subscription });
+    return;
+  }
+
+  const metadataWorkspaceId = (session.metadata?.workspace_id as string | undefined) ?? null;
+  const workspaceId = await resolveWorkspaceId({ metadataWorkspaceId, customerId });
+  if (!workspaceId) {
+    // Unknown workspace — ack and move on so Stripe doesn't retry forever.
+    return;
+  }
+
   await applySubscriptionState({ workspaceId, subscription });
 }
 
 async function handleSubscriptionUpsert(subscription: Stripe.Subscription): Promise<void> {
   const customerId =
     typeof subscription.customer === "string" ? subscription.customer : subscription.customer?.id;
+
+  if (await isOrgSubscription(subscription)) {
+    const metadataOrganizationId =
+      (subscription.metadata?.organization_id as string | undefined) ?? null;
+    const organizationId = await resolveOrganizationId({ metadataOrganizationId, customerId });
+    if (!organizationId) return;
+    await applyOrgSubscriptionState({ organizationId, subscription });
+    return;
+  }
+
   const metadataWorkspaceId =
     (subscription.metadata?.workspace_id as string | undefined) ?? null;
   const workspaceId = await resolveWorkspaceId({ metadataWorkspaceId, customerId });
@@ -214,6 +353,16 @@ async function handleSubscriptionUpsert(subscription: Stripe.Subscription): Prom
 async function handleSubscriptionDeleted(subscription: Stripe.Subscription): Promise<void> {
   const customerId =
     typeof subscription.customer === "string" ? subscription.customer : subscription.customer?.id;
+
+  if (await isOrgSubscription(subscription)) {
+    const metadataOrganizationId =
+      (subscription.metadata?.organization_id as string | undefined) ?? null;
+    const organizationId = await resolveOrganizationId({ metadataOrganizationId, customerId });
+    if (!organizationId) return;
+    await applyOrgSubscriptionState({ organizationId, subscription: null });
+    return;
+  }
+
   const metadataWorkspaceId =
     (subscription.metadata?.workspace_id as string | undefined) ?? null;
   const workspaceId = await resolveWorkspaceId({ metadataWorkspaceId, customerId });

@@ -1,0 +1,49 @@
+# MoneyPrinterTurbo — API/worker image (FastAPI render service).
+#
+# NOTE: the default `Dockerfile` launches the Streamlit WebUI. This image instead
+# runs the HTTP API (app.asgi:app) so it can act as a headless render worker behind
+# the Marketing Magic orchestrator. Bind is 0.0.0.0:$PORT for PaaS hosts
+# (Render/Railway inject $PORT); defaults to 8080 locally.
+FROM python:3.11-slim-bookworm
+
+WORKDIR /MoneyPrinterTurbo
+ENV PYTHONPATH="/MoneyPrinterTurbo" \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# System deps: ffmpeg (video encode/concat) + imagemagick (MoviePy TextClip / subtitles)
+# + git + fonts-dejavu-core (clean Latin subtitle font; the heavy CJK fonts were
+# dropped from the vendored worker to keep the repo lean).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        imagemagick \
+        ffmpeg \
+        fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
+# Allow ImageMagick to read @-paths used by MoviePy for subtitle rendering.
+RUN if [ -f /etc/ImageMagick-6/policy.xml ]; then \
+        sed -i '/<policy domain="path" rights="none" pattern="@\*"/d' /etc/ImageMagick-6/policy.xml; \
+    fi
+
+# Install Python deps first for better layer caching.
+COPY requirements.txt ./
+RUN pip install --retries 3 --timeout 60 -r requirements.txt
+
+# Copy the application source.
+COPY . .
+
+# Bundle the default subtitle font (schema default is DejaVuSans.ttf). MPT resolves
+# font_name within resource/fonts/, so place the apt-installed DejaVu there.
+RUN cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf resource/fonts/DejaVuSans.ttf
+
+# Scratch dirs for in-flight renders (also auto-created at runtime by utils.*_dir()).
+RUN mkdir -p storage/tasks storage/cache_videos storage/local_videos
+
+# PaaS provides $PORT; fall back to 8080 for local `docker run`.
+ENV PORT=8080
+EXPOSE 8080
+
+# Run the FastAPI app (NOT Streamlit). Single worker: the in-process task manager
+# owns the render thread pool, so multiple uvicorn workers would fragment the queue.
+CMD ["sh", "-c", "uvicorn app.asgi:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1"]

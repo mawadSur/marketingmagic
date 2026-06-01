@@ -5,6 +5,7 @@
 
 import { serverEnv } from "@/lib/env";
 import { MetaAppReviewPendingError } from "@/lib/interactions/errors";
+import { RetryableError } from "./errors";
 
 export interface ThreadsCredentials {
   accessToken: string;
@@ -118,11 +119,25 @@ export async function threadsPost(
   }
   const { id: containerId } = (await containerRes.json()) as { id: string };
 
-  // Step 2: publish. Meta says wait ~30s for IMAGE containers to process — we
-  // poll briefly with backoff to keep latency reasonable in the cron.
+  // Step 2: publish. IMAGE containers process server-side; poll the container
+  // to FINISHED instead of a blind fixed sleep so we publish as soon as it's
+  // ready (and surface a real error if Meta rejects the media).
   if (imageUrl) {
-    await new Promise((r) => setTimeout(r, 3000));
+    await pollContainerStatus(containerId, creds.accessToken, {
+      // Images finish in a few seconds; keep the budget tight.
+      initialDelayMs: 0,
+      intervalMs: 3000,
+      timeoutMs: 60 * 1000,
+    });
   }
+  return publishContainer(creds, containerId);
+}
+
+// Shared publish step: POST threads_publish with the container's creation_id.
+async function publishContainer(
+  creds: ThreadsCredentials,
+  containerId: string,
+): Promise<ThreadsPostResult> {
   const pubRes = await fetch(
     `${GRAPH}/${creds.userId}/threads_publish?creation_id=${containerId}&access_token=${encodeURIComponent(creds.accessToken)}`,
     { method: "POST" },
@@ -132,6 +147,95 @@ export async function threadsPost(
   }
   const pub = (await pubRes.json()) as { id: string };
   return { id: pub.id };
+}
+
+// ─── Video ───────────────────────────────────────────────────────────────────
+//
+// Threads ingests video by URL-pull (same as images): create a VIDEO container
+// pointing at the public Storage URL, wait for Meta's async transcode to reach
+// FINISHED, then publish. Video transcode is much slower than images, so Meta
+// recommends waiting ≥30s before the first status check, then polling ~1/min.
+
+export async function threadsPostVideo(
+  creds: ThreadsCredentials,
+  text: string,
+  videoUrl: string,
+): Promise<ThreadsPostResult> {
+  if (!videoUrl) throw new Error("Threads video post requires a public video URL.");
+  // Step 1: create the VIDEO container.
+  const containerParams = new URLSearchParams({
+    access_token: creds.accessToken,
+    media_type: "VIDEO",
+    video_url: videoUrl,
+    text,
+  });
+  const containerRes = await fetch(`${GRAPH}/${creds.userId}/threads?${containerParams}`, {
+    method: "POST",
+  });
+  if (!containerRes.ok) {
+    throw new Error(
+      `Threads video container failed (${containerRes.status}): ${await containerRes.text()}`,
+    );
+  }
+  const { id: containerId } = (await containerRes.json()) as { id: string };
+
+  // Step 2: poll to FINISHED. Wait ≥30s before the first check (Meta's
+  // guidance), then poll ~1/min up to ~5min.
+  await pollContainerStatus(containerId, creds.accessToken, {
+    initialDelayMs: 30 * 1000,
+    intervalMs: 60 * 1000,
+    timeoutMs: 5 * 60 * 1000,
+  });
+
+  // Step 3: publish.
+  return publishContainer(creds, containerId);
+}
+
+// Poll a Threads media container's processing status to a terminal state.
+// Returns on FINISHED, throws on ERROR/EXPIRED, and throws a RetryableError if
+// the time budget is exhausted so the cron leaves the post `scheduled` and
+// retries on the next tick rather than failing a transcode still in progress.
+//
+// Hardening path (NOT built now): persist the container id on the post row at
+// creation time and, on a later tick, resume from this poll + publish instead
+// of re-creating the container — avoids a duplicate URL-pull for a single slow
+// transcode.
+async function pollContainerStatus(
+  containerId: string,
+  token: string,
+  opts: { initialDelayMs: number; intervalMs: number; timeoutMs: number },
+): Promise<void> {
+  const deadline = Date.now() + opts.timeoutMs;
+  if (opts.initialDelayMs > 0) {
+    await new Promise((r) => setTimeout(r, opts.initialDelayMs));
+  }
+  for (;;) {
+    const res = await fetch(
+      `${GRAPH}/${containerId}?fields=status,error_message&access_token=${encodeURIComponent(token)}`,
+    );
+    if (!res.ok) {
+      throw new Error(`Threads container status failed (${res.status}): ${await res.text()}`);
+    }
+    const json = (await res.json()) as { status?: string; error_message?: string };
+    const state = json.status;
+    if (state === "FINISHED") return;
+    if (state === "ERROR" || state === "EXPIRED") {
+      throw new Error(
+        `Threads media processing failed (status=${state})${
+          json.error_message ? `: ${json.error_message}` : ""
+        }.`,
+      );
+    }
+    // IN_PROGRESS (or PUBLISHED, which shouldn't happen pre-publish) → keep going.
+    if (Date.now() + opts.intervalMs >= deadline) {
+      throw new RetryableError(
+        `Threads container ${containerId} still processing after ${Math.round(
+          opts.timeoutMs / 1000,
+        )}s; will retry next tick.`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, opts.intervalMs));
+  }
 }
 
 // ─── Metrics ───────────────────────────────────────────────────────────────

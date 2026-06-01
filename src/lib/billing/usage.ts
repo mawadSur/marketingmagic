@@ -11,28 +11,24 @@ import { currentMonthBucket } from "@/lib/billing/tiers";
 // same millisecond can clobber each other by `n` — acceptable for a
 // quota counter where the worst case is one free post per race.
 
-async function bumpCounter(
-  workspaceId: string,
-  column: "posts_generated" | "images_generated",
-  n: number,
-) {
+type UsageColumn = "posts_generated" | "images_generated" | "videos_generated";
+
+async function bumpCounter(workspaceId: string, column: UsageColumn, n: number) {
   if (n <= 0) return;
   const svc = supabaseService();
   const month = currentMonthBucket();
 
   const { data: existing } = await svc
     .from("usage_counters")
-    .select("posts_generated, images_generated")
+    .select("posts_generated, images_generated, videos_generated")
     .eq("workspace_id", workspaceId)
     .eq("month", month)
     .maybeSingle();
 
   if (existing) {
     const current = (existing[column] as number | null) ?? 0;
-    const patch =
-      column === "posts_generated"
-        ? { posts_generated: current + n }
-        : { images_generated: current + n };
+    const next = current + n;
+    const patch: Partial<Record<UsageColumn, number>> = { [column]: next };
     await svc
       .from("usage_counters")
       .update(patch)
@@ -46,6 +42,7 @@ async function bumpCounter(
     month,
     posts_generated: column === "posts_generated" ? n : 0,
     images_generated: column === "images_generated" ? n : 0,
+    videos_generated: column === "videos_generated" ? n : 0,
   });
 }
 
@@ -57,10 +54,17 @@ export async function incrementImagesGenerated(workspaceId: string, n: number): 
   await bumpCounter(workspaceId, "images_generated", n);
 }
 
+// P4: bump the monthly video-render counter. Called from the orchestrator
+// AFTER MPT accepts a render (so a transport failure isn't metered).
+export async function incrementVideosGenerated(workspaceId: string, n: number): Promise<void> {
+  await bumpCounter(workspaceId, "videos_generated", n);
+}
+
 export interface UsageSnapshot {
   month: string;
   postsGenerated: number;
   imagesGenerated: number;
+  videosGenerated: number;
 }
 
 export async function getUsageSnapshot(workspaceId: string): Promise<UsageSnapshot> {
@@ -68,7 +72,7 @@ export async function getUsageSnapshot(workspaceId: string): Promise<UsageSnapsh
   const month = currentMonthBucket();
   const { data } = await svc
     .from("usage_counters")
-    .select("posts_generated, images_generated")
+    .select("posts_generated, images_generated, videos_generated")
     .eq("workspace_id", workspaceId)
     .eq("month", month)
     .maybeSingle();
@@ -76,5 +80,6 @@ export async function getUsageSnapshot(workspaceId: string): Promise<UsageSnapsh
     month,
     postsGenerated: data?.posts_generated ?? 0,
     imagesGenerated: data?.images_generated ?? 0,
+    videosGenerated: data?.videos_generated ?? 0,
   };
 }

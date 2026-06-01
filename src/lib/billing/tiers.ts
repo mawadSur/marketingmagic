@@ -13,6 +13,12 @@ export interface TierLimits {
   channels: number;
   postsPerMonth: number;
   imageGensPerMonth: number;
+  // P4: monthly cap on BYO-key video renders (MoneyPrinterTurbo). 0 means the
+  // feature is off for the tier (Hobby), -1 means unlimited. Customers bring
+  // their own LLM + Pexels keys, so the only cost we're metering here is our
+  // orchestration + storage of the rendered mp4s — hence generous-but-finite
+  // ceilings on paid tiers and zero on free.
+  videosPerMonth: number;
   // Phase 2.6: gates /record (voice-memo workflow). Only Founder tier sees
   // the recorder; lower tiers see an upgrade CTA. We model it as a boolean
   // capability flag rather than a quota because Founder Mode is an entire
@@ -34,7 +40,7 @@ export const TIERS: Record<PlanId, Tier> = {
     id: "hobby",
     name: "Hobby",
     priceMonthly: 0,
-    limits: { channels: 1, postsPerMonth: 10, imageGensPerMonth: 0, voiceMemoRecorder: false },
+    limits: { channels: 1, postsPerMonth: 10, imageGensPerMonth: 0, videosPerMonth: 0, voiceMemoRecorder: false },
     blurb: "Free forever for solo creators trying it out.",
     features: [
       "1 connected channel",
@@ -51,7 +57,7 @@ export const TIERS: Record<PlanId, Tier> = {
     id: "pro",
     name: "Solo",
     priceMonthly: 29,
-    limits: { channels: -1, postsPerMonth: 200, imageGensPerMonth: 100, voiceMemoRecorder: false },
+    limits: { channels: -1, postsPerMonth: 200, imageGensPerMonth: 100, videosPerMonth: 20, voiceMemoRecorder: false },
     blurb: "One brand, every channel, real volume. The default for solo creators.",
     features: [
       "Unlimited connected channels",
@@ -64,7 +70,7 @@ export const TIERS: Record<PlanId, Tier> = {
     id: "agency",
     name: "Agency",
     priceMonthly: 99,
-    limits: { channels: -1, postsPerMonth: 500, imageGensPerMonth: 500, voiceMemoRecorder: false },
+    limits: { channels: -1, postsPerMonth: 500, imageGensPerMonth: 500, videosPerMonth: 60, voiceMemoRecorder: false },
     blurb: "Multi-client workspaces, higher ceilings, priority support.",
     features: [
       "Everything in Pro",
@@ -82,7 +88,7 @@ export const TIERS: Record<PlanId, Tier> = {
     id: "founder",
     name: "Founder",
     priceMonthly: 149,
-    limits: { channels: -1, postsPerMonth: 1000, imageGensPerMonth: 300, voiceMemoRecorder: true },
+    limits: { channels: -1, postsPerMonth: 1000, imageGensPerMonth: 300, videosPerMonth: 100, voiceMemoRecorder: true },
     blurb: "Voice-memo to a week of posts. For solo operators who'd rather talk than type.",
     features: [
       "Everything in Pro",
@@ -130,6 +136,36 @@ export function priceIdForPlan(plan: PlanId): string | null {
   if (plan === "pro") return process.env.STRIPE_PRICE_PRO ?? null;
   if (plan === "agency") return process.env.STRIPE_PRICE_AGENCY ?? null;
   if (plan === "founder") return process.env.STRIPE_PRICE_FOUNDER ?? null;
+  return null;
+}
+
+// ─── Org (agency) billing ────────────────────────────────────────────────
+// Phase C: the org holds ONE Stripe subscription whose `quantity` equals the
+// number of active client workspaces. It is priced on a single per-seat price
+// (STRIPE_PRICE_ORG_SEAT) that is distinct from the solo plan prices above so
+// the webhook can tell an org subscription apart from a solo one purely by
+// price id. The org always resolves to the 'agency' plan — clients inherit the
+// agency tier's ceilings (see entitlements.ts). Read lazily, like the solo
+// prices, so a missing env var degrades gracefully instead of crashing.
+
+// The per-seat price id for the org subscription, or null when unset.
+export function orgSeatPriceId(): string | null {
+  return process.env.STRIPE_PRICE_ORG_SEAT ?? null;
+}
+
+// True iff `priceId` is the configured org per-seat price. Used by the webhook
+// to route a subscription event to the org handler vs the workspace handler.
+export function isOrgSeatPrice(priceId: string | null | undefined): boolean {
+  if (!priceId) return false;
+  const seat = orgSeatPriceId();
+  return Boolean(seat && priceId === seat);
+}
+
+// Resolves an org subscription's price id to the org's plan. The org seat price
+// maps to 'agency' (the only org tier today); any other price returns null so
+// the webhook can log loudly, mirroring planForPriceId for the solo path.
+export function planForOrgPriceId(priceId: string | null | undefined): PlanId | null {
+  if (isOrgSeatPrice(priceId)) return "agency";
   return null;
 }
 

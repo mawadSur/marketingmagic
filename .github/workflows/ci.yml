@@ -1,0 +1,115 @@
+name: ci
+
+# Verifies the app on every push + PR: typecheck, production build, the Vitest
+# unit/integration suite (video pipeline + billing + env flags), and the
+# Playwright e2e suite. Mirrors how the cron workflows pull their config from
+# repo secrets — the e2e job only runs when the Supabase secrets are present so
+# forks without secrets skip it cleanly instead of red-failing.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Fast lane: typecheck + build + unit tests. No secrets, no browser. ──────
+  build-and-unit:
+    name: typecheck · build · vitest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Placeholder env so `next build` and serverEnv() shape-validation pass
+    # without real credentials. These never leave the runner and aren't used to
+    # reach any live service — the video pages are force-dynamic and the unit
+    # suite mocks every collaborator, so no real network call is made.
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+      SUPABASE_SERVICE_ROLE_KEY: placeholder-service-key
+      ANTHROPIC_API_KEY: placeholder-anthropic-key
+      CRON_SECRET: placeholder-cron-secret-0123456789
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Unit + integration tests (Vitest)
+        run: npm test
+
+  # ── E2E lane: Playwright against `next dev`. Needs a real Supabase project ──
+  # (it creates/deletes throwaway users via the service role), so it only runs
+  # when the secrets are configured. Skipped (not failed) otherwise.
+  e2e:
+    name: playwright e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: build-and-unit
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Guard — skip when Supabase secrets are absent
+        id: guard
+        run: |
+          if [ -z "$NEXT_PUBLIC_SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::notice::Supabase secrets not configured — skipping Playwright e2e."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.guard.outputs.run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.guard.outputs.run == 'true'
+        run: npm ci
+
+      - name: Install Playwright browser (chromium)
+        if: steps.guard.outputs.run == 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright e2e
+        if: steps.guard.outputs.run == 'true'
+        # playwright.config.ts boots `npm run dev` itself (webServer) and waits
+        # on the base URL, so we don't start the server separately.
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: ${{ always() && steps.guard.outputs.run == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore

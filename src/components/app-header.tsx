@@ -21,6 +21,10 @@ const baseNav = [
   // mental model is: paste a source → generate a cluster → approve in queue.
   { href: "/sources", label: "Sources" },
   { href: "/queue", label: "Queue" },
+  // Phase 4 (P4) — BYO-key video generation. Sits after Queue because a
+  // rendered video is another piece of content that flows into the same
+  // approve-and-ship pipeline.
+  { href: "/video", label: "Video" },
   // Phase 4.5 — Reply Inbox + Engagement Assistant. Lives between Queue
   // and Brief: queue is "ship our content", inbox is "respond to theirs."
   // Brief sits right after so the user can adjust voice if the inbox
@@ -28,6 +32,8 @@ const baseNav = [
   { href: "/inbox", label: "Inbox" },
   { href: "/settings/brief", label: "Brief" },
   { href: "/settings/channels", label: "Channels" },
+  // P4 — BYO LLM + Pexels credential management for the video pipeline.
+  { href: "/settings/video-keys", label: "Video keys" },
   { href: "/settings/events", label: "Events" },
   { href: "/integrations", label: "Integrations" },
   { href: "/settings/billing", label: "Billing" },

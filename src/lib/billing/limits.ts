@@ -1,12 +1,13 @@
 import { supabaseService } from "@/lib/supabase/service";
 import { tierFor, type PlanId } from "@/lib/billing/tiers";
 import { getUsageSnapshot } from "@/lib/billing/usage";
+import { resolvePlanForWorkspace } from "@/lib/billing/entitlements";
 
 // Typed error so callers can `catch (err) { if (err instanceof QuotaExceededError) ... }`
 // and surface an upgrade nudge instead of leaking the raw message. The
 // `kind` distinguishes which quota tripped so the UI can deep-link the
 // right CTA.
-export type QuotaKind = "posts" | "images" | "channels";
+export type QuotaKind = "posts" | "images" | "channels" | "videos";
 
 export class QuotaExceededError extends Error {
   readonly kind: QuotaKind;
@@ -27,16 +28,11 @@ export class QuotaExceededError extends Error {
   }
 }
 
+// Resolves the plan that governs this workspace's quotas. Delegates to the
+// entitlement resolver: solo workspaces use their own plan (unchanged), client
+// workspaces of an org inherit the org's plan. See lib/billing/entitlements.ts.
 async function getPlanForWorkspace(workspaceId: string): Promise<PlanId> {
-  const svc = supabaseService();
-  const { data } = await svc
-    .from("workspaces")
-    .select("plan")
-    .eq("id", workspaceId)
-    .maybeSingle();
-  // Default to hobby if the row is missing (shouldn't happen for an
-  // authenticated workspace, but be defensive).
-  return (data?.plan as PlanId | undefined) ?? "hobby";
+  return resolvePlanForWorkspace(workspaceId);
 }
 
 export async function assertWithinPostQuota(workspaceId: string, requested = 1): Promise<void> {
@@ -76,6 +72,35 @@ export async function assertWithinImageQuota(workspaceId: string, requested = 1)
       current: usage.imagesGenerated,
       limit,
       message: `You've used ${usage.imagesGenerated} / ${limit} AI images this month. Upgrade in Settings → Billing.`,
+    });
+  }
+}
+
+// P4: monthly cap on BYO-key video renders. Mirrors assertWithinImageQuota:
+// a limit of 0 means the tier doesn't include video at all (Hobby), -1 means
+// unlimited. Called from the orchestrator BEFORE the MPT POST so we never
+// enqueue a render the workspace isn't entitled to.
+export async function assertWithinVideoQuota(workspaceId: string, requested = 1): Promise<void> {
+  const plan = await getPlanForWorkspace(workspaceId);
+  const limit = tierFor(plan).limits.videosPerMonth;
+  if (limit === -1) return;
+  if (limit === 0) {
+    throw new QuotaExceededError({
+      kind: "videos",
+      plan,
+      current: 0,
+      limit: 0,
+      message: `Video generation is not included in the ${plan} plan. Upgrade in Settings → Billing.`,
+    });
+  }
+  const usage = await getUsageSnapshot(workspaceId);
+  if (usage.videosGenerated + requested > limit) {
+    throw new QuotaExceededError({
+      kind: "videos",
+      plan,
+      current: usage.videosGenerated,
+      limit,
+      message: `You've used ${usage.videosGenerated} / ${limit} video renders this month. Upgrade in Settings → Billing.`,
     });
   }
 }

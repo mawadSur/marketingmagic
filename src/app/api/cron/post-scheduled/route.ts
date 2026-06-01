@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { serverEnv } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { dispatchPost, type PostMediaItem } from "@/lib/social/dispatch";
+import { isRetryableError } from "@/lib/social/errors";
 import { readThreadMeta } from "@/lib/threads/schema";
 import { postThread } from "@/lib/threads/post";
 import { loadFreshXCredentials, type XCredentials } from "@/lib/social/x";
@@ -12,6 +13,15 @@ import { loadFreshXCredentials, type XCredentials } from "@/lib/social/x";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// P3: per-channel video publishing polls async platform transcode (30s–5min).
+// 60s is the Vercel Hobby function ceiling (this project has no Pro `functions`
+// config in vercel.json). Each video uploader keeps its own poll budget safely
+// under this and throws RetryableError if it can't reach a terminal state in
+// time — the cron then leaves the post `scheduled` (see the retry branch in
+// handle()) so the NEXT tick resumes, rather than failing a render that's still
+// processing on the platform's side. Bump to 300 if/when this project moves to
+// Vercel Pro (and widen the per-channel timeouts to match).
+export const maxDuration = 60;
 
 const BATCH = 25;
 
@@ -208,12 +218,18 @@ async function handle(req: NextRequest) {
 
       results.push({ id: post.id, status: "posted" });
     } catch (err) {
-      await markFailed(post.id, err instanceof Error ? err.message : "unknown error");
-      results.push({
-        id: post.id,
-        status: "failed",
-        reason: err instanceof Error ? err.message : "unknown",
-      });
+      const reason = err instanceof Error ? err.message : "unknown error";
+      // Retryable = async transcode hasn't finished within this tick's budget.
+      // Leave the post `scheduled` (don't mark failed) so the next cron tick
+      // retries; the platform keeps transcoding in the background. We don't
+      // touch the row at all — it's still scheduled and `scheduled_at` is in
+      // the past, so it requalifies for the next batch automatically.
+      if (isRetryableError(err)) {
+        results.push({ id: post.id, status: "skipped", reason: `retry next tick: ${reason}` });
+        continue;
+      }
+      await markFailed(post.id, reason);
+      results.push({ id: post.id, status: "failed", reason });
     }
   }
 

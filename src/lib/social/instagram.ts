@@ -13,9 +13,21 @@
 //   - Short token:  https://api.instagram.com/oauth/access_token
 //   - Long token:   https://graph.instagram.com/access_token?grant_type=ig_exchange_token
 //   - Graph base:   https://graph.instagram.com
+//
+// NOTE (Page-picker, 2026-05-31): Facebook now has a multi-Page picker
+// (/settings/channels/facebook/select-target) so an agency operator can map a
+// specific Page to the active client workspace. Instagram does NOT need an
+// analogous picker under THIS flow: the Instagram-Login token exchange resolves
+// exactly one IG Business account (`igUserId`) — there is no candidate set to
+// choose from. The same is true for Threads (one Threads user per token). A
+// picker would only become relevant if we migrated IG back to the
+// Facebook-Login-via-Pages path (list Pages → their linked IG Business
+// accounts, multiple of which one operator could manage); if/when we do that,
+// mirror facebook.ts (FacebookPageCandidate + a pending-row stash) here.
 
 import { serverEnv } from "@/lib/env";
 import { MetaAppReviewPendingError } from "@/lib/interactions/errors";
+import { RetryableError } from "./errors";
 
 export interface InstagramCredentials {
   accessToken: string;
@@ -139,10 +151,62 @@ export async function instagramPost(
   if (!cRes.ok) throw new Error(`IG container failed (${cRes.status}): ${await cRes.text()}`);
   const { id: containerId } = (await cRes.json()) as { id: string };
 
-  // Brief delay for image processing on Meta's side.
-  await new Promise((r) => setTimeout(r, 3000));
+  // Poll the container to FINISHED rather than a blind sleep — images finish in
+  // a couple seconds but publishing before FINISHED returns HTTP 400.
+  await pollContainerStatus(containerId, creds.accessToken, {
+    initialDelayMs: 0,
+    intervalMs: 3000,
+    timeoutMs: 60 * 1000,
+  });
+  return publishContainer(creds, containerId);
+}
 
-  // Publish.
+// ─── Video (Reels) ───────────────────────────────────────────────────────────
+//
+// IG video = Reels only. There is no feed-video container type on the Instagram
+// Graph API — REELS is the single video media_type. Same URL-pull + container +
+// poll + publish shape as images, but transcode is slower so the poll budget is
+// larger. `share_to_feed` surfaces the Reel on the main profile grid too.
+
+export async function instagramPostReel(
+  creds: InstagramCredentials,
+  caption: string,
+  videoUrl: string,
+  opts?: { shareToFeed?: boolean; coverUrl?: string },
+): Promise<InstagramPostResult> {
+  if (!videoUrl) throw new Error("Instagram Reel requires a public video URL.");
+  // Step 1: create the REELS container.
+  const containerParams = new URLSearchParams({
+    media_type: "REELS",
+    video_url: videoUrl,
+    caption,
+    access_token: creds.accessToken,
+  });
+  if (opts?.shareToFeed !== undefined) {
+    containerParams.set("share_to_feed", String(opts.shareToFeed));
+  }
+  if (opts?.coverUrl) containerParams.set("cover_url", opts.coverUrl);
+
+  const cRes = await fetch(`${GRAPH}/${creds.igUserId}/media?${containerParams}`, { method: "POST" });
+  if (!cRes.ok) throw new Error(`IG reel container failed (${cRes.status}): ${await cRes.text()}`);
+  const { id: containerId } = (await cRes.json()) as { id: string };
+
+  // Step 2: poll to FINISHED. Reels transcode takes longer than images.
+  await pollContainerStatus(containerId, creds.accessToken, {
+    initialDelayMs: 5000,
+    intervalMs: 8000,
+    timeoutMs: 5 * 60 * 1000,
+  });
+
+  // Step 3: publish.
+  return publishContainer(creds, containerId);
+}
+
+// Shared publish step.
+async function publishContainer(
+  creds: InstagramCredentials,
+  containerId: string,
+): Promise<InstagramPostResult> {
   const pRes = await fetch(
     `${GRAPH}/${creds.igUserId}/media_publish?creation_id=${containerId}&access_token=${encodeURIComponent(creds.accessToken)}`,
     { method: "POST" },
@@ -150,6 +214,48 @@ export async function instagramPost(
   if (!pRes.ok) throw new Error(`IG publish failed (${pRes.status}): ${await pRes.text()}`);
   const pub = (await pRes.json()) as { id: string };
   return { id: pub.id };
+}
+
+// Poll an IG media container's status_code to a terminal state. Returns on
+// FINISHED, throws on ERROR/EXPIRED, and throws RetryableError when the time
+// budget is exhausted so the cron leaves the post `scheduled` and retries next
+// tick rather than failing a transcode still in progress. Publishing before
+// FINISHED yields HTTP 400, so we never publish from here.
+//
+// Hardening path (NOT built now): persist the container id on the post row and
+// resume polling + publish on a later tick instead of re-creating the container.
+async function pollContainerStatus(
+  containerId: string,
+  token: string,
+  opts: { initialDelayMs: number; intervalMs: number; timeoutMs: number },
+): Promise<void> {
+  const deadline = Date.now() + opts.timeoutMs;
+  if (opts.initialDelayMs > 0) {
+    await new Promise((r) => setTimeout(r, opts.initialDelayMs));
+  }
+  for (;;) {
+    const res = await fetch(
+      `${GRAPH}/${containerId}?fields=status_code&access_token=${encodeURIComponent(token)}`,
+    );
+    if (!res.ok) {
+      throw new Error(`IG container status failed (${res.status}): ${await res.text()}`);
+    }
+    const json = (await res.json()) as { status_code?: string };
+    const state = json.status_code;
+    if (state === "FINISHED") return;
+    if (state === "ERROR" || state === "EXPIRED") {
+      throw new Error(`Instagram media processing failed (status_code=${state}).`);
+    }
+    // IN_PROGRESS (or PUBLISHED, unexpected pre-publish) → keep polling.
+    if (Date.now() + opts.intervalMs >= deadline) {
+      throw new RetryableError(
+        `Instagram container ${containerId} still processing after ${Math.round(
+          opts.timeoutMs / 1000,
+        )}s; will retry next tick.`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, opts.intervalMs));
+  }
 }
 
 // ─── Metrics ───────────────────────────────────────────────────────────────
