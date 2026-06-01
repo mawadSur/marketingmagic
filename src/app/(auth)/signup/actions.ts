@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { supabaseServer } from "@/lib/supabase/server";
 import { siteUrl } from "@/lib/env";
+import { isValidRefParam, setPendingRefCookie } from "@/lib/growth/referrals";
 
 export type SignupActionState = { error: string | null; info: string | null };
 
@@ -20,6 +21,11 @@ const schema = z.object({
     .max(2000)
     .optional()
     .nullable(),
+  // PLG: optional referral code (?ref=<code>). Stashed in an HTTP-only cookie
+  // so it survives email confirmation and is attributed at workspace creation.
+  // A malformed value is ignored, never rejected — a bad ref must not block
+  // signup.
+  ref: z.string().max(32).optional().nullable(),
 });
 
 export async function signupAction(
@@ -30,9 +36,18 @@ export async function signupAction(
     email: formData.get("email"),
     password: formData.get("password"),
     invite: formData.get("invite") || null,
+    ref: formData.get("ref") || null,
   });
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid input.", info: null };
+  }
+
+  // PLG: persist the referral code (if any + well-formed) before we hand off to
+  // Supabase. attributeWorkspaceCreation reads it back when the first workspace
+  // is created. Invite signups skip this — they join an existing workspace and
+  // never create one, so there's nothing to attribute.
+  if (!parsed.data.invite && isValidRefParam(parsed.data.ref)) {
+    await setPendingRefCookie(parsed.data.ref);
   }
 
   // For invite signups we send the email-confirm link to the invite page
