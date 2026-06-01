@@ -20,6 +20,9 @@ export interface VideoJobRow {
   progress: number;
   storage_path: string | null;
   failure_reason: string | null;
+  // Reference-image video (bet ④) — the chosen reference photo's storage path
+  // in the `reference-image` bucket. Null for MPT jobs (added in migration 030).
+  reference_image_path: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -28,6 +31,9 @@ export interface CreateJobInput {
   workspaceId: string;
   socialAccountId?: string | null;
   params: Json;
+  // Reference-image video (bet ④) — the chosen reference photo path. Omitted by
+  // the MPT orchestrator, set by the reference-video orchestrator.
+  referenceImagePath?: string | null;
 }
 
 // Insert a fresh job in `pending` state. Returns the new row.
@@ -40,6 +46,7 @@ export async function createJob(input: CreateJobInput): Promise<VideoJobRow> {
       social_account_id: input.socialAccountId ?? null,
       params: input.params,
       status: "pending",
+      ...(input.referenceImagePath ? { reference_image_path: input.referenceImagePath } : {}),
     })
     .select("*")
     .single();

@@ -1231,6 +1231,8 @@ export interface Database {
           progress: number;
           storage_path: string | null;
           failure_reason: string | null;
+          // Reference-image video (bet ④) — migration 030. Null for MPT jobs.
+          reference_image_path: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -1245,6 +1247,7 @@ export interface Database {
           progress?: number;
           storage_path?: string | null;
           failure_reason?: string | null;
+          reference_image_path?: string | null;
         };
         Update: Partial<{
           social_account_id: string | null;
@@ -1255,6 +1258,7 @@ export interface Database {
           progress: number;
           storage_path: string | null;
           failure_reason: string | null;
+          reference_image_path: string | null;
         }>;
         Relationships: [];
       };
