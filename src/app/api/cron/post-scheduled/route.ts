@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { serverEnv } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { dispatchPost, type PostMediaItem } from "@/lib/social/dispatch";
+import { applyAttribution } from "@/lib/growth/attribution";
 import { isRetryableError } from "@/lib/social/errors";
 import { readThreadMeta } from "@/lib/threads/schema";
 import { postThread } from "@/lib/threads/post";
@@ -186,11 +187,14 @@ async function handle(req: NextRequest) {
 
     try {
       const media = (post.media ?? []) as unknown as PostMediaItem[];
+      // PLG free-tier attribution: append "Made with marketingmagic" for hobby
+      // workspaces with the toggle on; otherwise text is unchanged.
+      const text = await applyAttribution(svc, post.workspace_id, post.text);
       const sent = await dispatchPost(
         svc,
         post.channel,
         account.credentials,
-        post.text,
+        text,
         media,
         post.social_account_id,
       );

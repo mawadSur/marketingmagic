@@ -6,6 +6,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseService } from "@/lib/supabase/service";
 import { slugify } from "@/lib/slug";
 import { setActiveWorkspaceCookie } from "@/lib/workspace";
+import { attributeWorkspaceCreation } from "@/lib/growth/referrals";
 
 export type CreateWorkspaceState = { error: string | null };
 
@@ -27,12 +28,22 @@ export async function createWorkspaceAction(
   const baseSlug = slugify(parsed.data.name) || "workspace";
   const slug = await uniqueSlug(baseSlug);
 
-  const { error } = await supabase.from("workspaces").insert({
-    name: parsed.data.name,
-    slug,
-    owner_id: user.id,
-  });
-  if (error) return { error: error.message };
+  const { data: created, error } = await supabase
+    .from("workspaces")
+    .insert({
+      name: parsed.data.name,
+      slug,
+      owner_id: user.id,
+    })
+    .select("id")
+    .single();
+  if (error || !created) return { error: error?.message ?? "Could not create workspace." };
+
+  // PLG: attribute this workspace to a referrer if the visitor arrived with a
+  // ?ref code at signup. No-op when there's no pending ref / unknown code /
+  // self-referral; never throws (a growth side-effect must not block
+  // onboarding).
+  await attributeWorkspaceCreation(created.id);
 
   await setActiveWorkspaceCookie(slug);
   // First-time setup: channels come before brief — without a connected

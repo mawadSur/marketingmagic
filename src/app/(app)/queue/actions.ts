@@ -14,6 +14,7 @@ import type { RejectionReason } from "@/lib/db/types";
 import { runQuickExperiment } from "@/lib/experiments/run";
 import { MAX_VARIANT_COUNT, MIN_VARIANT_COUNT } from "@/lib/experiments/generate";
 import { dispatchPost, type PostMediaItem } from "@/lib/social/dispatch";
+import { applyAttribution } from "@/lib/growth/attribution";
 import { isRetryableError } from "@/lib/social/errors";
 import { readThreadMeta } from "@/lib/threads/schema";
 
@@ -743,11 +744,14 @@ export async function publishNowAction(postId: string): Promise<ActionResult> {
 
   try {
     const media = ((post.media ?? []) as unknown) as PostMediaItem[];
+    // PLG free-tier attribution: append "Made with marketingmagic" for hobby
+    // workspaces with the toggle on; otherwise text is unchanged.
+    const text = await applyAttribution(svc, post.workspace_id, post.text);
     const sent = await dispatchPost(
       svc,
       post.channel,
       account.credentials,
-      post.text,
+      text,
       media,
       post.social_account_id,
     );
