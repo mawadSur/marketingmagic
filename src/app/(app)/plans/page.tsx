@@ -3,6 +3,7 @@ import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
 import { Badge, statusBadgeLabel, statusBadgeVariant } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import { SectionLinks } from "@/components/ui/section-links";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,13 @@ export default async function PlansPage() {
           New plan
         </Link>
       </header>
+
+      <SectionLinks
+        links={[
+          { href: "/goals", label: "Goals" },
+          { href: "/sources", label: "Sources" },
+        ]}
+      />
 
       {plans && plans.length > 0 ? (
         <ul className="divide-y rounded-lg border bg-card">

@@ -9,6 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChannelBadge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { EngagementChart } from "./engagement-chart";
+import { SectionLinks } from "@/components/ui/section-links";
+import { hasCompetitorWatch } from "@/lib/billing/tiers";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +34,13 @@ export default async function AnalyticsPage() {
   );
   const avgRate = totals.impressions > 0 ? totals.engagement / totals.impressions : 0;
 
+  // Competitors + Portfolio were pulled out of the top nav; surface them here
+  // (Competitors is Founder-tier-gated).
+  const insightLinks = [
+    ...(hasCompetitorWatch(ws.plan) ? [{ href: "/competitors", label: "Competitors" }] : []),
+    { href: "/portfolio", label: "Portfolio" },
+  ];
+
   return (
     <div className="space-y-10">
       <header className="space-y-1">
@@ -41,6 +50,8 @@ export default async function AnalyticsPage() {
           Aggregated across every connected channel. Metrics refresh hourly.
         </p>
       </header>
+
+      <SectionLinks links={insightLinks} />
 
       <section className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
         <Kpi label="Posts" value={totals.posts.toLocaleString()} />
