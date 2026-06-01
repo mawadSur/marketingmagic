@@ -1,0 +1,51 @@
+name: cron / poll-video-jobs
+
+# Vercel Hobby allows only daily crons, so we run the every-2-minute video
+# poller from GitHub Actions and just hit the public route. The route is
+# auth-gated by Bearer CRON_SECRET and no-ops cleanly when MPT is unset.
+# (vercel.json also registers this path so Pro plans can drive it natively.)
+
+on:
+  schedule:
+    - cron: "*/2 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: cron-poll-video-jobs
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Poll MPT render jobs; pull finished mp4s into storage + draft posts
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$SITE_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::Missing SITE_URL or CRON_SECRET repo secret."
+            exit 1
+          fi
+          RESPONSE_FILE="$(mktemp)"
+          HTTP_CODE="$(curl --silent --show-error \
+               --max-time 60 \
+               -o "$RESPONSE_FILE" \
+               -w '%{http_code}' \
+               -H "Authorization: Bearer $CRON_SECRET" \
+               -X POST \
+               "$SITE_URL/api/cron/poll-video-jobs")"
+          echo "HTTP status: $HTTP_CODE"
+          echo "::group::Response body"
+          jq . "$RESPONSE_FILE" 2>/dev/null || cat "$RESPONSE_FILE"
+          echo
+          echo "::endgroup::"
+          SUMMARY="$(jq -c 'to_entries | map(select(.value | type == "number")) | from_entries' "$RESPONSE_FILE" 2>/dev/null)"
+          if [ -n "$SUMMARY" ] && [ "$SUMMARY" != "{}" ]; then
+            echo "::notice title=cron summary::$SUMMARY"
+          fi
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "::error::cron route returned HTTP $HTTP_CODE"
+            exit 1
+          fi

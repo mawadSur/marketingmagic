@@ -205,6 +205,8 @@ const HANDLE_PATTERNS: Record<ChannelId, RegExp> = {
   linkedin: /^[a-z0-9-]{3,100}$/,
   bluesky: /^[a-z0-9.-]{1,253}$/,
   facebook: /^[a-z0-9.]{1,80}$/,
+  // TikTok usernames: letters, digits, underscores and periods, 1–24 chars.
+  tiktok: /^[a-z0-9._]{1,24}$/,
 };
 
 export function normaliseHandle(raw: string): string {

@@ -1,0 +1,44 @@
+name: BYO multi-tenant + render E2E
+
+# Verifies the bring-your-own-key multi-tenant patch (test/test_byo.py) AND a
+# real, end-to-end render (test/test_render_smoke.py). The render test is skipped
+# on hosts with ffmpeg >= 8 (MoviePy 2.1.2 reads 0 frames there); ubuntu-latest
+# ships apt ffmpeg 5.x/6.x, so it actually runs here. Edge-TTS needs outbound
+# network, which GitHub-hosted runners have.
+
+on:
+  push:
+    branches:
+      - feature/byo-multitenant-api
+  pull_request:
+    branches:
+      - feature/byo-multitenant-api
+  workflow_dispatch:
+
+jobs:
+  byo-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system render dependencies (ffmpeg + imagemagick)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg imagemagick
+
+      - name: Show ffmpeg version (must be < 8 for the render smoke to run)
+        run: ffmpeg -version | head -1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sync dependencies (uv)
+        run: uv sync
+
+      - name: Run BYO + render E2E tests
+        run: uv run pytest test/test_byo.py test/test_render_smoke.py -v

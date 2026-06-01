@@ -1,6 +1,6 @@
 export type Json = string | number | boolean | null | { [k: string]: Json | undefined } | Json[];
 
-export type Channel = "x" | "instagram" | "facebook" | "threads" | "bluesky" | "linkedin";
+export type Channel = "x" | "instagram" | "facebook" | "threads" | "bluesky" | "linkedin" | "tiktok";
 export type PostStatus =
   | "draft"
   | "pending_approval"
@@ -13,6 +13,19 @@ export type PostStatus =
 export type ApprovalAction = "approved" | "rejected" | "edited" | "unapproved";
 export type PlanStatus = "draft" | "active" | "archived";
 export type AccountStatus = "connected" | "expired" | "revoked";
+
+// Agency / Organization layer (Phase A — migration 029). An organization is
+// the agency tenant; it owns many client workspaces (workspaces.organization_id
+// set) and holds ONE Stripe subscription. `plan` reuses the workspace plan
+// vocabulary so the entitlement resolver can fall back through tierFor().
+export type OrgPlan = "hobby" | "pro" | "agency" | "founder";
+// Agency staff role on an org. `admin` = full control incl. billing + members;
+// `manager` = manages client workspaces but not org billing/membership.
+// Mirrors the CHECK constraint on org_memberships.role in migration 029.
+export type OrgRole = "admin" | "manager";
+// Client-portal token scopes (migration 029). Stored as text[]; this union is
+// the source of truth for what a tokenized client link is allowed to do.
+export type ClientPortalScope = "approve" | "view_reports";
 // Phase 2: cross-channel idea grouping. One "idea" maps to N posts (one per
 // channel variant). Stored as text so the generator could later use stable
 // labels; today the plans/new action mints a UUID per idea.
@@ -147,6 +160,10 @@ export interface Database {
           slug: string;
           name: string;
           owner_id: string;
+          // Phase A (migration 029): when non-null, this workspace is a client
+          // sub-tenant of the referenced organization. NULL = solo workspace
+          // (today's behaviour, unchanged).
+          organization_id: string | null;
           webhook_secret: string | null;
           plan: "hobby" | "pro" | "agency" | "founder";
           stripe_customer_id: string | null;
@@ -160,6 +177,7 @@ export interface Database {
           slug: string;
           name: string;
           owner_id: string;
+          organization_id?: string | null;
           webhook_secret?: string | null;
           plan?: "hobby" | "pro" | "agency" | "founder";
           stripe_customer_id?: string | null;
@@ -169,11 +187,106 @@ export interface Database {
         Update: Partial<{
           slug: string;
           name: string;
+          organization_id: string | null;
           webhook_secret: string | null;
           plan: "hobby" | "pro" | "agency" | "founder";
           stripe_customer_id: string | null;
           stripe_subscription_id: string | null;
           subscription_status: string | null;
+        }>;
+        Relationships: [];
+      };
+      // Phase A (migration 029): the agency tenant. Owns many client
+      // workspaces (workspaces.organization_id) and holds ONE org-level Stripe
+      // subscription. Branding cols (logo_url + two colours) drive white-label
+      // surfaces in later phases.
+      organizations: {
+        Row: {
+          id: string;
+          slug: string;
+          name: string;
+          owner_id: string;
+          logo_url: string | null;
+          color_primary: string | null;
+          color_accent: string | null;
+          stripe_customer_id: string | null;
+          stripe_subscription_id: string | null;
+          subscription_status: string | null;
+          plan: OrgPlan;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          slug: string;
+          name: string;
+          owner_id: string;
+          logo_url?: string | null;
+          color_primary?: string | null;
+          color_accent?: string | null;
+          stripe_customer_id?: string | null;
+          stripe_subscription_id?: string | null;
+          subscription_status?: string | null;
+          plan?: OrgPlan;
+        };
+        Update: Partial<{
+          slug: string;
+          name: string;
+          logo_url: string | null;
+          color_primary: string | null;
+          color_accent: string | null;
+          stripe_customer_id: string | null;
+          stripe_subscription_id: string | null;
+          subscription_status: string | null;
+          plan: OrgPlan;
+        }>;
+        Relationships: [];
+      };
+      // Phase A (migration 029): agency staff on an org. (organization_id,
+      // user_id) PK mirrors public.memberships. Owner manages; members read.
+      org_memberships: {
+        Row: {
+          organization_id: string;
+          user_id: string;
+          role: OrgRole;
+          created_at: string;
+        };
+        Insert: { organization_id: string; user_id: string; role: OrgRole };
+        Update: Partial<{ role: OrgRole }>;
+        Relationships: [];
+      };
+      // Phase A (migration 029): tokenized client portal grants. token_hash is
+      // a SHA-256 of the raw token (raw token never stored). scopes gates what
+      // the holder can do. The unauthenticated /client/[token] path (Phase D)
+      // resolves the hash via the SERVICE ROLE and must scope every query to
+      // this row's workspace_id — RLS here only covers the org-staff mgmt UI.
+      client_portal_tokens: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          token_hash: string;
+          label: string | null;
+          scopes: ClientPortalScope[];
+          expires_at: string | null;
+          revoked_at: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          token_hash: string;
+          label?: string | null;
+          scopes?: ClientPortalScope[];
+          expires_at?: string | null;
+          revoked_at?: string | null;
+          created_by?: string | null;
+        };
+        Update: Partial<{
+          label: string | null;
+          scopes: ClientPortalScope[];
+          expires_at: string | null;
+          revoked_at: string | null;
         }>;
         Relationships: [];
       };
@@ -183,6 +296,7 @@ export interface Database {
           month: string;
           posts_generated: number;
           images_generated: number;
+          videos_generated: number;
           updated_at: string;
         };
         Insert: {
@@ -190,10 +304,12 @@ export interface Database {
           month: string;
           posts_generated?: number;
           images_generated?: number;
+          videos_generated?: number;
         };
         Update: Partial<{
           posts_generated: number;
           images_generated: number;
+          videos_generated: number;
         }>;
         Relationships: [];
       };
@@ -573,7 +689,13 @@ export interface Database {
         Row: {
           id: string;
           post_id: string;
-          user_id: string;
+          // Nullable since migration 029: a client-portal approve/reject has no
+          // auth user. Exactly one of (user_id, client_token_id) is set — a
+          // CHECK constraint enforces this.
+          user_id: string | null;
+          // Phase A (migration 029): set when the action came through a client
+          // portal token instead of an authenticated member.
+          client_token_id: string | null;
           action: ApprovalAction;
           diff: string | null;
           reason: RejectionReason | null;
@@ -583,7 +705,8 @@ export interface Database {
         Insert: {
           id?: string;
           post_id: string;
-          user_id: string;
+          user_id?: string | null;
+          client_token_id?: string | null;
           action: ApprovalAction;
           diff?: string | null;
           reason?: RejectionReason | null;
@@ -1050,6 +1173,72 @@ export interface Database {
         }>;
         Relationships: [];
       };
+      video_jobs: {
+        // Phase 2 (P2): one row per MPT render request. The poll-video-jobs
+        // cron walks status='processing' rows. BYO secrets are NOT here —
+        // only opaque render params.
+        Row: {
+          id: string;
+          workspace_id: string;
+          social_account_id: string | null;
+          post_id: string | null;
+          status: "pending" | "processing" | "ready" | "failed";
+          mpt_task_id: string | null;
+          params: Json;
+          progress: number;
+          storage_path: string | null;
+          failure_reason: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          social_account_id?: string | null;
+          post_id?: string | null;
+          status?: "pending" | "processing" | "ready" | "failed";
+          mpt_task_id?: string | null;
+          params?: Json;
+          progress?: number;
+          storage_path?: string | null;
+          failure_reason?: string | null;
+        };
+        Update: Partial<{
+          social_account_id: string | null;
+          post_id: string | null;
+          status: "pending" | "processing" | "ready" | "failed";
+          mpt_task_id: string | null;
+          params: Json;
+          progress: number;
+          storage_path: string | null;
+          failure_reason: string | null;
+        }>;
+        Relationships: [];
+      };
+      workspace_byo_keys: {
+        // Phase 2 (P2): encrypted bring-your-own credentials, one row per
+        // (workspace, provider). Service-role only — RLS denies all client
+        // reads. Ciphertext is an opaque AES-256-GCM blob.
+        Row: {
+          workspace_id: string;
+          provider: string;
+          ciphertext: string;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          workspace_id: string;
+          provider: string;
+          ciphertext: string;
+          created_by?: string | null;
+        };
+        Update: Partial<{
+          provider: string;
+          ciphertext: string;
+          created_by: string | null;
+        }>;
+        Relationships: [];
+      };
     };
     Views: {
       social_accounts_safe: {
@@ -1070,6 +1259,9 @@ export interface Database {
     };
     Functions: {
       is_workspace_member: { Args: { ws_id: string }; Returns: boolean };
+      // Phase A (migration 029) org-access helpers.
+      user_owns_organization: { Args: { org_id: string }; Returns: boolean };
+      user_is_org_member: { Args: { org_id: string }; Returns: boolean };
     };
     Enums: Record<string, never>;
   };

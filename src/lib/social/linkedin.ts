@@ -18,6 +18,7 @@
 //     grantedScopes? }
 
 import { serverEnv } from "@/lib/env";
+import { RetryableError } from "./errors";
 
 export interface LinkedInCredentials {
   accessToken: string;
@@ -285,6 +286,200 @@ export async function linkedinUploadImage(
     throw new Error(`LinkedIn asset upload failed (${upRes.status}): ${await upRes.text()}`);
   }
   return regJson.value.asset;
+}
+
+// ─── Video (byte upload via the versioned /rest/ API) ────────────────────────
+//
+// LinkedIn video uses the newer versioned /rest/ surface (NOT the legacy /v2/
+// assets path images use). The flow is initialize → PUT each part to a signed
+// URL (no Authorization header on those PUTs) → finalize with the part ETags →
+// poll the video URN to AVAILABLE → POST /rest/posts. The created Post URN
+// comes back in the `x-restli-id` RESPONSE HEADER, not the body.
+//
+// We pin a current LinkedIn-Version; bump it when LinkedIn deprecates this one
+// (they version monthly as YYYYMM). 500MB hard cap.
+const LINKEDIN_VERSION = "202604";
+const LINKEDIN_VIDEO_MAX_BYTES = 500 * 1024 * 1024;
+const LINKEDIN_VIDEO_POLL_INTERVAL_MS = 5000;
+const LINKEDIN_VIDEO_POLL_TIMEOUT_MS = 5 * 60 * 1000;
+
+// Shared fetch for the versioned /rest/ API. Sets the two headers every /rest/
+// call needs (LinkedIn-Version + X-Restli-Protocol-Version) plus auth, and
+// merges any caller-supplied headers/body.
+function linkedinRestFetch(
+  creds: LinkedInCredentials,
+  path: string,
+  init: Omit<RequestInit, "headers"> & { headers?: Record<string, string> } = {},
+): Promise<Response> {
+  const { headers: extra, ...rest } = init;
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${creds.accessToken}`,
+    "LinkedIn-Version": LINKEDIN_VERSION,
+    "X-Restli-Protocol-Version": "2.0.0",
+    ...(extra ?? {}),
+  };
+  return fetch(`${API}/rest/${path}`, { ...rest, headers });
+}
+
+export async function linkedinUploadVideo(
+  creds: LinkedInCredentials,
+  bytes: Uint8Array,
+  fileSizeBytes: number,
+): Promise<string> {
+  if (fileSizeBytes > LINKEDIN_VIDEO_MAX_BYTES) {
+    throw new Error(
+      `LinkedIn video exceeds the 500MB limit (got ${(fileSizeBytes / 1024 / 1024).toFixed(0)}MB).`,
+    );
+  }
+  const owner = creds.targetOrgUrn ?? creds.memberUrn;
+
+  // INIT — get the video URN, an upload token, and one or more part upload URLs.
+  const initRes = await linkedinRestFetch(creds, "videos?action=initializeUpload", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      initializeUploadRequest: {
+        owner,
+        fileSizeBytes,
+        uploadCaptions: false,
+        uploadThumbnail: false,
+      },
+    }),
+  });
+  if (!initRes.ok) {
+    throw new Error(`LinkedIn video init failed (${initRes.status}): ${await initRes.text()}`);
+  }
+  const initJson = (await initRes.json()) as {
+    value?: {
+      video?: string;
+      uploadToken?: string;
+      uploadInstructions?: Array<{ uploadUrl: string; firstByte: number; lastByte: number }>;
+    };
+  };
+  const video = initJson.value?.video;
+  const uploadToken = initJson.value?.uploadToken ?? "";
+  const instructions = initJson.value?.uploadInstructions ?? [];
+  if (!video || instructions.length === 0) {
+    throw new Error("LinkedIn video init returned no video URN or upload instructions.");
+  }
+
+  // UPLOAD PARTS — PUT each byte range to its signed URL. These PUTs must NOT
+  // carry an Authorization header (the URL is pre-signed). Capture each part's
+  // ETag in order for finalize.
+  const uploadedPartIds: string[] = [];
+  for (const part of instructions) {
+    const slice = bytes.subarray(part.firstByte, part.lastByte + 1);
+    const putRes = await fetch(part.uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: slice as BlobPart,
+    });
+    if (!putRes.ok) {
+      throw new Error(
+        `LinkedIn video part upload failed (${putRes.status}): ${await putRes.text()}`,
+      );
+    }
+    const etag = putRes.headers.get("etag");
+    if (!etag) throw new Error("LinkedIn video part upload returned no ETag.");
+    uploadedPartIds.push(etag);
+  }
+
+  // FINALIZE — hand back the part ETags in order.
+  const finalizeRes = await linkedinRestFetch(creds, "videos?action=finalizeUpload", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      finalizeUploadRequest: { video, uploadToken, uploadedPartIds },
+    }),
+  });
+  if (!finalizeRes.ok) {
+    throw new Error(`LinkedIn video finalize failed (${finalizeRes.status}): ${await finalizeRes.text()}`);
+  }
+
+  // POLL — wait for transcode to reach AVAILABLE before posting.
+  await pollVideoStatus(creds, video);
+  return video;
+}
+
+// Poll a video URN until status === AVAILABLE. Throws on PROCESSING_FAILED, and
+// throws RetryableError on timeout so the cron retries next tick.
+//
+// Hardening path (NOT built now): persist the video URN on the post row and
+// resume this poll + post on a later tick instead of re-uploading the bytes.
+async function pollVideoStatus(creds: LinkedInCredentials, videoUrn: string): Promise<void> {
+  const deadline = Date.now() + LINKEDIN_VIDEO_POLL_TIMEOUT_MS;
+  for (;;) {
+    const res = await linkedinRestFetch(creds, `videos/${encodeURIComponent(videoUrn)}`);
+    if (!res.ok) {
+      throw new Error(`LinkedIn video status failed (${res.status}): ${await res.text()}`);
+    }
+    const json = (await res.json()) as { status?: string };
+    const state = json.status;
+    if (state === "AVAILABLE") return;
+    if (state === "PROCESSING_FAILED") {
+      throw new Error("LinkedIn video processing failed (status=PROCESSING_FAILED).");
+    }
+    // WAITING_UPLOAD / PROCESSING → keep polling.
+    if (Date.now() + LINKEDIN_VIDEO_POLL_INTERVAL_MS >= deadline) {
+      throw new RetryableError(
+        `LinkedIn video ${videoUrn} still processing after ${Math.round(
+          LINKEDIN_VIDEO_POLL_TIMEOUT_MS / 1000,
+        )}s; will retry next tick.`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, LINKEDIN_VIDEO_POLL_INTERVAL_MS));
+  }
+}
+
+// Create a video Post via the versioned /rest/posts endpoint. The created Post
+// URN is returned in the x-restli-id RESPONSE HEADER (the body is empty on 201).
+export async function linkedinPostVideo(
+  creds: LinkedInCredentials,
+  text: string,
+  videoUrn: string,
+  title: string,
+): Promise<LinkedInPostResult> {
+  if (text.length > LINKEDIN_MAX_TEXT) {
+    throw new Error(
+      `LinkedIn post text exceeds ${LINKEDIN_MAX_TEXT} chars (got ${text.length}).`,
+    );
+  }
+  const author = creds.targetOrgUrn ?? creds.memberUrn;
+  const body = {
+    author,
+    commentary: text,
+    visibility: "PUBLIC",
+    distribution: {
+      feedDistribution: "MAIN_FEED",
+      targetEntities: [],
+      thirdPartyDistributionChannels: [],
+    },
+    content: {
+      media: {
+        id: videoUrn,
+        // LinkedIn requires a non-empty title on video posts.
+        title: title || "Video",
+      },
+    },
+    lifecycleState: "PUBLISHED",
+  };
+  const res = await linkedinRestFetch(creds, "posts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(`LinkedIn video post failed (${res.status}): ${await res.text()}`);
+  }
+  // 201 Created with the Post URN in the header, body typically empty.
+  const id = res.headers.get("x-restli-id");
+  if (!id) {
+    // Fall back to the body in case a future API change starts returning it.
+    const json = (await res.json().catch(() => ({}))) as { id?: string };
+    if (json.id) return { id: json.id };
+    throw new Error("LinkedIn video post returned no Post URN (x-restli-id header missing).");
+  }
+  return { id };
 }
 
 // ─── Phase 4.5 (Reply Inbox + Engagement Assistant) ─────────────────────

@@ -6,7 +6,14 @@
 // prompt, queue UI, char-count validation, metrics dashboard) reads from
 // this registry.
 
-export type ChannelId = "x" | "linkedin" | "threads" | "instagram" | "bluesky" | "facebook";
+export type ChannelId =
+  | "x"
+  | "linkedin"
+  | "threads"
+  | "instagram"
+  | "bluesky"
+  | "facebook"
+  | "tiktok";
 
 export interface ChannelSpec {
   id: ChannelId;
@@ -103,7 +110,9 @@ export const CHANNELS: Record<ChannelId, ChannelSpec> = {
     label: "Bluesky",
     maxChars: 300,
     supportsImages: true,
-    supportsVideo: false,
+    // P3: byte-upload via video.bsky.app. No app-review gate — works as soon
+    // as the connected account's email is verified.
+    supportsVideo: true,
     recommendedWindows: [
       // No Sprout data; mirror X's pattern given audience overlap.
       { weekday: 1, ranges: [["14:00", "15:00"], ["17:00", "17:30"]] },
@@ -135,6 +144,30 @@ export const CHANNELS: Record<ChannelId, ChannelSpec> = {
     oauthEnvPrefix: "META_",
     promptConstraint:
       "Hard cap 63206 chars but write short: 1-2 tight paragraphs, ideally under ~500 chars. Conversational and community-oriented, hook first, one clear CTA. Hashtags sparing (0-2); emoji only if the brand uses them.",
+  },
+  tiktok: {
+    id: "tiktok",
+    label: "TikTok",
+    // Caption hard cap is 2200 chars (the same as IG). TikTok is video-only —
+    // there is no text-only or image-only post via the Content Posting API, so
+    // the caption always rides on a video.
+    maxChars: 2200,
+    // Photo-mode posts exist on TikTok but the v2 publish API this adapter
+    // targets is video-first; images are accepted at the registry level so the
+    // planner doesn't reject them, but the dispatcher only publishes video.
+    supportsImages: true,
+    supportsVideo: true,
+    recommendedWindows: [
+      // No Sprout TikTok dataset; use early-afternoon/evening windows that
+      // track TikTok's published "best time to post" guidance (Tue-Thu lean).
+      { weekday: 2, ranges: [["14:00", "15:00"], ["18:00", "20:00"]] },
+      { weekday: 3, ranges: [["09:00", "11:00"], ["15:00", "17:00"]] },
+      { weekday: 4, ranges: [["12:00", "13:00"], ["18:00", "20:00"]] },
+      { weekday: 5, ranges: [["14:00", "16:00"]] },
+    ],
+    oauthEnvPrefix: "TIKTOK_",
+    promptConstraint:
+      "Max 2200 chars; video-first — the caption supports a vertical short-form video, never stands alone. Hook in the first line, conversational and native to TikTok. Hashtags allowed (3-6); emoji fine if the voice uses them.",
   },
 };
 
