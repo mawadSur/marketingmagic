@@ -3,6 +3,7 @@ import { serverEnv } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { dispatchPost, type PostMediaItem } from "@/lib/social/dispatch";
 import { applyAttribution } from "@/lib/growth/attribution";
+import { vestReferralOnFirstPost } from "@/lib/growth/referrals";
 import { isRetryableError } from "@/lib/social/errors";
 import { readThreadMeta } from "@/lib/threads/schema";
 import { postThread } from "@/lib/threads/post";
@@ -219,6 +220,10 @@ async function handle(req: NextRequest) {
         .from("social_accounts")
         .update({ successful_post_count: (account.successful_post_count ?? 0) + 1 })
         .eq("id", post.social_account_id);
+
+      // PLG: vest the referral reward if this is the workspace's first-ever
+      // posted post (idempotent + service-role; never throws).
+      await vestReferralOnFirstPost(svc, post.workspace_id);
 
       results.push({ id: post.id, status: "posted" });
     } catch (err) {

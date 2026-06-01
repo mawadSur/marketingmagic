@@ -5,6 +5,7 @@ import { Badge, ChannelBadge, channelLabel } from "@/components/ui/badge";
 import { verifyPreviewToken } from "@/lib/preview/token";
 import { track, hashHandle } from "@/lib/preview/analytics";
 import { SignupCtaLink } from "./signup-cta";
+import { SharePlan } from "./share-plan";
 
 export const metadata: Metadata = {
   title: "Your preview plan — marketingmagic",
@@ -83,6 +84,9 @@ export default async function PreviewPage({
               </p>
             </div>
             <SignupCtaLink token={token} channel={payload.channel} handleHash={hashHandle(payload.handle)} />
+          </div>
+          <div className="mt-4 border-t pt-4">
+            <SharePlan token={token} channel={payload.channel} />
           </div>
         </section>
 

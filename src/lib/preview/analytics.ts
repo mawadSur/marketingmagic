@@ -21,7 +21,11 @@ export type FunnelStage =
   | "preview_view"
   | "preview_rate_limited"
   | "preview_cold_profile"
-  | "preview_signup_cta_click";
+  | "preview_signup_cta_click"
+  // PLG share loop (migration 032): a visitor minted a shareable /p/<slug> link
+  // ("Share this plan"), and a (possibly different) visitor opened one.
+  | "preview_shared"
+  | "preview_share_view";
 
 export interface FunnelEvent {
   stage: FunnelStage;
