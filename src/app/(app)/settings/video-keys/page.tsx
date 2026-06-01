@@ -45,16 +45,39 @@ export default async function VideoKeysPage() {
 
   // Presence-only — never returns plaintext. Drives the Configured/Not pills.
   const status = await getWorkspaceKeyStatus(ws.id);
+  const doneCount = (status.llm ? 1 : 0) + (status.pexels ? 1 : 0);
+  const allSet = doneCount === 2;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
-      <header className="space-y-1">
+      <header className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight">Video keys</h1>
         <p className="text-sm text-muted-foreground">
-          You bring your own LLM + Pexels keys; we render the video. Keys are stored encrypted and
-          never shown again — you can Replace or Remove them, but not read them back.
+          Two keys and you can render. Bring your own LLM + Pexels keys — both stored encrypted and
+          never shown again (Replace or Remove, but not read back).
         </p>
+        <div className="flex items-center gap-3 pt-1">
+          <div className="h-1.5 w-32 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-emerald-500 transition-all duration-300"
+              style={{ width: `${(doneCount / 2) * 100}%` }}
+            />
+          </div>
+          <span className="text-xs font-medium text-muted-foreground">{doneCount} of 2 set</span>
+        </div>
       </header>
+
+      {allSet ? (
+        <div className="flex flex-col items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm font-medium">Both keys set — you&apos;re ready to render.</p>
+          <Link
+            href="/video"
+            className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          >
+            Generate a video →
+          </Link>
+        </div>
+      ) : null}
 
       <Card>
         <CardHeader className="flex-row items-start justify-between space-y-0">
@@ -84,12 +107,14 @@ export default async function VideoKeysPage() {
         </CardContent>
       </Card>
 
-      <p className="text-sm text-muted-foreground">
-        Keys set?{" "}
-        <Link className="underline underline-offset-4" href="/video">
-          Generate a video →
-        </Link>
-      </p>
+      {!allSet ? (
+        <p className="text-sm text-muted-foreground">
+          Add both keys above, then{" "}
+          <Link className="underline underline-offset-4" href="/video">
+            generate a video →
+          </Link>
+        </p>
+      ) : null}
     </div>
   );
 }
