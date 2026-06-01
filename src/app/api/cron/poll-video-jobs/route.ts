@@ -18,6 +18,7 @@ import {
 } from "@/lib/video/jobs";
 import { getWorkspaceKeys } from "@/lib/video/byo-keys";
 import { getReferenceVideoProvider } from "@/lib/video/reference/stub-provider";
+import type { ReferenceVideoCapability } from "@/lib/video/reference/provider";
 import type { PostMediaItem } from "@/lib/social/dispatch";
 
 // Vercel/GitHub-Actions Cron — POST every 1-2 minutes. Auth via Bearer
@@ -182,15 +183,30 @@ function jobKind(job: VideoJobRow): string {
   return "mpt";
 }
 
-// Reference-image video (bet ④) — poll one fal job and finalise it. Mirrors the
-// MPT finalize: stale-guard → poll the provider → on ready pull the mp4 into the
-// post-media-video bucket and attach a DRAFT post → markReady; on failed
-// markFailed. The fal key is the workspace's own BYO key (service-role decrypt).
+// Read params.capability off a reference job to pick the adapter (fal vs D-ID).
+// Defaults to "animate" (fal) — legacy reference jobs predate the discriminator
+// (params.capability absent / provider "fal_video"), so they keep polling fal.
+function jobCapability(job: VideoJobRow): ReferenceVideoCapability {
+  const p = job.params;
+  if (p && typeof p === "object" && !Array.isArray(p)) {
+    const rec = p as Record<string, unknown>;
+    if (rec.capability === "present" || rec.provider === "did_video") return "present";
+  }
+  return "animate";
+}
+
+// Reference-image video (bet ④) — poll one reference job and finalise it. Mirrors
+// the MPT finalize: stale-guard → poll the provider → on ready pull the mp4 into
+// the post-media-video bucket and attach a DRAFT post → markReady; on failed
+// markFailed. The adapter (fal vs D-ID) AND the matching BYO key (fal_video vs
+// did_video) are chosen PER JOB from params.capability/params.provider — so the
+// same cron drains both Capability A ("animate") and Capability B ("present")
+// jobs. The key is the workspace's own BYO secret (service-role decrypt).
 async function processReferenceJob(
   svc: ReturnType<typeof supabaseService>,
   job: VideoJobRow,
 ): Promise<{ id: string; status: "ready" | "processing" | "failed" | "error"; reason?: string }> {
-  // mpt_task_id holds the fal request_id for reference jobs (set by
+  // mpt_task_id holds the provider request id for reference jobs (set by
   // markProcessing). Without it there's nothing to poll.
   if (!job.mpt_task_id) {
     await markFailed(job.id, "reference job has no provider request id");
@@ -203,15 +219,23 @@ async function processReferenceJob(
     return { id: job.id, status: "failed", reason: "timed out" };
   }
 
-  // The provider needs the workspace's decrypted fal key.
+  // Which capability/adapter this job is. Defaults to "animate" (fal) so legacy
+  // reference jobs written before params.capability existed still poll fal.
+  const capability = jobCapability(job);
+  const isPresent = capability === "present";
+
+  // The provider needs the workspace's decrypted key for THIS capability:
+  //   "animate" → fal_video    "present" → did_video
   const keys = await getWorkspaceKeys(job.workspace_id);
-  if (!keys.fal_video?.api_key) {
-    await markFailed(job.id, "no fal video key for workspace (key removed mid-render?)");
-    return { id: job.id, status: "failed", reason: "missing fal key" };
+  const apiKey = isPresent ? keys.did_video?.api_key : keys.fal_video?.api_key;
+  if (!apiKey) {
+    const label = isPresent ? "D-ID" : "fal video";
+    await markFailed(job.id, `no ${label} key for workspace (key removed mid-render?)`);
+    return { id: job.id, status: "failed", reason: `missing ${isPresent ? "did" : "fal"} key` };
   }
 
-  const provider = getReferenceVideoProvider();
-  const poll = await provider.poll(job.mpt_task_id, keys.fal_video.api_key);
+  const provider = getReferenceVideoProvider(capability);
+  const poll = await provider.poll(job.mpt_task_id, apiKey);
 
   if (typeof poll.progress === "number") {
     await updateProgress(job.id, poll.progress).catch(() => {});
@@ -228,7 +252,7 @@ async function processReferenceJob(
   }
 
   // READY — pull the mp4 immediately (CDN URL can expire) and own the asset.
-  const { bytes, contentType } = await provider.fetchBytes(poll.videoUrl, keys.fal_video.api_key);
+  const { bytes, contentType } = await provider.fetchBytes(poll.videoUrl, apiKey);
   const storagePath = `${job.workspace_id}/${job.id}/final.mp4`;
 
   const { error: upErr } = await svc.storage.from(BUCKET).upload(storagePath, bytes, {

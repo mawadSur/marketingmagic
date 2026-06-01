@@ -141,6 +141,17 @@ const serverSchema = z.object({
     .string()
     .min(1)
     .default("fal-ai/kling-video/v1.6/standard/image-to-video"),
+  // Reference-image video (bet ④ · Capability B "Make it talk") — D-ID talking-
+  // avatar provider. Base URL of the D-ID API, overridable so it isn't hardcoded;
+  // defaults to the public host. No trailing slash (trimmed in didBaseUrl()).
+  // Only meaningful when REFERENCE_VIDEO_ENABLED is on; the BYO D-ID key lives in
+  // workspace_byo_keys (provider 'did_video'), not in env. Read through
+  // didBaseUrl().
+  DID_BASE_URL: z.string().min(1).default("https://api.d-id.com"),
+  // The default Microsoft TTS voice the D-ID talk uses when the user doesn't
+  // pick one. A sane neutral default; overridable per deployment. Read through
+  // didDefaultVoiceId().
+  DID_DEFAULT_VOICE_ID: z.string().min(1).default("en-US-JennyNeural"),
 });
 
 const publicSchema = serverSchema.pick({
@@ -268,4 +279,20 @@ export function referenceVideoEnabled(): boolean {
 // adapter to build the queue endpoint URL.
 export function referenceVideoFalModel(): string {
   return serverEnv().REFERENCE_VIDEO_FAL_MODEL;
+}
+
+// Reference-image video (bet ④ · Capability B "Make it talk") — base URL of the
+// D-ID Talks API the talking-avatar adapter submits to. Overridable via
+// DID_BASE_URL so it isn't hardcoded; defaults to the public host. Trailing slash
+// trimmed so `${didBaseUrl()}/talks` is always well-formed. Only meaningful when
+// REFERENCE_VIDEO_ENABLED is on.
+export function didBaseUrl(): string {
+  return serverEnv().DID_BASE_URL.replace(/\/$/, "");
+}
+
+// Reference-image video (bet ④ · Capability B) — the default Microsoft TTS
+// voice the D-ID talk uses when the user doesn't pick one. Overridable via
+// DID_DEFAULT_VOICE_ID. Used by the D-ID adapter when input.voiceId is absent.
+export function didDefaultVoiceId(): string {
+  return serverEnv().DID_DEFAULT_VOICE_ID;
 }
