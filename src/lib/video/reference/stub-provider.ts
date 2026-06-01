@@ -13,8 +13,10 @@
 
 import { referenceVideoEnabled } from "@/lib/env";
 import { falReferenceVideoProvider } from "./fal-video-provider";
+import { didReferenceVideoProvider } from "./did-video-provider";
 import {
   ReferenceVideoNotEnabledError,
+  type ReferenceVideoCapability,
   type ReferenceVideoInputs,
   type ReferenceVideoPoll,
   type ReferenceVideoProvider,
@@ -45,14 +47,20 @@ export class StubReferenceVideoProvider implements ReferenceVideoProvider {
 
 export const stubReferenceVideoProvider = new StubReferenceVideoProvider();
 
-// Resolve the active reference-image video provider. Throws
+// Resolve the active reference-image video adapter for a capability. Throws
 // ReferenceVideoNotEnabledError when the feature flag is off so call sites fail
-// loudly and uniformly. When ON, returns the live fal.ai image-to-video adapter
-// (Capability A — "animate the user's uploaded photo"). The stub is retained
-// only for typing/tests and is never returned once the flag is flipped.
-export function getReferenceVideoProvider(): ReferenceVideoProvider {
+// loudly and uniformly. When ON, picks the concrete adapter:
+//   "animate" → fal.ai image-to-video  (Capability A — "animate a photo")
+//   "present" → D-ID talking avatar     (Capability B — "make it talk")
+// The capability arg DEFAULTS to "animate" so the already-shipped fal call sites
+// (orchestrator + poll cron) keep selecting fal byte-for-byte without passing it.
+// The stub is retained only for typing/tests and is never returned once the flag
+// is flipped.
+export function getReferenceVideoProvider(
+  capability: ReferenceVideoCapability = "animate",
+): ReferenceVideoProvider {
   if (!referenceVideoEnabled()) {
     throw new ReferenceVideoNotEnabledError();
   }
-  return falReferenceVideoProvider;
+  return capability === "present" ? didReferenceVideoProvider : falReferenceVideoProvider;
 }

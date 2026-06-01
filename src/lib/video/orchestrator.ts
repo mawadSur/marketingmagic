@@ -19,7 +19,10 @@ import { getWorkspaceKeys } from "@/lib/video/byo-keys";
 import { createJob, markFailed, markProcessing } from "@/lib/video/jobs";
 import { createRenderJob, type CreateRenderParams, type VideoAspect } from "@/lib/video/mpt-client";
 import { getReferenceVideoProvider } from "@/lib/video/reference/stub-provider";
-import type { ReferenceVideoInputs } from "@/lib/video/reference/provider";
+import type {
+  ReferenceVideoCapability,
+  ReferenceVideoInputs,
+} from "@/lib/video/reference/provider";
 
 // Caller-facing render request. The BYO keys are NOT part of this — they're
 // pulled from workspace_byo_keys and decrypted internally so callers never
@@ -149,13 +152,26 @@ export async function startVideoRender(
 // pulled from workspace_byo_keys and decrypted internally, so callers never
 // handle plaintext credentials (same contract as StartVideoRenderInput).
 export interface StartReferenceVideoRenderInput {
+  // Which sub-capability to render (spike §2). Defaults to "animate" (the
+  // already-shipped fal.ai image-to-video path) so existing callers are
+  // unchanged. "present" routes to the D-ID talking-avatar path and REQUIRES a
+  // non-empty `script` + the workspace's did_video key.
+  capability?: ReferenceVideoCapability;
   // Public URL of the uploaded reference photo (reference-image bucket).
   referenceImageUrl: string;
   // Storage path of that photo (<workspace_id>/<id>/<file>) — persisted on the
   // job for cleanup/lookup via video_jobs.reference_image_path.
   referenceImagePath: string;
-  // Text prompt describing the desired motion/scene.
-  prompt: string;
+  // Text prompt describing the desired motion/scene. REQUIRED for "animate"
+  // (capability A). For "present" (capability B) this is optional flavour — the
+  // `script` below is what actually drives the render.
+  prompt?: string;
+  // Capability B ("present") only: the words the avatar should speak. REQUIRED
+  // and non-empty for "present"; ignored by "animate".
+  script?: string;
+  // Capability B ("present") only: the Microsoft TTS voice id. Falls back to the
+  // deployment default (DID_DEFAULT_VOICE_ID) when absent.
+  voiceId?: string;
   videoAspect?: VideoAspect;
   durationSeconds?: number;
   // Short human-readable subject — seeds the eventual draft post caption, like
@@ -185,20 +201,40 @@ export async function startReferenceVideoRender(
     throw new VideoRenderError("Reference-image video is not enabled on this deployment.");
   }
 
-  // Validate inputs at the boundary.
-  const prompt = input.prompt?.trim();
-  if (!prompt) {
-    throw new VideoRenderError("A prompt is required to animate the reference photo.");
-  }
+  // Default to "animate" (Capability A) so existing callers are unchanged.
+  const capability: ReferenceVideoCapability = input.capability ?? "animate";
+  const isPresent = capability === "present";
+
+  // A reference photo is required for BOTH capabilities.
   if (!input.referenceImageUrl?.trim() || !input.referenceImagePath?.trim()) {
     throw new VideoRenderError("A reference photo is required.");
   }
 
-  // Consent is REQUIRED — a render must never run without an explicit
-  // likeness attestation. Throw loudly when it's not affirmed.
+  const prompt = input.prompt?.trim() ?? "";
+  const script = input.script?.trim() ?? "";
+
+  // Per-capability input requirements:
+  //   "animate" → a motion prompt (the fal image-to-video path, unchanged).
+  //   "present" → a non-empty SCRIPT (the words the avatar will speak). Without
+  //               a script there is nothing for D-ID to lip-sync, so we reject.
+  if (isPresent) {
+    if (!script) {
+      throw new VideoRenderError(
+        "A script is required to make the photo talk — enter the words the person should say.",
+      );
+    }
+  } else if (!prompt) {
+    throw new VideoRenderError("A prompt is required to animate the reference photo.");
+  }
+
+  // Consent is REQUIRED for both, and STRICTER for "present": the user is making
+  // a real person APPEAR TO SPEAK words. A render must never run without an
+  // explicit likeness attestation — throw loudly when it's not affirmed.
   if (input.consent !== true) {
     throw new VideoRenderError(
-      "Consent is required: confirm this is you, or that you have the documented right to use this person's likeness.",
+      isPresent
+        ? "Consent is required: confirm this is you, or that you have the documented right to make this person appear to say these words."
+        : "Consent is required: confirm this is you, or that you have the documented right to use this person's likeness.",
     );
   }
 
@@ -206,28 +242,44 @@ export async function startReferenceVideoRender(
   // typed QuotaExceededError the server action surfaces as an upgrade nudge.
   await assertWithinVideoQuota(workspaceId, 1);
 
-  // Pull and decrypt the workspace's BYO fal video key.
+  // Pull and decrypt the workspace's BYO key for the chosen capability:
+  //   "animate" → fal_video key   (Capability A — unchanged)
+  //   "present" → did_video key   (Capability B — talking avatar)
   const keys = await getWorkspaceKeys(workspaceId);
-  if (!keys.fal_video?.api_key) {
-    throw new VideoRenderError("No fal video API key configured for this workspace.");
+  const apiKey = isPresent ? keys.did_video?.api_key : keys.fal_video?.api_key;
+  if (!apiKey) {
+    throw new VideoRenderError(
+      isPresent
+        ? "No D-ID API key configured for this workspace."
+        : "No fal video API key configured for this workspace.",
+    );
   }
 
+  const providerName = isPresent ? "did_video" : "fal_video";
   const aspect: VideoAspect = input.videoAspect ?? "9:16";
   const consentAttestedAt = new Date().toISOString();
+  // The caption seed: the script (present) or the prompt (animate).
+  const subjectSeed = isPresent ? script : prompt;
 
   // Persist only non-secret params on the job, including the consent attestation
-  // (stored for an audit trail) and the reference pointer.
+  // (stored for an audit trail), the capability discriminator, and the reference
+  // pointer. params.kind stays "reference_image" so the existing poll-cron branch
+  // still catches it; params.capability + params.provider let the cron pick the
+  // matching adapter + key.
   const params: Json = {
     kind: "reference_image",
-    provider: "fal_video",
+    capability,
+    provider: providerName,
     reference_path: input.referenceImagePath,
     reference_public_url: input.referenceImageUrl,
-    prompt,
+    prompt: prompt || null,
     aspect,
     duration_seconds: input.durationSeconds ?? null,
     consent_attested_at: consentAttestedAt,
     consent_by: input.consentBy ?? null,
-    video_subject: input.videoSubject?.trim() || prompt.slice(0, 80),
+    video_subject: input.videoSubject?.trim() || subjectSeed.slice(0, 80),
+    // Capability B only — the spoken script + voice (no secret; safe on the job).
+    ...(isPresent ? { script, voice_id: input.voiceId?.trim() || null } : {}),
   };
 
   const job = await createJob({
@@ -237,17 +289,20 @@ export async function startReferenceVideoRender(
     referenceImagePath: input.referenceImagePath,
   });
 
-  // Submit to the fal adapter with the decrypted key.
-  const provider = getReferenceVideoProvider();
+  // Submit to the capability's adapter with the decrypted key.
+  const provider = getReferenceVideoProvider(capability);
   const providerInput: ReferenceVideoInputs = {
     referenceImageUrl: input.referenceImageUrl,
     prompt,
     aspect,
     ...(input.durationSeconds ? { durationSeconds: input.durationSeconds } : {}),
+    ...(isPresent
+      ? { script, ...(input.voiceId?.trim() ? { voiceId: input.voiceId.trim() } : {}) }
+      : {}),
   };
 
   try {
-    const { providerJobId } = await provider.submit(providerInput, keys.fal_video.api_key);
+    const { providerJobId } = await provider.submit(providerInput, apiKey);
     await markProcessing(job.id, providerJobId);
     // Meter only once the provider accepted the render — a submit failure
     // short-circuits to markFailed() and never burns the quota.
