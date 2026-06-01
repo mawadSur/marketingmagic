@@ -20,7 +20,12 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { JobList, type JobListItem } from "../../video/job-list";
 import { VideoModeTabs } from "../../video/video-mode-tabs";
 import { ReferenceImageUploadForm } from "./upload-form";
-import { FalVideoKeyForm, FalVideoKeyStatus } from "./key-form";
+import {
+  FalVideoKeyForm,
+  FalVideoKeyStatus,
+  DidVideoKeyForm,
+  DidVideoKeyStatus,
+} from "./key-form";
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +62,9 @@ export default async function ReferenceVideoPage() {
   const byo = byoKeysConfigured();
   const supabase = await supabaseServer();
   const [status, usage, jobRows] = await Promise.all([
-    byo ? getWorkspaceKeyStatus(ws.id) : Promise.resolve({ llm: false, pexels: false, fal_video: false }),
+    byo
+      ? getWorkspaceKeyStatus(ws.id)
+      : Promise.resolve({ llm: false, pexels: false, fal_video: false, did_video: false }),
     getUsageSnapshot(ws.id),
     supabase
       .from("video_jobs")
@@ -102,7 +109,7 @@ export default async function ReferenceVideoPage() {
           <div className="space-y-1.5">
             <CardTitle className="text-base">fal video key</CardTitle>
             <CardDescription>
-              Bring your own fal.ai key — used to render image-to-video. Stored encrypted.
+              For &ldquo;Animate a photo&rdquo;. Bring your own fal.ai key — image-to-video. Stored encrypted.
             </CardDescription>
           </div>
           {byo ? <FalVideoKeyStatus configured={status.fal_video} /> : null}
@@ -120,14 +127,39 @@ export default async function ReferenceVideoPage() {
       </Card>
 
       <Card>
+        <CardHeader className="flex-row items-start justify-between space-y-0">
+          <div className="space-y-1.5">
+            <CardTitle className="text-base">D-ID key</CardTitle>
+            <CardDescription>
+              For &ldquo;Make it talk&rdquo;. Bring your own D-ID key — talking avatar from a photo + script. Stored encrypted.
+            </CardDescription>
+          </div>
+          {byo ? <DidVideoKeyStatus configured={status.did_video} /> : null}
+        </CardHeader>
+        <CardContent>
+          {byo ? (
+            <DidVideoKeyForm configured={status.did_video} />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Credential encryption isn&apos;t configured on this deployment (set{" "}
+              <code>BYO_ENCRYPTION_KEY</code>).
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader>
-          <CardTitle className="text-base">Animate a photo</CardTitle>
+          <CardTitle className="text-base">Generate</CardTitle>
           <CardDescription>
-            Upload a photo and a motion prompt. The render lands in your approval queue.
+            Animate a photo (motion prompt) or make it talk (script). The render lands in your approval queue.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <ReferenceImageUploadForm keyConfigured={status.fal_video} />
+          <ReferenceImageUploadForm
+            falConfigured={status.fal_video}
+            didConfigured={status.did_video}
+          />
         </CardContent>
       </Card>
 
