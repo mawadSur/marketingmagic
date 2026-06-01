@@ -77,7 +77,12 @@ const BASE_URL = "https://api.twitter.com";
 //   4. Before any API call, loadFreshXCredentials checks expiry and refreshes
 //      via /2/oauth2/token if needed.
 
-const AUTHORIZE_URL = "https://twitter.com/i/oauth2/authorize";
+// Must be x.com, NOT twitter.com: after X's domain migration, login cookies
+// are set on x.com. Sending users to twitter.com/i/oauth2/authorize makes the
+// post-login redirect land on a page that can't see the x.com session → an
+// infinite "you have to be logged in to X" loop (reproduces in every browser,
+// incognito included). x.com keeps login + authorize on one domain.
+const AUTHORIZE_URL = "https://x.com/i/oauth2/authorize";
 const TOKEN_URL = "https://api.twitter.com/2/oauth2/token";
 
 // Default scopes we ask for. tweet.write enables posting; offline.access is
