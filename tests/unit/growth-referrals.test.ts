@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Unit: referral program (src/lib/growth/referrals.ts) ─────────────────────
 //
-// Focus on attributeWorkspaceCreation — the security-sensitive path that grants
-// bonus quota. We mock the ref cookie (next/headers) and the service-role DB so
-// we can assert:
-//   * no cookie / unknown code / self-referral → NO referral row, NO reward
-//   * valid foreign code → one referrals insert + a referral_bonus_posts bump
-//   * a duplicate (already-attributed) insert → NO double reward
+// attributeWorkspaceCreation now only INSERTS the pending referral edge (the
+// +5 reward no longer grants at workspace creation — it VESTS on first post,
+// migration 032). We mock the ref cookie (next/headers) and the service-role DB
+// so we can assert:
+//   * no cookie / unknown code / self-referral → NO referral row
+//   * valid foreign code → one referrals insert, NO bonus bump at creation
 //   * the cookie is always cleared afterward (no stale re-attribution)
 // Plus the cheap isValidRefParam format guard.
 
@@ -75,7 +75,7 @@ vi.mock("@/lib/supabase/service", () => ({
   }),
 }));
 
-import { attributeWorkspaceCreation, isValidRefParam, REFERRAL_BONUS_POSTS } from "@/lib/growth/referrals";
+import { attributeWorkspaceCreation, isValidRefParam } from "@/lib/growth/referrals";
 
 beforeEach(() => {
   cookieStore.value = undefined;
@@ -111,12 +111,13 @@ describe("attributeWorkspaceCreation", () => {
     expect(db.updateWorkspace).not.toHaveBeenCalled();
   });
 
-  it("valid foreign code → inserts referral and grants the bonus", async () => {
+  it("valid foreign code → inserts referral but does NOT grant the bonus yet", async () => {
     cookieStore.value = db.knownCode;
     await attributeWorkspaceCreation("new-ws");
     expect(db.insertReferral).toHaveBeenCalledTimes(1);
-    expect(db.updateWorkspace).toHaveBeenCalledTimes(1);
-    expect(db.workspaceBonus).toBe(REFERRAL_BONUS_POSTS);
+    // Reward is withheld at creation — it vests on the referred ws's first post.
+    expect(db.updateWorkspace).not.toHaveBeenCalled();
+    expect(db.workspaceBonus).toBe(0);
     expect(cookieStore.delete).toHaveBeenCalled(); // cookie always cleared
   });
 
@@ -125,17 +126,6 @@ describe("attributeWorkspaceCreation", () => {
     await attributeWorkspaceCreation(db.referrerWs); // same ws as the code owner
     expect(db.insertReferral).not.toHaveBeenCalled();
     expect(db.updateWorkspace).not.toHaveBeenCalled();
-    expect(cookieStore.delete).toHaveBeenCalled();
-  });
-
-  it("duplicate insert (already attributed) → no double reward", async () => {
-    cookieStore.value = db.knownCode;
-    db.insertReferral.mockImplementation(() =>
-      Promise.resolve({ error: { message: "duplicate key value violates unique constraint" } }),
-    );
-    await attributeWorkspaceCreation("new-ws");
-    expect(db.insertReferral).toHaveBeenCalledTimes(1);
-    expect(db.updateWorkspace).not.toHaveBeenCalled(); // reward skipped
     expect(cookieStore.delete).toHaveBeenCalled();
   });
 

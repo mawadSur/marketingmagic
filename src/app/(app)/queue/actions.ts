@@ -15,6 +15,7 @@ import { runQuickExperiment } from "@/lib/experiments/run";
 import { MAX_VARIANT_COUNT, MIN_VARIANT_COUNT } from "@/lib/experiments/generate";
 import { dispatchPost, type PostMediaItem } from "@/lib/social/dispatch";
 import { applyAttribution } from "@/lib/growth/attribution";
+import { vestReferralOnFirstPost } from "@/lib/growth/referrals";
 import { isRetryableError } from "@/lib/social/errors";
 import { readThreadMeta } from "@/lib/threads/schema";
 
@@ -776,6 +777,10 @@ export async function publishNowAction(postId: string): Promise<ActionResult> {
       .from("social_accounts")
       .update({ successful_post_count: (account.successful_post_count ?? 0) + 1 })
       .eq("id", post.social_account_id);
+
+    // PLG: vest the referral reward if this is the workspace's first-ever
+    // posted post (idempotent + service-role; never throws).
+    await vestReferralOnFirstPost(svc, post.workspace_id);
 
     revalidatePath("/queue");
     return { error: null };

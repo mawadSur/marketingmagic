@@ -7,11 +7,18 @@
 //      in an HTTP-only cookie at signup, so it survives the Supabase
 //      email-confirmation round trip (signup → email → callback → onboarding)
 //      and is read back when the FIRST workspace is created.
-//   3. ATTRIBUTION + REWARD — on workspace creation, if a valid pending ref
-//      cookie resolves to a DIFFERENT workspace's code, we insert a referrals
-//      row (UNIQUE on referred_workspace_id makes it idempotent) and bump the
-//      referrer's referral_bonus_posts. The bonus is added to the tier ceiling
-//      in assertWithinPostQuota (see lib/billing/limits.ts).
+//   3. ATTRIBUTION — on workspace creation, if a valid pending ref cookie
+//      resolves to a DIFFERENT workspace's code, we insert a referrals row
+//      (UNIQUE on referred_workspace_id makes it idempotent). The reward is NOT
+//      granted here.
+//   4. REWARD VESTING (migration 032, anti-farming) — the +5 referral bonus is
+//      withheld until the referred workspace ships its FIRST post (status
+//      reaches 'posted'). vestReferralOnFirstPost is called from the two publish
+//      choke points (the post-scheduled cron + publishNowAction); it grants the
+//      referrer the bonus exactly once via a conditional vested_at null→now()
+//      flip, so throwaway signups that never post can't farm a referrer's quota.
+//      The bonus is added to the tier ceiling in assertWithinPostQuota (see
+//      lib/billing/limits.ts).
 //
 // All writes go through the SERVICE ROLE — referral_codes / referrals have no
 // public write policy, so a user can't mint codes or fake a referral to farm
@@ -95,6 +102,31 @@ export async function countReferrals(workspaceId: string): Promise<number> {
   return count ?? 0;
 }
 
+/**
+ * Break a workspace's referrals into VESTED (the referred workspace shipped its
+ * first post → the +5 bonus was granted) vs PENDING (signed up but hasn't
+ * posted yet → reward not yet earned). Drives the pending/vested split on the
+ * /settings/referrals page so the referrer sees why a signup hasn't paid out.
+ */
+export async function countReferralsByVesting(
+  workspaceId: string,
+): Promise<{ vested: number; pending: number }> {
+  const svc = supabaseService();
+  const [{ count: total }, { count: vested }] = await Promise.all([
+    svc
+      .from("referrals")
+      .select("id", { count: "exact", head: true })
+      .eq("referrer_workspace_id", workspaceId),
+    svc
+      .from("referrals")
+      .select("id", { count: "exact", head: true })
+      .eq("referrer_workspace_id", workspaceId)
+      .not("vested_at", "is", null),
+  ]);
+  const vestedCount = vested ?? 0;
+  return { vested: vestedCount, pending: Math.max(0, (total ?? 0) - vestedCount) };
+}
+
 // ─── ref-cookie capture ──────────────────────────────────────────────────
 
 /** Validate a raw ?ref value against the code format (cheap pre-DB check). */
@@ -137,9 +169,12 @@ async function clearPendingRefCookie(): Promise<void> {
  * workspace-creation action:
  *   - no cookie / unknown code / self-referral → silent no-op
  *   - already-attributed workspace → no-op (UNIQUE on referred_workspace_id)
- * On a real attribution we insert the referrals row and bump the referrer's
- * referral_bonus_posts. Never throws — a growth side-effect must not break
- * onboarding; failures are swallowed and the cookie is cleared regardless.
+ * On a real attribution we insert the referrals row with vested_at = NULL
+ * (reward PENDING). We DON'T grant the bonus here any more — that vests only
+ * when the referred workspace ships its first post (vestReferralOnFirstPost),
+ * so a throwaway signup that never posts can't farm the referrer's quota.
+ * Never throws — a growth side-effect must not break onboarding; failures are
+ * swallowed and the cookie is cleared regardless.
  */
 export async function attributeWorkspaceCreation(referredWorkspaceId: string): Promise<void> {
   let code: string | null = null;
@@ -157,16 +192,14 @@ export async function attributeWorkspaceCreation(referredWorkspaceId: string): P
     // Unknown code, or the user is using their own workspace's code → no-op.
     if (!referrer || referrer.workspace_id === referredWorkspaceId) return;
 
-    const { error: insErr } = await svc.from("referrals").insert({
+    // Insert the pending referral edge. A duplicate means this workspace was
+    // already attributed — leave the prior referral intact. No reward yet:
+    // vested_at stays NULL until the first post lands.
+    await svc.from("referrals").insert({
       referrer_workspace_id: referrer.workspace_id,
       referred_workspace_id: referredWorkspaceId,
       code,
     });
-    // A duplicate means this workspace was already attributed — leave the prior
-    // referral (and its reward) intact and don't double-credit.
-    if (insErr) return;
-
-    await grantReferralBonus(referrer.workspace_id);
   } catch {
     // Growth side-effect: never surface to the onboarding flow.
   } finally {
@@ -176,12 +209,71 @@ export async function attributeWorkspaceCreation(referredWorkspaceId: string): P
 }
 
 /**
- * Add REFERRAL_BONUS_POSTS to the referrer's running bonus. Read-then-write
- * (no transaction) mirrors usage.ts/bumpCounter — the worst-case race loses a
- * single grant, acceptable for a growth perk.
+ * Vest a referral reward when the referred workspace ships its FIRST post.
+ *
+ * Call this from EVERY post→'posted' transition (the post-scheduled cron and
+ * publishNowAction). Cheap no-op in the common case: most workspaces weren't
+ * referred, and an already-vested referral is filtered out by the partial index.
+ *
+ * Idempotency (never double-grants) rests on a single conditional UPDATE:
+ *   UPDATE referrals SET vested_at = now()
+ *   WHERE referred_workspace_id = $ws AND vested_at IS NULL
+ *   RETURNING referrer_workspace_id
+ * Exactly one caller can flip NULL→now(); every subsequent call (concurrent
+ * cron tick, publish-now race, a retry) matches zero rows because vested_at is
+ * already set, so the +5 bonus is granted at most once per referral. We then
+ * bump the referrer's referral_bonus_posts. If that bump were to fail after the
+ * flip, the worst case is a single un-credited reward — never a double grant —
+ * which mirrors the at-most-once posture of the rest of the growth code.
+ *
+ * Never throws: a reward side-effect must not break the publish path. Pass the
+ * shared service client through so we don't open a second connection per post.
  */
-async function grantReferralBonus(referrerWorkspaceId: string): Promise<void> {
-  const svc = supabaseService();
+export async function vestReferralOnFirstPost(
+  svc: ReturnType<typeof supabaseService>,
+  referredWorkspaceId: string,
+): Promise<void> {
+  try {
+    // Only vest on the workspace's FIRST-EVER posted post. Any other posted row
+    // for this workspace means it already shipped before — and an unvested
+    // referral would already have vested on that earlier post. Cheap existence
+    // probe: is there a posted post OTHER than (implicitly) the one we're in?
+    // We check for >1 posted because this runs AFTER the current post flipped
+    // to 'posted', so the first-ever case has exactly one posted row.
+    const { count: postedCount } = await svc
+      .from("posts")
+      .select("id", { count: "exact", head: true })
+      .eq("workspace_id", referredWorkspaceId)
+      .eq("status", "posted");
+    if ((postedCount ?? 0) > 1) return; // not the first post — nothing to vest.
+
+    // Conditional flip — the idempotency key. Only the caller that wins the
+    // NULL→now() transition gets a row back and thus grants the bonus.
+    const vestedAt = new Date().toISOString();
+    const { data: vested } = await svc
+      .from("referrals")
+      .update({ vested_at: vestedAt })
+      .eq("referred_workspace_id", referredWorkspaceId)
+      .is("vested_at", null)
+      .select("referrer_workspace_id")
+      .maybeSingle();
+    if (!vested?.referrer_workspace_id) return; // not referred, or already vested.
+
+    await grantReferralBonus(svc, vested.referrer_workspace_id);
+  } catch {
+    // Reward side-effect: never surface to the publish path.
+  }
+}
+
+/**
+ * Add REFERRAL_BONUS_POSTS to the referrer's running bonus. Read-then-write
+ * (no transaction) mirrors usage.ts/bumpCounter — and crucially runs only after
+ * a winning vested_at flip, so it's reached at most once per referral.
+ */
+async function grantReferralBonus(
+  svc: ReturnType<typeof supabaseService>,
+  referrerWorkspaceId: string,
+): Promise<void> {
   const { data: ws } = await svc
     .from("workspaces")
     .select("referral_bonus_posts")
