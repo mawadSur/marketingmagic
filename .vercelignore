@@ -1,0 +1,5 @@
+# The MoneyPrinterTurbo render worker is a separate Python service deployed to
+# Render (see render.yaml). Vercel only builds the Next.js app at the repo root —
+# never upload the Python worker (keeps deploys small and avoids framework
+# misdetection).
+services/mpt-worker
