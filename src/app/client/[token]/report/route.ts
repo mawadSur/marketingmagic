@@ -1,5 +1,5 @@
 import { resolvePortalToken, hasScope } from "@/lib/portal/token";
-import { getPortalBranding, getPortalReport } from "@/lib/portal/data";
+import { getPortalBranding, getPortalReport, getPortalInsights } from "@/lib/portal/data";
 import { resolveTheme } from "@/lib/portal/branding";
 import { renderReportHtml } from "@/lib/portal/report-html";
 
@@ -23,13 +23,18 @@ export async function GET(
     return new Response("This link cannot view reports.", { status: 403 });
   }
 
-  const [branding, report] = await Promise.all([getPortalBranding(ctx), getPortalReport(ctx)]);
+  const [branding, report, insights] = await Promise.all([
+    getPortalBranding(ctx),
+    getPortalReport(ctx),
+    getPortalInsights(ctx),
+  ]);
   const theme = resolveTheme(branding);
 
   const html = renderReportHtml({
     theme,
     workspaceName: branding.workspaceName,
     report,
+    insights,
     generatedAt: new Date(),
   });
 

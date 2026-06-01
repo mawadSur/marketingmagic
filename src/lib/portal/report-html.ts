@@ -8,7 +8,7 @@
 // text and only let validated hex colors / the stored logo URL through, so no
 // post text or branding field can inject markup.
 
-import type { PortalReport } from "@/lib/portal/data";
+import type { PortalReport, PortalInsights } from "@/lib/portal/data";
 import { type ResolvedTheme } from "@/lib/portal/branding";
 
 function escapeHtml(s: string): string {
@@ -42,10 +42,48 @@ export function renderReportHtml(opts: {
   theme: ResolvedTheme;
   workspaceName: string;
   report: PortalReport;
+  insights: PortalInsights | null;
   generatedAt: Date;
 }): string {
-  const { theme, workspaceName, report, generatedAt } = opts;
+  const { theme, workspaceName, report, insights, generatedAt } = opts;
   const { totals } = report;
+
+  // Winning themes — rendered as chips. Each value is escaped; lift/posts are
+  // numbers formatted here, never interpolated from raw input.
+  const themesHtml =
+    insights && insights.winningThemes.length > 0
+      ? `<h2 class="section">What's working — winning themes</h2>
+    <div class="chips">${insights.winningThemes
+      .map(
+        (t) =>
+          `<span class="chip"><b>${escapeHtml(t.tag)}</b> ${t.lift.toFixed(
+            1,
+          )}× baseline · ${t.posts} posts</span>`,
+      )
+      .join("")}</div>`
+      : "";
+
+  // Per-channel breakdown table (30d).
+  const channelsHtml =
+    insights && insights.channels.length > 0
+      ? `<h2 class="section">By channel (30 days)</h2>
+    <table>
+      <thead><tr>
+        <th>Channel</th><th class="num">Posts</th>
+        <th class="num">Impr.</th><th class="num">Eng. rate</th>
+      </tr></thead>
+      <tbody>${insights.channels
+        .map(
+          (c) =>
+            `<tr><td class="chan">${escapeHtml(
+              c.channel.toUpperCase(),
+            )}</td><td class="num">${c.posts.toLocaleString()}</td><td class="num">${c.impressions.toLocaleString()}</td><td class="num">${(
+              c.engagement_rate * 100
+            ).toFixed(1)}%</td></tr>`,
+        )
+        .join("")}</tbody>
+    </table>`
+      : "";
 
   const rowsHtml = report.rows
     .map((r) => {
@@ -93,6 +131,10 @@ export function renderReportHtml(opts: {
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   td.post { max-width: 280px; }
   td.chan { color: #666; }
+  h2.section { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--primary); margin: 28px 0 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { border: 1px solid var(--accent); border-radius: 999px; padding: 4px 10px; font-size: 11px; color: #333; }
+  .chip b { color: #111; }
   footer { margin-top: 28px; color: #999; font-size: 11px; }
   @media print { body { padding: 0; } header { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
 </style>
@@ -115,6 +157,10 @@ export function renderReportHtml(opts: {
     <div class="stat"><div class="label">Avg. eng. rate</div><div class="value">${avgEr}</div></div>
   </div>
 
+  ${themesHtml}
+  ${channelsHtml}
+
+  <h2 class="section">Post-by-post</h2>
   <table>
     <thead>
       <tr>
