@@ -34,6 +34,10 @@ export interface CreateJobInput {
   // Reference-image video (bet ④) — the chosen reference photo path. Omitted by
   // the MPT orchestrator, set by the reference-video orchestrator.
   referenceImagePath?: string | null;
+  // Plan videos — the EXISTING plan post this render attaches to. When set, the
+  // poll-video-jobs cron UPDATEs that post's media[] instead of inserting a new
+  // draft. Omitted by the ad-hoc /video and reference paths.
+  postId?: string | null;
 }
 
 // Insert a fresh job in `pending` state. Returns the new row.
@@ -47,6 +51,7 @@ export async function createJob(input: CreateJobInput): Promise<VideoJobRow> {
       params: input.params,
       status: "pending",
       ...(input.referenceImagePath ? { reference_image_path: input.referenceImagePath } : {}),
+      ...(input.postId ? { post_id: input.postId } : {}),
     })
     .select("*")
     .single();
