@@ -3,7 +3,8 @@ name: cron / poll-video-jobs
 # Vercel Hobby allows only daily crons, so we run the every-2-minute video
 # poller from GitHub Actions and just hit the public route. The route is
 # auth-gated by Bearer CRON_SECRET and no-ops cleanly when MPT is unset.
-# (vercel.json also registers this path so Pro plans can drive it natively.)
+# (GitHub Actions is the sole scheduler — the sub-daily vercel.json cron was
+# removed in f87ce6e because it broke every Hobby deploy.)
 
 on:
   schedule:

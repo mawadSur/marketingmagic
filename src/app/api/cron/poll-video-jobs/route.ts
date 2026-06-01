@@ -179,8 +179,10 @@ async function attachDraftPost(
     content_type: "video/mp4",
   };
 
-  // Seed the draft caption from the render subject so the post isn't empty;
-  // the user edits it before approving.
+  // Seed the caption from the render subject so the post isn't empty; the user
+  // edits it before approving. The post lands as `pending_approval` so it shows
+  // up in the queue's approval list (a bare `draft` is surfaced nowhere and the
+  // approve action rejects it — that left rendered videos orphaned).
   const params = job.params;
   const caption =
     params && typeof params === "object" && !Array.isArray(params)
@@ -203,7 +205,7 @@ async function attachDraftPost(
       social_account_id: job.social_account_id,
       channel: account.channel,
       text: caption,
-      status: "draft",
+      status: "pending_approval",
       media: [mediaItem] as unknown as never,
     })
     .select("id")
