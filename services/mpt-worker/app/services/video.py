@@ -173,18 +173,15 @@ def _open_video_clip_quietly(video_path: str, audio: bool = False) -> VideoFileC
        最终音频会在 `generate_video()` 阶段统一挂载；
     3. 如果依赖库确实输出了内容，降级为 debug 日志，便于必要时排查。
     """
-    captured_stdout = io.StringIO()
-    with redirect_stdout(captured_stdout):
-        clip = VideoFileClip(video_path, audio=audio)
-
-    moviepy_stdout = captured_stdout.getvalue().strip()
-    if moviepy_stdout:
-        logger.debug(
-            "suppressed MoviePy video reader stdout for "
-            f"{video_path}, chars: {len(moviepy_stdout)}"
-        )
-
-    return clip
+    # NOTE: previously this wrapped VideoFileClip in contextlib.redirect_stdout
+    # to hide MoviePy 2.1.x's cosmetic probe prints. But redirect_stdout swaps
+    # sys.stdout for an io.StringIO that has no fileno(); MoviePy 2.1.x's
+    # FFMPEG_VideoReader trips on that and its frame subprocess yields 0 bytes
+    # ("failed to read the first frame / 0 frames"), which silently broke EVERY
+    # render at the compose step. The probe output is harmless on a headless
+    # worker, so we open the clip directly. (Diagnosed on the live worker:
+    # plain VideoFileClip reads the same file fine; the redirect was the bug.)
+    return VideoFileClip(video_path, audio=audio)
 
 
 def close_clip(clip):
