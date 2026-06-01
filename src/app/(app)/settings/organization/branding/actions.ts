@@ -8,6 +8,11 @@ import {
   mintPortalToken,
   revokePortalToken,
 } from "@/lib/portal/manage";
+import {
+  ORG_BRANDING_BUCKET,
+  ALLOWED_LOGO_MIME,
+  logoExtForMime,
+} from "@/lib/portal/branding";
 import { siteUrl } from "@/lib/env";
 import type { ClientPortalScope } from "@/lib/db/types";
 
@@ -30,7 +35,9 @@ const colorSchema = z
   .optional()
   .or(z.literal(""));
 
-const ALLOWED_LOGO_MIME = new Set(["image/png", "image/jpeg", "image/webp", "image/svg+xml"]);
+// Mime allowlist + bucket id are shared from @/lib/portal/branding so the
+// upload action, the bucket DDL (migration 033), and tests stay in lockstep.
+const ALLOWED_LOGO_MIME_SET = new Set<string>(ALLOWED_LOGO_MIME);
 const MAX_LOGO_BYTES = 2 * 1024 * 1024; // 2MB — a logo, not a hero image.
 
 export type BrandingState = { error: string | null; ok: boolean };
@@ -81,30 +88,24 @@ export async function updateBrandingAction(
     color_accent: accentParsed.data ? accentParsed.data : null,
   };
 
-  // Optional logo upload. Stored in the public post-media bucket under an
-  // org-branding/ prefix (no new bucket / migration needed).
+  // Optional logo upload. Stored in the dedicated, org-scoped `org-branding`
+  // bucket (migration 033) under `<organizationId>/...` so its storage RLS
+  // (org-membership keyed on the first path segment) actually applies. The
+  // bucket's mime allowlist includes SVG, unlike the post-media bucket.
   const file = formData.get("logo");
   if (file instanceof File && file.size > 0) {
     if (file.size > MAX_LOGO_BYTES) return { error: "Logo must be 2MB or smaller.", ok: false };
-    if (!ALLOWED_LOGO_MIME.has(file.type)) {
+    if (!ALLOWED_LOGO_MIME_SET.has(file.type)) {
       return { error: "Logo must be PNG, JPEG, WebP, or SVG.", ok: false };
     }
-    const ext =
-      file.type === "image/png"
-        ? "png"
-        : file.type === "image/webp"
-          ? "webp"
-          : file.type === "image/svg+xml"
-            ? "svg"
-            : "jpg";
-    const path = `org-branding/${organizationId}/logo-${Date.now()}.${ext}`;
+    const path = `${organizationId}/logo-${Date.now()}.${logoExtForMime(file.type)}`;
     const bytes = new Uint8Array(await file.arrayBuffer());
     const svc = supabaseService();
     const { error: upErr } = await svc.storage
-      .from("post-media")
+      .from(ORG_BRANDING_BUCKET)
       .upload(path, bytes, { contentType: file.type, upsert: true });
     if (upErr) return { error: `Logo upload failed: ${upErr.message}`, ok: false };
-    const { data: pub } = svc.storage.from("post-media").getPublicUrl(path);
+    const { data: pub } = svc.storage.from(ORG_BRANDING_BUCKET).getPublicUrl(path);
     update.logo_url = pub.publicUrl;
   }
 
