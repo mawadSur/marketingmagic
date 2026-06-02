@@ -152,6 +152,19 @@ const serverSchema = z.object({
   // pick one. A sane neutral default; overridable per deployment. Read through
   // didDefaultVoiceId().
   DID_DEFAULT_VOICE_ID: z.string().min(1).default("en-US-JennyNeural"),
+  // Reference-image video (bet ④ · Capability B "Make it talk") — HeyGen talking-
+  // avatar provider (the SECOND 'present' provider, alongside D-ID). Base URL of
+  // the HeyGen API, overridable so it isn't hardcoded; defaults to the public
+  // host. No trailing slash (trimmed in heygenBaseUrl()). Only meaningful when
+  // REFERENCE_VIDEO_ENABLED is on; the BYO HeyGen key lives in workspace_byo_keys
+  // (provider 'heygen_video'), not in env. Read through heygenBaseUrl().
+  HEYGEN_BASE_URL: z.string().min(1).default("https://api.heygen.com"),
+  // The default HeyGen voice the talk uses when the user doesn't pick one.
+  // Overridable per deployment; read through heygenDefaultVoiceId(). HeyGen voice
+  // ids are opaque tokens (not the Microsoft "en-US-*Neural" names D-ID uses), so
+  // this default is intentionally empty — HeyGen requires a real voice_id, so the
+  // adapter rejects a render when neither the user nor this default supplies one.
+  HEYGEN_DEFAULT_VOICE_ID: z.string().default(""),
 });
 
 const publicSchema = serverSchema.pick({
@@ -295,4 +308,21 @@ export function didBaseUrl(): string {
 // DID_DEFAULT_VOICE_ID. Used by the D-ID adapter when input.voiceId is absent.
 export function didDefaultVoiceId(): string {
   return serverEnv().DID_DEFAULT_VOICE_ID;
+}
+
+// Reference-image video (bet ④ · Capability B "Make it talk") — base URL of the
+// HeyGen API the talking-avatar adapter submits to (the SECOND 'present' provider,
+// alongside D-ID). Overridable via HEYGEN_BASE_URL so it isn't hardcoded; defaults
+// to the public host. Trailing slash trimmed so `${heygenBaseUrl()}/v2/video/generate`
+// is always well-formed. Only meaningful when REFERENCE_VIDEO_ENABLED is on.
+export function heygenBaseUrl(): string {
+  return serverEnv().HEYGEN_BASE_URL.replace(/\/$/, "");
+}
+
+// Reference-image video (bet ④ · Capability B) — the default HeyGen voice id used
+// when the user doesn't pick one. Overridable via HEYGEN_DEFAULT_VOICE_ID. Empty
+// by default (HeyGen voice ids are opaque, deployment-specific), so the HeyGen
+// adapter rejects a render when neither the user nor this default supplies one.
+export function heygenDefaultVoiceId(): string {
+  return serverEnv().HEYGEN_DEFAULT_VOICE_ID.trim();
 }

@@ -157,7 +157,13 @@ describe("byo-keys: getWorkspaceKeyStatus never leaks plaintext", () => {
   it("returns presence booleans only, with no decryption", async () => {
     await setWorkspaceKeys(WS, "llm", LLM);
     const status = await getWorkspaceKeyStatus(WS);
-    expect(status).toEqual({ llm: true, pexels: false, fal_video: false, did_video: false });
+    expect(status).toEqual({
+      llm: true,
+      pexels: false,
+      fal_video: false,
+      did_video: false,
+      heygen_video: false,
+    });
     // Serialise the whole result and assert the secret can't appear in it.
     expect(JSON.stringify(status)).not.toContain(LLM.api_key);
   });
@@ -170,6 +176,7 @@ describe("byo-keys: getWorkspaceKeyStatus never leaks plaintext", () => {
       pexels: true,
       fal_video: false,
       did_video: false,
+      heygen_video: false,
     });
   });
 
@@ -183,6 +190,7 @@ describe("byo-keys: getWorkspaceKeyStatus never leaks plaintext", () => {
       pexels: false,
       fal_video: false,
       did_video: false,
+      heygen_video: false,
     });
   });
 });
