@@ -47,12 +47,21 @@ export interface ByoFalVideoSecrets {
 export interface ByoDidVideoSecrets {
   api_key: string;
 }
-export type ByoProvider = "llm" | "pexels" | "fal_video" | "did_video";
+// Reference-image video (bet ④ · Capability B "Make it talk"). The workspace's
+// own HeyGen API key for the talking-avatar path — the SECOND 'present' provider,
+// alongside D-ID. Same AES-256-GCM machinery as the other BYO secrets; stored as
+// its OWN provider row ('heygen_video') so a workspace can have D-ID, HeyGen, both,
+// or neither.
+export interface ByoHeygenVideoSecrets {
+  api_key: string;
+}
+export type ByoProvider = "llm" | "pexels" | "fal_video" | "did_video" | "heygen_video";
 export type ByoSecrets =
   | ByoLlmSecrets
   | ByoPexelsSecrets
   | ByoFalVideoSecrets
-  | ByoDidVideoSecrets;
+  | ByoDidVideoSecrets
+  | ByoHeygenVideoSecrets;
 
 // Thrown when BYO_ENCRYPTION_KEY is missing/wrong-length. Distinct type so
 // callers can surface "video keys not configured" vs a generic crypto error.
@@ -153,6 +162,10 @@ export interface WorkspaceKeys {
   // talking-avatar key. Independent of fal_video; a workspace can have either,
   // both, or neither.
   did_video?: ByoDidVideoSecrets;
+  // Reference-image video (bet ④ · Capability B) — the workspace's own HeyGen
+  // talking-avatar key (the second 'present' provider). Independent of the others;
+  // a workspace can have D-ID, HeyGen, both, or neither.
+  heygen_video?: ByoHeygenVideoSecrets;
 }
 
 export async function getWorkspaceKeys(workspaceId: string): Promise<WorkspaceKeys> {
@@ -171,6 +184,7 @@ export async function getWorkspaceKeys(workspaceId: string): Promise<WorkspaceKe
     else if (row.provider === "pexels") out.pexels = parsed as ByoPexelsSecrets;
     else if (row.provider === "fal_video") out.fal_video = parsed as ByoFalVideoSecrets;
     else if (row.provider === "did_video") out.did_video = parsed as ByoDidVideoSecrets;
+    else if (row.provider === "heygen_video") out.heygen_video = parsed as ByoHeygenVideoSecrets;
   }
   return out;
 }
@@ -189,6 +203,9 @@ export interface WorkspaceKeyStatus {
   // Reference-image video (bet ④ · Capability B) D-ID key presence. Drives the
   // talking-avatar key form's Configured/Not pill — never a value.
   did_video: boolean;
+  // Reference-image video (bet ④ · Capability B) HeyGen key presence. Drives the
+  // second talking-avatar key form's Configured/Not pill — never a value.
+  heygen_video: boolean;
 }
 
 export async function getWorkspaceKeyStatus(workspaceId: string): Promise<WorkspaceKeyStatus> {
@@ -206,6 +223,7 @@ export async function getWorkspaceKeyStatus(workspaceId: string): Promise<Worksp
     pexels: providers.has("pexels"),
     fal_video: providers.has("fal_video"),
     did_video: providers.has("did_video"),
+    heygen_video: providers.has("heygen_video"),
   };
 }
 
