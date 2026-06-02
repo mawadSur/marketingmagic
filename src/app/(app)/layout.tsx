@@ -1,4 +1,5 @@
 import {
+  blockClientsFromAgencyApp,
   getActiveWorkspaceOrRedirect,
   getAuthedUserOrRedirect,
   listWorkspaces,
@@ -12,6 +13,11 @@ import { WorkspaceSwitcherCmdK } from "@/components/workspace-switcher-cmdk";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await getAuthedUserOrRedirect();
+  // Client ACCOUNTS guard (migration 037): a client (no agency footprint + has
+  // client_memberships) is redirected to /portal here, BEFORE any agency page
+  // renders — they can never load /dashboard, /queue, /plans, /settings, etc.
+  // Agency/solo users pass through untouched.
+  await blockClientsFromAgencyApp();
   const active = await getActiveWorkspaceOrRedirect();
   const workspaces = await listWorkspaces();
   const isOwner = active.owner_id === user.id;
