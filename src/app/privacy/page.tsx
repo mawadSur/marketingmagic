@@ -47,9 +47,9 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>Social account credentials:</strong> when you connect X, LinkedIn, Bluesky,
-              Instagram, or Threads, we receive OAuth tokens (or app passwords for Bluesky) from
-              the provider. These are stored encrypted server-side and never exposed to the
-              browser.
+              Instagram, Threads, Facebook, or TikTok, we receive OAuth tokens (or app passwords
+              for Bluesky) from the provider. These are stored encrypted server-side and never
+              exposed to the browser.
             </li>
             <li>
               <strong>Content you create:</strong> posts you write or generate, drafts, themes,
@@ -101,8 +101,9 @@ export default function PrivacyPage() {
               for generation is not stored by them beyond their abuse-detection windows.
             </li>
             <li>
-              <strong>Social platforms</strong> (X, LinkedIn, Meta for Instagram + Threads,
-              Bluesky) — for publishing and reading public metrics on your behalf.
+              <strong>Social platforms</strong> (X, LinkedIn, Meta for Instagram + Threads +
+              Facebook, Bluesky, TikTok) — for publishing and reading public metrics on your
+              behalf.
             </li>
             <li>
               <strong>Stripe</strong> — payment processing (if you&apos;re on a paid plan).

@@ -20,6 +20,7 @@ const CONNECTORS = [
   { slug: "threads", label: "Connect Threads", initiate: "/api/oauth/threads/initiate" },
   { slug: "instagram", label: "Connect Instagram", initiate: "/api/oauth/instagram/initiate" },
   { slug: "facebook", label: "Connect Facebook", initiate: "/api/oauth/facebook/initiate" },
+  { slug: "tiktok", label: "Connect TikTok", initiate: "/api/oauth/tiktok/initiate" },
   { slug: "bluesky", label: "Connect Bluesky", initiate: null }, // app-password flow, not OAuth
 ] as const;
 

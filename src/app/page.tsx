@@ -235,6 +235,9 @@ export default function HomePage() {
             <Link href="/privacy" className="transition-colors hover:text-foreground">
               Privacy
             </Link>
+            <Link href="/terms" className="transition-colors hover:text-foreground">
+              Terms
+            </Link>
             <Link href="/login" className="transition-colors hover:text-foreground">
               Log in
             </Link>
