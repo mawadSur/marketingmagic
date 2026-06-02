@@ -115,6 +115,82 @@ export async function recordClientInvite(input: {
   return { error: error?.message ?? null };
 }
 
+// ─────────────────────────────────────────────────────────────
+// Client ACCOUNTS — link an invited email to a workspace on signup (037)
+// ─────────────────────────────────────────────────────────────
+//
+// When a user with email E signs up (or confirms), we look for PENDING client
+// invites addressed to E in client_invites (migration 035) and create a
+// client_membership for each invited workspace. This is the bridge that turns
+// "agency emailed a client a link" into "client has a real account scoped to
+// that workspace's report".
+//
+// SECURITY + correctness:
+//   • Service-role only (no auth.uid() at signup time for the membership write);
+//     client_memberships has no authenticated INSERT policy, so this is the ONLY
+//     way a membership is ever created — a client can never self-link.
+//   • IDEMPOTENT: upsert on (user_id, workspace_id) so re-running (e.g. confirm
+//     then login) never duplicates, and a user invited to N workspaces gets N
+//     memberships. We dedupe workspace ids in code before writing.
+//   • Email match is case-insensitive (emails are case-insensitive); we lower()
+//     both sides. The invite's recipient_email is the agency-controlled value.
+//   • Best-effort + fail-safe: a failure here NEVER blocks signup. The agency
+//     can re-send the invite, or a later login re-runs the link.
+
+export interface LinkClientResult {
+  linkedWorkspaceIds: string[];
+  error: string | null;
+}
+
+/**
+ * Create client_memberships for every workspace `email` was invited to. Returns
+ * the workspace ids linked (possibly empty when there are no pending invites for
+ * this email — the normal case for an agency/solo signup). Never throws.
+ */
+export async function linkClientInvitesOnSignup(
+  userId: string,
+  email: string,
+): Promise<LinkClientResult> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return { linkedWorkspaceIds: [], error: null };
+
+  const svc = supabaseService();
+
+  // Find pending invites addressed to this email. ilike with no wildcards is an
+  // exact, case-insensitive match — invites are agency-written, so the value is
+  // trusted; we still normalize to avoid case/whitespace misses.
+  const { data: invites, error: readErr } = await svc
+    .from("client_invites")
+    .select("workspace_id")
+    .ilike("recipient_email", normalized);
+
+  if (readErr) {
+    console.error(`[client-account] invite lookup failed for ${normalized}: ${readErr.message}`);
+    return { linkedWorkspaceIds: [], error: readErr.message };
+  }
+
+  // Dedupe — an email may have been invited to the same workspace more than once
+  // (multiple emails sent); each maps to ONE membership.
+  const workspaceIds = Array.from(new Set((invites ?? []).map((i) => i.workspace_id)));
+  if (workspaceIds.length === 0) return { linkedWorkspaceIds: [], error: null };
+
+  // Idempotent upsert: unique(user_id, workspace_id) means a repeat run is a
+  // no-op. ignoreDuplicates keeps it a pure insert-if-absent.
+  const { error: writeErr } = await svc
+    .from("client_memberships")
+    .upsert(
+      workspaceIds.map((workspace_id) => ({ user_id: userId, workspace_id })),
+      { onConflict: "user_id,workspace_id", ignoreDuplicates: true },
+    );
+
+  if (writeErr) {
+    console.error(`[client-account] membership upsert failed for ${userId}: ${writeErr.message}`);
+    return { linkedWorkspaceIds: [], error: writeErr.message };
+  }
+
+  return { linkedWorkspaceIds: workspaceIds, error: null };
+}
+
 /**
  * Revoke a token. Scoped to BOTH the token id and the workspace_id so a caller
  * authorized for workspace A can never revoke workspace B's token by id.
