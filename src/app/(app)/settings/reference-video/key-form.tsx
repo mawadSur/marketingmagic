@@ -1,13 +1,14 @@
 "use client";
 
-// Reference-image video (bet ④) — BYO key forms for BOTH providers:
+// Reference-image video (bet ④) — BYO key forms for the providers:
 //   fal video (Capability A — "Animate a photo")
 //   D-ID      (Capability B — "Make it talk")
+//   HeyGen    (Capability B — "Make it talk", second provider)
 //
 // Mirrors the LLM/Pexels key forms in settings/video-keys: a password field with
 // show/hide, stored encrypted, never echoed back (Replace or Remove only). The
-// two providers are independent rows in workspace_byo_keys, so a workspace can
-// configure either, both, or neither.
+// providers are independent rows in workspace_byo_keys, so a workspace can
+// configure any, all, or none.
 
 import { useActionState, useState } from "react";
 import { Eye, EyeOff, ExternalLink } from "lucide-react";
@@ -19,6 +20,8 @@ import {
   removeFalVideoKeyAction,
   saveDidVideoKeyAction,
   removeDidVideoKeyAction,
+  saveHeygenVideoKeyAction,
+  removeHeygenVideoKeyAction,
   type ReferenceVideoState,
 } from "./actions";
 
@@ -162,6 +165,35 @@ export function DidVideoKeyForm({ configured }: { configured: boolean }) {
 
       <Button type="submit" disabled={pending}>
         {pending ? "Saving…" : configured ? "Replace D-ID key" : "Save D-ID key"}
+      </Button>
+    </form>
+  );
+}
+
+// ── HeyGen key (Capability B — "Make it talk", second provider) ──────────────
+
+export function HeygenVideoKeyStatus({ configured }: { configured: boolean }) {
+  return <KeyStatusPill configured={configured} removeAction={removeHeygenVideoKeyAction} />;
+}
+
+export function HeygenVideoKeyForm({ configured }: { configured: boolean }) {
+  const [state, action, pending] = useActionState(saveHeygenVideoKeyAction, initial);
+
+  return (
+    <form action={action} className="space-y-4">
+      <KeyField
+        label="HeyGen API key"
+        placeholder={configured ? "Enter a new key to replace the stored one" : "Your HeyGen API key"}
+        helpHref="https://app.heygen.com/settings?nav=API"
+        helpLabel="Get a HeyGen key"
+        helpTail="You pay HeyGen directly. Stored encrypted — never displayed again."
+      />
+
+      {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
+      {state.success ? <p className="text-sm text-emerald-600">{state.success}</p> : null}
+
+      <Button type="submit" disabled={pending}>
+        {pending ? "Saving…" : configured ? "Replace HeyGen key" : "Save HeyGen key"}
       </Button>
     </form>
   );

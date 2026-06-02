@@ -46,6 +46,7 @@ vi.mock("@/lib/video/mpt-client", () => ({ createRenderJob: vi.fn() }));
 // one was picked and what key it received.
 const didSubmit = vi.fn();
 const falSubmit = vi.fn();
+const heygenSubmit = vi.fn();
 const getReferenceVideoProvider = vi.fn();
 vi.mock("@/lib/video/reference/stub-provider", () => ({
   getReferenceVideoProvider: (...a: unknown[]) => getReferenceVideoProvider(...a),
@@ -69,15 +70,22 @@ beforeEach(() => {
   getWorkspaceKeys.mockResolvedValue({
     did_video: { api_key: "did-k" },
     fal_video: { api_key: "fal-k" },
+    heygen_video: { api_key: "heygen-k" },
   });
   createJob.mockResolvedValue({ id: "job-1" });
   didSubmit.mockResolvedValue({ providerJobId: "talk-9", provider: "did_video" });
   falSubmit.mockResolvedValue({ providerJobId: "req-9", provider: "fal_video" });
-  getReferenceVideoProvider.mockImplementation((cap?: string) =>
-    cap === "present"
-      ? { name: "did_video", submit: didSubmit, poll: vi.fn(), fetchBytes: vi.fn() }
-      : { name: "fal_video", submit: falSubmit, poll: vi.fn(), fetchBytes: vi.fn() },
-  );
+  heygenSubmit.mockResolvedValue({ providerJobId: "vid-9", provider: "heygen_video" });
+  // Resolve the adapter on BOTH the capability and the present provider arg so we
+  // can assert which talking-avatar adapter (D-ID vs HeyGen) was picked.
+  getReferenceVideoProvider.mockImplementation((cap?: string, present?: string) => {
+    if (cap !== "present") {
+      return { name: "fal_video", submit: falSubmit, poll: vi.fn(), fetchBytes: vi.fn() };
+    }
+    return present === "heygen_video"
+      ? { name: "heygen_video", submit: heygenSubmit, poll: vi.fn(), fetchBytes: vi.fn() }
+      : { name: "did_video", submit: didSubmit, poll: vi.fn(), fetchBytes: vi.fn() };
+  });
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -133,7 +141,9 @@ describe("present · happy path", () => {
     expect(typeof params.consent_attested_at).toBe("string");
 
     // The D-ID adapter was selected and given the did_video key + the script.
-    expect(getReferenceVideoProvider).toHaveBeenCalledWith("present");
+    // present defaults to the D-ID provider, so the factory is called with both
+    // the capability and the resolved present provider.
+    expect(getReferenceVideoProvider).toHaveBeenCalledWith("present", "did_video");
     expect(didSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ script: PRESENT_INPUT.script, voiceId: "en-US-JennyNeural" }),
       "did-k",
@@ -159,7 +169,9 @@ describe("animate · NOT regressed", () => {
     const params = createJob.mock.calls[0][0].params;
     expect(params.capability).toBe("animate");
     expect(params.provider).toBe("fal_video");
-    expect(getReferenceVideoProvider).toHaveBeenCalledWith("animate");
+    // animate ignores the present provider; the factory is called with the
+    // capability + the default present provider (unused for fal).
+    expect(getReferenceVideoProvider).toHaveBeenCalledWith("animate", "did_video");
     expect(falSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: "gentle push-in" }),
       "fal-k",
@@ -178,5 +190,50 @@ describe("animate · NOT regressed", () => {
       }),
     ).rejects.toThrow(/prompt is required/i);
     expect(createJob).not.toHaveBeenCalled();
+  });
+});
+
+describe("present · HeyGen provider selection", () => {
+  it("picks the HeyGen adapter + heygen_video key, stores provider=heygen_video", async () => {
+    const res = await startReferenceVideoRender(WS, {
+      ...PRESENT_INPUT,
+      presentProvider: "heygen_video",
+    });
+
+    expect(res).toEqual({ jobId: "job-1", providerJobId: "vid-9" });
+
+    const params = createJob.mock.calls[0][0].params;
+    expect(params.kind).toBe("reference_image");
+    expect(params.capability).toBe("present");
+    // The chosen provider is persisted so the poll-cron picks HeyGen per job.
+    expect(params.provider).toBe("heygen_video");
+    expect(params.script).toBe(PRESENT_INPUT.script);
+
+    // The HeyGen adapter was selected and given the heygen_video key + the script.
+    expect(getReferenceVideoProvider).toHaveBeenCalledWith("present", "heygen_video");
+    expect(heygenSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ script: PRESENT_INPUT.script, voiceId: "en-US-JennyNeural" }),
+      "heygen-k",
+    );
+    expect(didSubmit).not.toHaveBeenCalled();
+    expect(falSubmit).not.toHaveBeenCalled();
+    expect(markProcessing).toHaveBeenCalledWith("job-1", "vid-9");
+  });
+
+  it("throws when no heygen_video key is configured (and does NOT use D-ID/fal)", async () => {
+    getWorkspaceKeys.mockResolvedValue({ did_video: { api_key: "did-k" }, fal_video: { api_key: "fal-k" } });
+    await expect(
+      startReferenceVideoRender(WS, { ...PRESENT_INPUT, presentProvider: "heygen_video" }),
+    ).rejects.toThrow(/no heygen api key/i);
+    expect(heygenSubmit).not.toHaveBeenCalled();
+    expect(didSubmit).not.toHaveBeenCalled();
+    expect(falSubmit).not.toHaveBeenCalled();
+  });
+
+  it("defaults to D-ID when presentProvider is omitted (back-compat)", async () => {
+    await startReferenceVideoRender(WS, PRESENT_INPUT);
+    expect(getReferenceVideoProvider).toHaveBeenCalledWith("present", "did_video");
+    expect(didSubmit).toHaveBeenCalled();
+    expect(heygenSubmit).not.toHaveBeenCalled();
   });
 });

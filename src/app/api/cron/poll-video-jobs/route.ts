@@ -17,7 +17,10 @@ import {
   type VideoJobRow,
 } from "@/lib/video/jobs";
 import { getWorkspaceKeys } from "@/lib/video/byo-keys";
-import { getReferenceVideoProvider } from "@/lib/video/reference/stub-provider";
+import {
+  getReferenceVideoProvider,
+  type PresentProvider,
+} from "@/lib/video/reference/stub-provider";
 import type { ReferenceVideoCapability } from "@/lib/video/reference/provider";
 import type { PostMediaItem } from "@/lib/social/dispatch";
 
@@ -183,16 +186,34 @@ function jobKind(job: VideoJobRow): string {
   return "mpt";
 }
 
-// Read params.capability off a reference job to pick the adapter (fal vs D-ID).
-// Defaults to "animate" (fal) — legacy reference jobs predate the discriminator
-// (params.capability absent / provider "fal_video"), so they keep polling fal.
+// Read params.capability off a reference job to pick the adapter (fal vs a
+// talking-avatar provider). Defaults to "animate" (fal) — legacy reference jobs
+// predate the discriminator (params.capability absent / provider "fal_video"), so
+// they keep polling fal. Either of the two talking-avatar providers marks "present".
 function jobCapability(job: VideoJobRow): ReferenceVideoCapability {
   const p = job.params;
   if (p && typeof p === "object" && !Array.isArray(p)) {
     const rec = p as Record<string, unknown>;
-    if (rec.capability === "present" || rec.provider === "did_video") return "present";
+    if (
+      rec.capability === "present" ||
+      rec.provider === "did_video" ||
+      rec.provider === "heygen_video"
+    ) {
+      return "present";
+    }
   }
   return "animate";
+}
+
+// Read params.provider off a "present" job to pick WHICH talking-avatar adapter +
+// key (D-ID vs HeyGen). Defaults to "did_video" so legacy present jobs written
+// before HeyGen existed (provider absent / "did_video") keep polling D-ID.
+function jobPresentProvider(job: VideoJobRow): PresentProvider {
+  const p = job.params;
+  if (p && typeof p === "object" && !Array.isArray(p)) {
+    if ((p as Record<string, unknown>).provider === "heygen_video") return "heygen_video";
+  }
+  return "did_video";
 }
 
 // Reference-image video (bet ④) — poll one reference job and finalise it. Mirrors
@@ -220,21 +241,29 @@ async function processReferenceJob(
   }
 
   // Which capability/adapter this job is. Defaults to "animate" (fal) so legacy
-  // reference jobs written before params.capability existed still poll fal.
+  // reference jobs written before params.capability existed still poll fal. For a
+  // "present" job, params.provider further selects D-ID vs HeyGen.
   const capability = jobCapability(job);
   const isPresent = capability === "present";
+  const presentProvider = isPresent ? jobPresentProvider(job) : "did_video";
+  const isHeygen = presentProvider === "heygen_video";
 
-  // The provider needs the workspace's decrypted key for THIS capability:
-  //   "animate" → fal_video    "present" → did_video
+  // The provider needs the workspace's decrypted key for THIS capability/provider:
+  //   "animate" → fal_video    "present" did_video → did_video    heygen → heygen_video
   const keys = await getWorkspaceKeys(job.workspace_id);
-  const apiKey = isPresent ? keys.did_video?.api_key : keys.fal_video?.api_key;
+  const apiKey = !isPresent
+    ? keys.fal_video?.api_key
+    : isHeygen
+      ? keys.heygen_video?.api_key
+      : keys.did_video?.api_key;
   if (!apiKey) {
-    const label = isPresent ? "D-ID" : "fal video";
+    const label = !isPresent ? "fal video" : isHeygen ? "HeyGen" : "D-ID";
+    const short = !isPresent ? "fal" : isHeygen ? "heygen" : "did";
     await markFailed(job.id, `no ${label} key for workspace (key removed mid-render?)`);
-    return { id: job.id, status: "failed", reason: `missing ${isPresent ? "did" : "fal"} key` };
+    return { id: job.id, status: "failed", reason: `missing ${short} key` };
   }
 
-  const provider = getReferenceVideoProvider(capability);
+  const provider = getReferenceVideoProvider(capability, presentProvider);
   const poll = await provider.poll(job.mpt_task_id, apiKey);
 
   if (typeof poll.progress === "number") {
