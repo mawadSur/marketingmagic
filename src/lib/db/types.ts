@@ -350,6 +350,22 @@ export interface Database {
         }>;
         Relationships: [];
       };
+      // Client ACCOUNTS (migration 037). The NARROW link between an authenticated
+      // client user and a client workspace they may read the REPORT for. This is
+      // deliberately SEPARATE from `memberships` (full member rights) — it grants
+      // ONLY aggregate-report read access, gated in code via user_is_client_of.
+      // A user SELECTs only their own rows; all writes are service-role only.
+      client_memberships: {
+        Row: {
+          id: string;
+          user_id: string;
+          workspace_id: string;
+          created_at: string;
+        };
+        Insert: { id?: string; user_id: string; workspace_id: string };
+        Update: Partial<{ user_id: string; workspace_id: string }>;
+        Relationships: [];
+      };
       usage_counters: {
         Row: {
           workspace_id: string;
@@ -1389,6 +1405,9 @@ export interface Database {
       user_is_org_member: { Args: { org_id: string }; Returns: boolean };
       // Phase E (migration 033) tight org-admin gate (owner or 'admin' role).
       user_is_org_admin: { Args: { org_id: string }; Returns: boolean };
+      // Client accounts (migration 037): is the CALLER (auth.uid()) a client of
+      // this workspace? Derives strictly from auth.uid() — no user-id arg.
+      user_is_client_of: { Args: { ws_id: string }; Returns: boolean };
     };
     Enums: Record<string, never>;
   };
