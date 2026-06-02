@@ -711,6 +711,20 @@ export async function publishNowAction(postId: string): Promise<ActionResult> {
     return scheduleNow(svc, post.id, nowIso);
   }
 
+  // Fall back to the cron for VIDEO posts. A video publish polls the platform's
+  // transcode (IG Reels up to 5min, TikTok up to ~2min) — that can never finish
+  // inside a serverless function's time budget, so dispatching inline here would
+  // 503 the browser even when the post eventually succeeds. The post-scheduled
+  // cron tolerates this across ticks via RetryableError, so route video through
+  // it. (Channels are video-only/optional: TikTok is video-only, IG video =
+  // Reels.) Images + text still publish inline below for instant feedback.
+  const hasVideo = ((post.media ?? []) as unknown as PostMediaItem[]).some(
+    (m) => m?.kind === "video",
+  );
+  if (hasVideo) {
+    return scheduleNow(svc, post.id, nowIso);
+  }
+
   // Idempotency: if the ledger already has this post (e.g. a prior cron tick
   // posted it but the status update lost a race), reconcile and return.
   const { data: existing } = await svc
