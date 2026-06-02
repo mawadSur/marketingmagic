@@ -22,6 +22,7 @@ import {
   removeWorkspaceKeys,
   type ByoFalVideoSecrets,
   type ByoDidVideoSecrets,
+  type ByoHeygenVideoSecrets,
 } from "@/lib/video/byo-keys";
 import {
   startReferenceVideoRender,
@@ -185,6 +186,48 @@ export async function removeDidVideoKeyAction(): Promise<void> {
   revalidatePath("/settings/reference-video");
 }
 
+// ── BYO HeyGen key (Capability B "Make it talk") — save / remove. ────────────
+// Identical machinery to the D-ID key actions, just the `heygen_video` provider
+// row. A workspace can configure D-ID, HeyGen, both, or neither for "present".
+
+const heygenKeySchema = z.object({
+  // HeyGen keys are an opaque token; length-checked, never echoed back.
+  api_key: z.string().trim().min(8, "API key looks too short.").max(400),
+});
+
+export async function saveHeygenVideoKeyAction(
+  _prev: ReferenceVideoState,
+  formData: FormData,
+): Promise<ReferenceVideoState> {
+  const auth = await keyGuard();
+  if ("error" in auth) return { error: auth.error, success: null };
+
+  const parsed = heygenKeySchema.safeParse({ api_key: formData.get("api_key") });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input.", success: null };
+  }
+
+  const secrets: ByoHeygenVideoSecrets = { api_key: parsed.data.api_key };
+  try {
+    await setWorkspaceKeys(auth.workspaceId, "heygen_video", secrets, auth.userId);
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : "Failed to save HeyGen key.",
+      success: null,
+    };
+  }
+
+  revalidatePath("/settings/reference-video");
+  return { error: null, success: "HeyGen key saved." };
+}
+
+export async function removeHeygenVideoKeyAction(): Promise<void> {
+  const auth = await keyGuard();
+  if ("error" in auth) return;
+  await removeWorkspaceKeys(auth.workspaceId, "heygen_video");
+  revalidatePath("/settings/reference-video");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Generate — upload the reference photo AND kick off a render in one action.
 //
@@ -199,11 +242,15 @@ export async function removeDidVideoKeyAction(): Promise<void> {
 
 const ASPECTS = ["9:16", "16:9", "1:1"] as const;
 const MODES = ["animate", "present"] as const;
+// The two talking-avatar providers for "present". Defaults to D-ID so an absent
+// field (older form post) keeps the original D-ID behaviour.
+const PRESENT_PROVIDERS = ["did_video", "heygen_video"] as const;
 
 // Mode-aware schema: prompt is required for "animate", script for "present".
 const generateSchema = z
   .object({
     mode: z.enum(MODES).default("animate"),
+    present_provider: z.enum(PRESENT_PROVIDERS).default("did_video"),
     prompt: z.string().trim().max(1000).optional(),
     script: z.string().trim().max(4000).optional(),
     voice_id: z.string().trim().max(120).optional(),
@@ -244,6 +291,7 @@ export async function generateReferenceVideoAction(
   // Validate the non-file fields first so a missing consent box fails fast.
   const parsed = generateSchema.safeParse({
     mode: formData.get("mode") ?? "animate",
+    present_provider: formData.get("present_provider") ?? "did_video",
     prompt: formData.get("prompt") || undefined,
     script: formData.get("script") || undefined,
     voice_id: formData.get("voice_id") || undefined,
@@ -284,6 +332,8 @@ export async function generateReferenceVideoAction(
   try {
     await startReferenceVideoRender(ws.id, {
       capability: parsed.data.mode,
+      // Only meaningful for "present"; ignored for "animate" (always fal).
+      presentProvider: parsed.data.present_provider,
       referenceImageUrl: pub.publicUrl,
       referenceImagePath: path,
       prompt: parsed.data.prompt,

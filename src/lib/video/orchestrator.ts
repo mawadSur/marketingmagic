@@ -18,7 +18,10 @@ import { mptConfigured, referenceVideoEnabled } from "@/lib/env";
 import { getWorkspaceKeys } from "@/lib/video/byo-keys";
 import { createJob, markFailed, markProcessing } from "@/lib/video/jobs";
 import { createRenderJob, type CreateRenderParams, type VideoAspect } from "@/lib/video/mpt-client";
-import { getReferenceVideoProvider } from "@/lib/video/reference/stub-provider";
+import {
+  getReferenceVideoProvider,
+  type PresentProvider,
+} from "@/lib/video/reference/stub-provider";
 import type {
   ReferenceVideoCapability,
   ReferenceVideoInputs,
@@ -162,9 +165,13 @@ export async function startVideoRender(
 export interface StartReferenceVideoRenderInput {
   // Which sub-capability to render (spike §2). Defaults to "animate" (the
   // already-shipped fal.ai image-to-video path) so existing callers are
-  // unchanged. "present" routes to the D-ID talking-avatar path and REQUIRES a
-  // non-empty `script` + the workspace's did_video key.
+  // unchanged. "present" routes to a talking-avatar path and REQUIRES a
+  // non-empty `script` + the matching talking-avatar key.
   capability?: ReferenceVideoCapability;
+  // Capability B ("present") only: WHICH talking-avatar provider to render with —
+  // D-ID or HeyGen. Defaults to "did_video" so existing "present" callers (and the
+  // already-shipped D-ID path) are unchanged. Ignored for "animate" (always fal).
+  presentProvider?: PresentProvider;
   // Public URL of the uploaded reference photo (reference-image bucket).
   referenceImageUrl: string;
   // Storage path of that photo (<workspace_id>/<id>/<file>) — persisted on the
@@ -212,6 +219,11 @@ export async function startReferenceVideoRender(
   // Default to "animate" (Capability A) so existing callers are unchanged.
   const capability: ReferenceVideoCapability = input.capability ?? "animate";
   const isPresent = capability === "present";
+  // For "present", which talking-avatar provider to use. Defaults to "did_video"
+  // so existing "present" callers keep selecting D-ID byte-for-byte. Irrelevant
+  // for "animate" (always fal).
+  const presentProvider: PresentProvider = input.presentProvider ?? "did_video";
+  const isHeygen = isPresent && presentProvider === "heygen_video";
 
   // A reference photo is required for BOTH capabilities.
   if (!input.referenceImageUrl?.trim() || !input.referenceImagePath?.trim()) {
@@ -250,20 +262,29 @@ export async function startReferenceVideoRender(
   // typed QuotaExceededError the server action surfaces as an upgrade nudge.
   await assertWithinVideoQuota(workspaceId, 1);
 
-  // Pull and decrypt the workspace's BYO key for the chosen capability:
-  //   "animate" → fal_video key   (Capability A — unchanged)
-  //   "present" → did_video key   (Capability B — talking avatar)
+  // Pull and decrypt the workspace's BYO key for the chosen capability/provider:
+  //   "animate"             → fal_video key     (Capability A — unchanged)
+  //   "present" did_video   → did_video key     (Capability B — D-ID)
+  //   "present" heygen_video → heygen_video key (Capability B — HeyGen)
   const keys = await getWorkspaceKeys(workspaceId);
-  const apiKey = isPresent ? keys.did_video?.api_key : keys.fal_video?.api_key;
+  const apiKey = !isPresent
+    ? keys.fal_video?.api_key
+    : isHeygen
+      ? keys.heygen_video?.api_key
+      : keys.did_video?.api_key;
   if (!apiKey) {
     throw new VideoRenderError(
-      isPresent
-        ? "No D-ID API key configured for this workspace."
-        : "No fal video API key configured for this workspace.",
+      !isPresent
+        ? "No fal video API key configured for this workspace."
+        : isHeygen
+          ? "No HeyGen API key configured for this workspace."
+          : "No D-ID API key configured for this workspace.",
     );
   }
 
-  const providerName = isPresent ? "did_video" : "fal_video";
+  // The provider value stored on the job (poll-cron reads it to pick the matching
+  // adapter + key per job): fal_video for animate, else the chosen present provider.
+  const providerName = !isPresent ? "fal_video" : presentProvider;
   const aspect: VideoAspect = input.videoAspect ?? "9:16";
   const consentAttestedAt = new Date().toISOString();
   // The caption seed: the script (present) or the prompt (animate).
@@ -297,8 +318,9 @@ export async function startReferenceVideoRender(
     referenceImagePath: input.referenceImagePath,
   });
 
-  // Submit to the capability's adapter with the decrypted key.
-  const provider = getReferenceVideoProvider(capability);
+  // Submit to the capability's adapter with the decrypted key. For "present" the
+  // presentProvider selects D-ID vs HeyGen; for "animate" it's ignored (fal).
+  const provider = getReferenceVideoProvider(capability, presentProvider);
   const providerInput: ReferenceVideoInputs = {
     referenceImageUrl: input.referenceImageUrl,
     prompt,

@@ -35,6 +35,7 @@ const ASPECTS: Array<{ value: string; label: string }> = [
 ];
 
 type Mode = "animate" | "present";
+type PresentProvider = "did_video" | "heygen_video";
 
 // Strict, mode-specific consent copy (the orchestrator enforces the same intent
 // server-side). "present" is the stricter "appear to say these words" wording.
@@ -47,22 +48,35 @@ const CONSENT_COPY: Record<Mode, string> = {
 export function ReferenceImageUploadForm({
   falConfigured,
   didConfigured,
+  heygenConfigured,
 }: {
   falConfigured: boolean;
   didConfigured: boolean;
+  heygenConfigured: boolean;
 }) {
   const [state, action, pending] = useActionState(generateReferenceVideoAction, initial);
   const [fileName, setFileName] = useState<string | null>(null);
   const [consent, setConsent] = useState(false);
   const [mode, setMode] = useState<Mode>("animate");
+  // Which talking-avatar provider the "present" render uses. Submitted as
+  // `present_provider`; ignored server-side for "animate" (always fal).
+  const [presentProvider, setPresentProvider] = useState<PresentProvider>("did_video");
 
   const isPresent = mode === "present";
-  const activeKeyConfigured = isPresent ? didConfigured : falConfigured;
+  const isHeygen = presentProvider === "heygen_video";
+  // The key the active render needs: present → the chosen provider's key; else fal.
+  const activeKeyConfigured = isPresent
+    ? isHeygen
+      ? heygenConfigured
+      : didConfigured
+    : falConfigured;
 
   return (
     <form action={action} className="space-y-5">
       {/* Mode toggle — the submitted `mode` field drives the capability. */}
       <input type="hidden" name="mode" value={mode} />
+      {/* The chosen present provider (only consumed server-side for "present"). */}
+      <input type="hidden" name="present_provider" value={presentProvider} />
       <div className="inline-flex rounded-lg border bg-muted/30 p-1 text-sm">
         <button
           type="button"
@@ -110,6 +124,42 @@ export function ReferenceImageUploadForm({
 
       {isPresent ? (
         <>
+          {/* Provider selector — D-ID or HeyGen for the talking-avatar render. */}
+          <div className="space-y-1.5">
+            <Label>Provider</Label>
+            <div className="inline-flex rounded-lg border bg-muted/30 p-1 text-sm">
+              <button
+                type="button"
+                onClick={() => setPresentProvider("did_video")}
+                aria-pressed={presentProvider === "did_video"}
+                className={
+                  presentProvider === "did_video"
+                    ? "rounded-md bg-background px-3 py-1.5 font-medium shadow-sm"
+                    : "rounded-md px-3 py-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                }
+              >
+                D-ID
+              </button>
+              <button
+                type="button"
+                onClick={() => setPresentProvider("heygen_video")}
+                aria-pressed={presentProvider === "heygen_video"}
+                className={
+                  presentProvider === "heygen_video"
+                    ? "rounded-md bg-background px-3 py-1.5 font-medium shadow-sm"
+                    : "rounded-md px-3 py-1.5 text-muted-foreground transition-colors hover:text-foreground"
+                }
+              >
+                HeyGen
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {isHeygen
+                ? "HeyGen — higher-quality avatar; pick a HeyGen voice id below."
+                : "D-ID — fast, cheapest entry; uses a Microsoft TTS voice."}
+            </p>
+          </div>
+
           <div className="space-y-1.5">
             <Label htmlFor="script">Script</Label>
             <Textarea
@@ -128,10 +178,12 @@ export function ReferenceImageUploadForm({
               id="voice_id"
               name="voice_id"
               type="text"
-              placeholder="e.g. en-US-JennyNeural"
+              placeholder={isHeygen ? "e.g. a HeyGen voice id" : "e.g. en-US-JennyNeural"}
             />
             <p className="text-xs text-muted-foreground">
-              A Microsoft TTS voice id. Leave blank to use the deployment default.
+              {isHeygen
+                ? "A HeyGen voice id. Leave blank to use the deployment default (HeyGen requires a voice)."
+                : "A Microsoft TTS voice id. Leave blank to use the deployment default."}
             </p>
           </div>
         </>
@@ -200,7 +252,9 @@ export function ReferenceImageUploadForm({
       {!activeKeyConfigured ? (
         <p className="text-xs text-muted-foreground">
           {isPresent
-            ? "Add your D-ID key below before generating a talking video."
+            ? isHeygen
+              ? "Add your HeyGen key below before generating a talking video."
+              : "Add your D-ID key below before generating a talking video."
             : "Add your fal video key below before generating."}
         </p>
       ) : null}

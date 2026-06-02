@@ -14,6 +14,7 @@
 import { referenceVideoEnabled } from "@/lib/env";
 import { falReferenceVideoProvider } from "./fal-video-provider";
 import { didReferenceVideoProvider } from "./did-video-provider";
+import { heygenReferenceVideoProvider } from "./heygen-video-provider";
 import {
   ReferenceVideoNotEnabledError,
   type ReferenceVideoCapability,
@@ -22,6 +23,11 @@ import {
   type ReferenceVideoProvider,
   type ReferenceVideoSubmitResult,
 } from "./provider";
+
+// The two 'present' (talking-avatar) providers a user can choose between. The
+// 'animate' capability is always fal, so it has no provider knob. The orchestrator
+// + poll-cron pass one of these so the factory can resolve D-ID vs HeyGen.
+export type PresentProvider = "did_video" | "heygen_video";
 
 export class StubReferenceVideoProvider implements ReferenceVideoProvider {
   readonly name = "stub";
@@ -50,17 +56,28 @@ export const stubReferenceVideoProvider = new StubReferenceVideoProvider();
 // Resolve the active reference-image video adapter for a capability. Throws
 // ReferenceVideoNotEnabledError when the feature flag is off so call sites fail
 // loudly and uniformly. When ON, picks the concrete adapter:
-//   "animate" → fal.ai image-to-video  (Capability A — "animate a photo")
-//   "present" → D-ID talking avatar     (Capability B — "make it talk")
+//   "animate"            → fal.ai image-to-video   (Capability A — "animate a photo")
+//   "present" (did_video) → D-ID talking avatar    (Capability B — "make it talk")
+//   "present" (heygen_video) → HeyGen talking avatar (Capability B — "make it talk")
+//
 // The capability arg DEFAULTS to "animate" so the already-shipped fal call sites
 // (orchestrator + poll cron) keep selecting fal byte-for-byte without passing it.
-// The stub is retained only for typing/tests and is never returned once the flag
-// is flipped.
+// For "present" the optional `presentProvider` arg disambiguates D-ID vs HeyGen;
+// it DEFAULTS to "did_video" so the original single-provider call
+// (getReferenceVideoProvider("present")) still resolves to D-ID unchanged. The
+// stub is retained only for typing/tests and is never returned once the flag is
+// flipped.
 export function getReferenceVideoProvider(
   capability: ReferenceVideoCapability = "animate",
+  presentProvider: PresentProvider = "did_video",
 ): ReferenceVideoProvider {
   if (!referenceVideoEnabled()) {
     throw new ReferenceVideoNotEnabledError();
   }
-  return capability === "present" ? didReferenceVideoProvider : falReferenceVideoProvider;
+  if (capability !== "present") {
+    return falReferenceVideoProvider;
+  }
+  return presentProvider === "heygen_video"
+    ? heygenReferenceVideoProvider
+    : didReferenceVideoProvider;
 }

@@ -25,6 +25,8 @@ import {
   FalVideoKeyStatus,
   DidVideoKeyForm,
   DidVideoKeyStatus,
+  HeygenVideoKeyForm,
+  HeygenVideoKeyStatus,
 } from "./key-form";
 
 export const dynamic = "force-dynamic";
@@ -64,7 +66,13 @@ export default async function ReferenceVideoPage() {
   const [status, usage, jobRows] = await Promise.all([
     byo
       ? getWorkspaceKeyStatus(ws.id)
-      : Promise.resolve({ llm: false, pexels: false, fal_video: false, did_video: false }),
+      : Promise.resolve({
+          llm: false,
+          pexels: false,
+          fal_video: false,
+          did_video: false,
+          heygen_video: false,
+        }),
     getUsageSnapshot(ws.id),
     supabase
       .from("video_jobs")
@@ -149,6 +157,28 @@ export default async function ReferenceVideoPage() {
       </Card>
 
       <Card>
+        <CardHeader className="flex-row items-start justify-between space-y-0">
+          <div className="space-y-1.5">
+            <CardTitle className="text-base">HeyGen key</CardTitle>
+            <CardDescription>
+              For &ldquo;Make it talk&rdquo;. Bring your own HeyGen key — talking avatar from a photo + script. Stored encrypted.
+            </CardDescription>
+          </div>
+          {byo ? <HeygenVideoKeyStatus configured={status.heygen_video} /> : null}
+        </CardHeader>
+        <CardContent>
+          {byo ? (
+            <HeygenVideoKeyForm configured={status.heygen_video} />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Credential encryption isn&apos;t configured on this deployment (set{" "}
+              <code>BYO_ENCRYPTION_KEY</code>).
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader>
           <CardTitle className="text-base">Generate</CardTitle>
           <CardDescription>
@@ -159,6 +189,7 @@ export default async function ReferenceVideoPage() {
           <ReferenceImageUploadForm
             falConfigured={status.fal_video}
             didConfigured={status.did_video}
+            heygenConfigured={status.heygen_video}
           />
         </CardContent>
       </Card>
