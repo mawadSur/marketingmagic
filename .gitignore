@@ -56,3 +56,4 @@ agentdb.rvf.lock
 # Saved provider error-page dumps (debugging cruft)
 errorfb.txt
 error*.txt
+.gstack/
