@@ -8,6 +8,14 @@ import { ThreadBuilderRow, type ThreadTweetRow } from "@/components/thread-build
 import { readThreadMeta } from "@/lib/threads/schema";
 
 export const dynamic = "force-dynamic";
+// publishNowAction (queue/actions.ts) dispatches inline — image/text publish
+// hits a platform API + a short status poll (IG images poll to FINISHED for a
+// few seconds). Server Actions inherit this segment's maxDuration, and Vercel's
+// default is far below what an IG container poll needs, so a successful publish
+// was 503-ing the browser AFTER the post went live. Match the post-scheduled
+// cron's 60s ceiling so the inline path returns cleanly. Video posts never run
+// inline (publishNowAction defers them to the cron) so 60s is sufficient here.
+export const maxDuration = 60;
 
 interface PostQueryRow {
   id: string;
