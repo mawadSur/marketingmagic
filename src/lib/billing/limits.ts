@@ -156,10 +156,13 @@ export async function assertWithinChannelQuota(
     if (existing) return; // Reconnect of a known account — always allowed.
   }
 
+  // Count only live channels — a disconnected account no longer occupies a
+  // quota slot, so the user can connect a different channel in its place.
   const { count } = await svc
     .from("social_accounts")
     .select("id", { count: "exact", head: true })
-    .eq("workspace_id", workspaceId);
+    .eq("workspace_id", workspaceId)
+    .neq("status", "disconnected");
 
   const current = count ?? 0;
   if (current >= limit) {

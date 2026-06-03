@@ -43,6 +43,43 @@ export async function setTrustModeAction(
   return { error: null };
 }
 
+// Disconnect a connected channel. Soft state, not a hard delete: posts
+// reference social_accounts with `on delete restrict`, so removing a row a
+// workspace has posted through is impossible (and would orphan history). We
+// flip status to 'disconnected' and wipe the stored credentials so we hold no
+// live tokens for an account the user has cut off. The dispatcher/cron only
+// act on status='connected', and the channels listing + quota exclude
+// 'disconnected', so the slot frees up. Reconnecting (the OAuth/app-password
+// upsert) flips status back to 'connected' and restores credentials.
+export async function disconnectAccountAction(accountId: string): Promise<ActionResult> {
+  if (!uuid.safeParse(accountId).success) return { error: "Bad account id." };
+  const ws = await getActiveWorkspaceOrRedirect();
+  const svc = supabaseService();
+
+  // Scope the write to the active workspace so a user can't disconnect another
+  // workspace's account by guessing an id. Confirm the row exists + belongs
+  // here before mutating.
+  const { data: acct } = await svc
+    .from("social_accounts")
+    .select("id")
+    .eq("id", accountId)
+    .eq("workspace_id", ws.id)
+    .maybeSingle();
+  if (!acct) return { error: "Account not found." };
+
+  const { error } = await svc
+    .from("social_accounts")
+    .update({ status: "disconnected", trust_mode: false, credentials: {} })
+    .eq("id", accountId)
+    .eq("workspace_id", ws.id);
+  if (error) return { error: error.message };
+
+  revalidatePath("/settings/channels");
+  revalidatePath(`/settings/channels/${accountId}`);
+  revalidatePath("/dashboard");
+  return { error: null };
+}
+
 // Resets the trust counter for the channel and forces trust_mode back to false.
 // Called when the user flags a posted post as "should not have posted" — one strike,
 // you lose autopilot until you re-earn it.

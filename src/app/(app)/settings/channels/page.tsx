@@ -32,10 +32,15 @@ export default async function ChannelsPage({
   const ws = await getActiveWorkspaceOrRedirect();
   const params = await searchParams;
   const supabase = await supabaseServer();
+  // Exclude disconnected accounts — a disconnected channel reads as "not
+  // connected" everywhere: it drops off this list and frees its quota slot so
+  // the user can reconnect from the "Add a channel" grid below. The soft row
+  // lingers only so post history (FK on delete restrict) survives.
   const { data: accounts } = await supabase
     .from("social_accounts_safe")
     .select("*")
     .eq("workspace_id", ws.id)
+    .neq("status", "disconnected")
     .order("created_at", { ascending: true });
 
   const hasAny = accounts && accounts.length > 0;
