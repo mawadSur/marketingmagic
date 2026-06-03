@@ -7,11 +7,13 @@
 // into a style attribute.
 
 import type { PortalBranding } from "@/lib/portal/data";
+import { PORTAL_DEFAULT_ACCENT, PORTAL_DEFAULT_PRIMARY } from "@/lib/design-tokens";
 
 const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
-export const DEFAULT_PRIMARY = "#0a0a0a";
-export const DEFAULT_ACCENT = "#2563eb";
+// Re-exported from the centralized design tokens; same values as before.
+export const DEFAULT_PRIMARY = PORTAL_DEFAULT_PRIMARY;
+export const DEFAULT_ACCENT = PORTAL_DEFAULT_ACCENT;
 
 // ─── White-label logo asset storage (migration 033) ──────────────────────
 //

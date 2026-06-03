@@ -101,10 +101,10 @@ export default async function AnalyticsPage() {
                       <span className="text-muted-foreground">{c.posts} posts</span>
                     </div>
                     <div className="flex flex-wrap items-center justify-end gap-2 tabular-nums sm:gap-3">
-                      <span className="text-muted-foreground">
+                      <span className="tabular-nums text-muted-foreground">
                         {c.impressions.toLocaleString()} <span className="hidden sm:inline">impressions</span>
                       </span>
-                      <span className="font-medium">{pct.toFixed(2)}%</span>
+                      <span className="font-medium tabular-nums">{pct.toFixed(2)}%</span>
                     </div>
                   </li>
                 );

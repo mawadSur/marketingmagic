@@ -22,6 +22,14 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 222.2 84% 4.9%;
     --radius: 0.5rem;
+    /* Brand accent gradient (indigo-600 → violet-600). The single source of
+       truth for the brand mark + accent moments; promoted out of the hardcoded
+       Tailwind strings that used to live in page.tsx. */
+    --brand-grad-start: 243 75% 59%; /* indigo-600 #4f46e5 */
+    --brand-grad-end: 262 83% 58%; /* violet-600 #7c3aed */
+    /* Positive/success signal (emerald-500). Used by the dashboard heatmap +
+       success feedback so they stop hardcoding #10b981. */
+    --positive: 160 84% 39%;
   }
 
   .dark {
@@ -42,6 +50,11 @@
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
     --ring: 212.7 26.8% 83.9%;
+    /* Brand gradient stays vivid in dark mode (slightly lighter stops read
+       better on a dark surface). */
+    --brand-grad-start: 243 75% 65%;
+    --brand-grad-end: 262 83% 67%;
+    --positive: 160 84% 45%;
   }
 }
 
@@ -73,5 +86,27 @@
   /* Interactive card hover: gentle lift, no bouncy motion. */
   .card-hover {
     @apply transition-shadow duration-200 hover:shadow-sm hover:border-foreground/15;
+  }
+
+  /* Brand accent gradient. Use for the logo tile + the handful of accent
+     surfaces (video callout). Driven by the --brand-grad-* tokens so the
+     indigo→violet identity lives in one place, not scattered Tailwind strings. */
+  .brand-gradient {
+    background-image: linear-gradient(
+      135deg,
+      hsl(var(--brand-grad-start)),
+      hsl(var(--brand-grad-end))
+    );
+  }
+  /* Same gradient as clipped text (hero headline accent). */
+  .brand-gradient-text {
+    background-image: linear-gradient(
+      90deg,
+      hsl(var(--brand-grad-start)),
+      hsl(var(--brand-grad-end))
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
   }
 }

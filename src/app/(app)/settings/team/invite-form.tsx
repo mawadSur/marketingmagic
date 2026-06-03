@@ -32,11 +32,23 @@ export function InviteForm() {
     }
   };
 
+  // The email validation error is the only field-specific message
+  // ("Enter a valid email address."); render it under the email field.
+  // Everything else (owner check, missing secret, pending invite, DB / email
+  // send) is non-field and stays at form level.
+  const emailError = state.error === "Enter a valid email address.";
+
+  // A delivered invitation (sent email, not a fallback link) shows
+  // `info` without an `inviteUrl`. Treat that as a prominent success banner.
+  const inviteSent = Boolean(state.info && !state.error && !state.inviteUrl);
+
   return (
     <form ref={formRef} action={formAction} className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
         <div className="space-y-1.5">
-          <Label htmlFor="invite-email">Email</Label>
+          <Label htmlFor="invite-email">
+            Email <span className="text-destructive">*</span>
+          </Label>
           <Input
             id="invite-email"
             name="email"
@@ -45,6 +57,7 @@ export function InviteForm() {
             placeholder="teammate@example.com"
             required
           />
+          {emailError ? <p className="text-xs text-destructive">{state.error}</p> : null}
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="invite-role">Role</Label>
@@ -59,8 +72,16 @@ export function InviteForm() {
           </select>
         </div>
       </div>
-      {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
-      {state.info ? <p className="text-sm text-muted-foreground">{state.info}</p> : null}
+      {state.error && !emailError ? (
+        <p className="text-sm text-destructive">{state.error}</p>
+      ) : null}
+      {inviteSent ? (
+        <p className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm text-emerald-600 dark:text-emerald-400">
+          {state.info}
+        </p>
+      ) : state.info ? (
+        <p className="text-sm text-muted-foreground">{state.info}</p>
+      ) : null}
       {state.inviteUrl ? (
         <div className="space-y-2 rounded-md border bg-muted/40 p-3">
           <p className="text-xs text-muted-foreground">

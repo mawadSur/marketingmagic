@@ -2,6 +2,7 @@
 
 import { useTransition, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { disconnectAccountAction } from "./actions";
 
@@ -46,6 +47,10 @@ export function DisconnectButton({
           you&apos;ll just re-authorize.
         </p>
       </div>
+      <p className="flex items-center gap-1.5 text-xs font-medium text-destructive">
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        Stops all posting to this channel.
+      </p>
       <div className="flex items-center gap-2">
         {confirming ? (
           <>

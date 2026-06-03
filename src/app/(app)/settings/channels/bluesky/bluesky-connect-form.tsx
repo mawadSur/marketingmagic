@@ -9,12 +9,23 @@ import { connectBlueskyAction, type ConnectBlueskyState } from "./actions";
 
 const initial: ConnectBlueskyState = { error: null, success: null };
 
+// The handle validation error from the server action is the only field-specific
+// message ("Handle must be a valid domain …"); render it under the handle field.
+// Everything else (app-password length, verification, quota, network) is
+// non-field and stays at form level.
+function isHandleError(error: string | null): boolean {
+  return Boolean(error && error.startsWith("Handle "));
+}
+
 export function BlueskyConnectForm() {
   const [state, action, pending] = useActionState(connectBlueskyAction, initial);
+  const handleError = isHandleError(state.error);
   return (
     <form action={action} className="space-y-4">
       <div className="space-y-1">
-        <Label htmlFor="handle">Handle</Label>
+        <Label htmlFor="handle">
+          Handle <span className="text-destructive">*</span>
+        </Label>
         <Input
           id="handle"
           name="handle"
@@ -22,9 +33,12 @@ export function BlueskyConnectForm() {
           required
           autoComplete="off"
         />
+        {handleError ? <p className="text-xs text-destructive">{state.error}</p> : null}
       </div>
       <div className="space-y-1">
-        <Label htmlFor="appPassword">App password</Label>
+        <Label htmlFor="appPassword">
+          App password <span className="text-destructive">*</span>
+        </Label>
         <Input
           id="appPassword"
           name="appPassword"
@@ -47,8 +61,12 @@ export function BlueskyConnectForm() {
         </p>
       </div>
 
-      {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
-      {state.success ? <p className="text-sm text-emerald-600">{state.success}</p> : null}
+      {state.error && !handleError ? (
+        <p className="text-sm text-destructive">{state.error}</p>
+      ) : null}
+      {state.success ? (
+        <p className="text-sm text-emerald-600 dark:text-emerald-400">{state.success}</p>
+      ) : null}
 
       <Button type="submit" disabled={pending}>
         {pending ? "Verifying…" : "Connect Bluesky"}

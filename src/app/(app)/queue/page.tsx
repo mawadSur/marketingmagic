@@ -238,7 +238,18 @@ export default async function QueuePage() {
           <EmptyState
             icon="inbox"
             title="Inbox zero."
-            description="Generate a plan to seed the queue with drafts, or send a webhook event to auto-fill it."
+            description={
+              <>
+                Generate a plan to seed the queue with drafts, or{" "}
+                <Link
+                  href="/settings/events"
+                  className="font-medium text-foreground underline underline-offset-2 hover:text-primary"
+                >
+                  send a webhook event
+                </Link>{" "}
+                to auto-fill it.
+              </>
+            }
             action={
               <Link
                 href="/plans/new"
@@ -261,6 +272,14 @@ export default async function QueuePage() {
             icon="calendar"
             title="Nothing on the schedule."
             description="Approve a draft above and it'll line up here — revoke any time before it goes live."
+            action={
+              <Link
+                href="/queue/new"
+                className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity duration-200 hover:opacity-90"
+              >
+                New post
+              </Link>
+            }
           />
         }
       >
