@@ -58,6 +58,38 @@ export default async function ChannelsPage({
   const channelLimit = tier.limits.channels;
   const atChannelLimit = channelLimit !== -1 && connectedCount >= channelLimit;
 
+  // Post-connect guidance. OAuth callbacks all land here, but connecting a
+  // channel is only step one — users were getting stranded with no nudge
+  // toward the brief and first plan. Compute what's still missing so we can
+  // point them at the next step: connect → brief → plan. Cheap existence
+  // checks (select id, limit 1).
+  const [briefRes, planRes] = await Promise.all([
+    supabase.from("brand_briefs").select("id").eq("workspace_id", ws.id).maybeSingle(),
+    supabase.from("posting_plans").select("id").eq("workspace_id", ws.id).limit(1).maybeSingle(),
+  ]);
+  const hasBrief = Boolean(briefRes.data);
+  const hasPlan = Boolean(planRes.data);
+  // The next incomplete onboarding step, or null when fully set up. We only
+  // surface this once at least one channel is connected (somewhere to post).
+  const nextStep: { href: string; title: string; body: string; cta: string } | null =
+    hasAny && !hasBrief
+      ? {
+          href: "/onboarding/wizard?step=1",
+          title: "Next: tell us about your business",
+          body:
+            "Add a short brief — what you do, who you serve, and how you sound — so we can draft posts in your voice. Paste your site and we'll fill most of it in.",
+          cta: "Add your business info",
+        }
+      : hasAny && hasBrief && !hasPlan
+        ? {
+            href: "/onboarding/wizard?step=3",
+            title: "Next: plan your first week",
+            body:
+              "Your brief is in. Let's draft your first week of posts — everything lands in your queue for approval before anything publishes.",
+            cta: "Create your plan",
+          }
+        : null;
+
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <header className="space-y-1">
@@ -68,18 +100,36 @@ export default async function ChannelsPage({
         </p>
       </header>
 
-      {/* OAuth callbacks (X, LinkedIn, IG, Threads) bounce back here with
+      {/* OAuth callbacks (X, LinkedIn, IG, Threads…) bounce back here with
           ?connected=… or ?error=…. Surface them so users aren't silently
           stranded after an OAuth round-trip. */}
       {params.connected ? (
         <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-4 text-sm">
-          <p className="font-medium">Connected {params.connected}.</p>
+          <p className="font-medium capitalize">{params.connected} connected.</p>
         </div>
       ) : null}
       {params.error ? (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm">
           <p className="font-medium">Connection failed.</p>
           <p className="mt-1 text-muted-foreground break-words">{params.error}</p>
+        </div>
+      ) : null}
+
+      {/* Guided next step. Connecting a channel is only the first move — point
+          the user at the brief, then the first plan, so they don't stall on
+          this page after an OAuth round-trip. Disappears once both are done. */}
+      {nextStep ? (
+        <div className="flex flex-col gap-3 rounded-lg border border-primary/30 bg-primary/5 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-1">
+            <p className="text-base font-medium">{nextStep.title}</p>
+            <p className="max-w-xl text-sm text-muted-foreground">{nextStep.body}</p>
+          </div>
+          <Link
+            href={nextStep.href}
+            className="inline-flex shrink-0 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            {nextStep.cta} →
+          </Link>
         </div>
       ) : null}
 
