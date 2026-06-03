@@ -12,7 +12,7 @@ export type PostStatus =
   | "archived";
 export type ApprovalAction = "approved" | "rejected" | "edited" | "unapproved";
 export type PlanStatus = "draft" | "active" | "archived";
-export type AccountStatus = "connected" | "expired" | "revoked";
+export type AccountStatus = "connected" | "expired" | "revoked" | "disconnected";
 
 // Agency / Organization layer (Phase A — migration 029). An organization is
 // the agency tenant; it owns many client workspaces (workspaces.organization_id
