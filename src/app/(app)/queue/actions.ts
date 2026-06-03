@@ -745,7 +745,7 @@ export async function publishNowAction(postId: string): Promise<ActionResult> {
 
   const { data: account, error: acctErr } = await svc
     .from("social_accounts")
-    .select("credentials, successful_post_count")
+    .select("credentials, successful_post_count, status")
     .eq("id", post.social_account_id)
     .maybeSingle();
   if (acctErr || !account) {
@@ -755,6 +755,12 @@ export async function publishNowAction(postId: string): Promise<ActionResult> {
       .eq("id", post.id);
     revalidatePath("/queue");
     return { error: "No connected account for this post's channel." };
+  }
+  // Channel disconnected — credentials are wiped, so publishing would fail with
+  // a cryptic auth error. Surface a clear message and leave the post as-is so
+  // the user can reconnect and retry.
+  if (account.status === "disconnected") {
+    return { error: "Channel disconnected — reconnect it to publish this post." };
   }
 
   try {

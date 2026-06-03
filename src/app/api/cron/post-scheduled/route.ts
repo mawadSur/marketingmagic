@@ -87,12 +87,18 @@ async function handle(req: NextRequest) {
 
       const { data: account, error: acctErr } = await svc
         .from("social_accounts")
-        .select("credentials, successful_post_count")
+        .select("credentials, successful_post_count, status")
         .eq("id", post.social_account_id)
         .maybeSingle();
       if (acctErr || !account) {
         await markFailed(post.id, acctErr?.message ?? "account missing");
         results.push({ id: post.id, status: "failed", reason: "account missing" });
+        continue;
+      }
+      // Channel disconnected after the thread was scheduled — credentials gone.
+      if (account.status === "disconnected") {
+        await markFailed(post.id, "Channel disconnected — reconnect it to publish this post.");
+        results.push({ id: post.id, status: "failed", reason: "channel disconnected" });
         continue;
       }
 
@@ -177,12 +183,20 @@ async function handle(req: NextRequest) {
 
     const { data: account, error: acctErr } = await svc
       .from("social_accounts")
-      .select("credentials, successful_post_count")
+      .select("credentials, successful_post_count, status")
       .eq("id", post.social_account_id)
       .maybeSingle();
     if (acctErr || !account) {
       await markFailed(post.id, acctErr?.message ?? "account missing");
       results.push({ id: post.id, status: "failed", reason: "account missing" });
+      continue;
+    }
+    // Channel was disconnected after this post was scheduled — its credentials
+    // are wiped, so dispatch would fail with a cryptic auth error. Fail it with
+    // a clear reason instead.
+    if (account.status === "disconnected") {
+      await markFailed(post.id, "Channel disconnected — reconnect it to publish this post.");
+      results.push({ id: post.id, status: "failed", reason: "channel disconnected" });
       continue;
     }
 
