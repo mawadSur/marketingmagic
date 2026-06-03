@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,7 +34,16 @@ export function BlueskyConnectForm() {
           autoComplete="off"
         />
         <p className="text-xs text-muted-foreground">
-          Create at bsky.app/settings/app-passwords. Don&apos;t use your main login password.
+          <a
+            className="inline-flex items-center gap-1 underline-offset-4 hover:underline"
+            href="https://bsky.app/settings/app-passwords"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Create an app password
+            <ExternalLink className="h-3 w-3" aria-hidden />
+          </a>{" "}
+          · Don&apos;t use your main login password.
         </p>
       </div>
 
