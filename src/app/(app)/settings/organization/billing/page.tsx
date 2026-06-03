@@ -35,6 +35,12 @@ export default async function OrgBillingPage({
   if (!org) {
     return (
       <div className="mx-auto max-w-3xl space-y-6">
+        <Link
+          href="/settings/organization"
+          className="inline-block text-sm text-muted-foreground hover:text-foreground"
+        >
+          ← Organization
+        </Link>
         <header className="space-y-1">
           <p className="label-eyebrow">Settings</p>
           <h1 className="text-2xl font-semibold tracking-tight">Organization billing</h1>
@@ -89,6 +95,12 @@ export default async function OrgBillingPage({
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
+      <Link
+        href="/settings/organization"
+        className="inline-block text-sm text-muted-foreground hover:text-foreground"
+      >
+        ← Organization
+      </Link>
       <header className="space-y-1">
         <p className="label-eyebrow">Settings</p>
         <h1 className="text-2xl font-semibold tracking-tight">Organization billing</h1>

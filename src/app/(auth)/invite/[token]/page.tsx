@@ -5,6 +5,7 @@ import { supabaseService } from "@/lib/supabase/service";
 import { supabaseServer } from "@/lib/supabase/server";
 import { verifyInvitationToken } from "@/lib/memberships/invitations";
 import { Button } from "@/components/ui/button";
+import { Logo } from "@/components/ui/logo";
 import { acceptInvitationAction, declineInvitationAction } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -197,10 +198,10 @@ function Shell({ title, children }: { title: string; children: React.ReactNode }
         <div className="space-y-3 text-center">
           <Link
             href="/"
-            className="mx-auto inline-flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-foreground to-foreground/70 text-sm font-bold text-background transition-opacity duration-200 hover:opacity-90"
+            className="mx-auto inline-flex rounded-lg transition-opacity duration-200 hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             aria-label="marketingmagic home"
           >
-            mm
+            <Logo variant="full" size="lg" />
           </Link>
           <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         </div>

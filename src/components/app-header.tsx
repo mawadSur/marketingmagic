@@ -4,7 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { Database } from "@/lib/db/types";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
+import { Logo } from "@/components/ui/logo";
 import { cn } from "@/lib/utils";
+
+// Codebase-standard keyboard focus ring (see brand brief).
+const FOCUS_RING =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
 
 type Workspace = Database["public"]["Tables"]["workspaces"]["Row"];
 
@@ -49,15 +54,16 @@ export function AppHeader({
       <div className="container flex h-14 items-center gap-3 sm:gap-4">
         <Link
           href="/dashboard"
-          className="flex items-center gap-2 text-base font-semibold transition-opacity duration-200 hover:opacity-80"
+          aria-label="Go to dashboard"
+          className={cn(
+            "flex items-center gap-2 rounded-md text-base font-semibold transition-opacity duration-200 hover:opacity-80",
+            FOCUS_RING,
+          )}
         >
-          <span
-            aria-hidden
-            className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br from-foreground to-foreground/70 text-[10px] font-bold text-background"
-          >
-            mm
+          <Logo variant="icon" size="md" />
+          <span className="hidden font-semibold tracking-tight sm:inline">
+            marketingmagic
           </span>
-          <span className="hidden sm:inline">marketingmagic</span>
         </Link>
         <WorkspaceSwitcher active={active} workspaces={workspaces} />
         <nav className="flex flex-1 items-center gap-1 overflow-x-auto text-sm">
@@ -68,9 +74,10 @@ export function AppHeader({
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "relative whitespace-nowrap rounded-md px-2.5 py-1.5 transition-colors duration-200",
+                  "relative whitespace-nowrap rounded-md px-1.5 py-1.5 transition-colors duration-200 sm:px-2.5",
+                  FOCUS_RING,
                   activeRoute
-                    ? "text-foreground"
+                    ? "font-semibold text-foreground"
                     : "text-muted-foreground hover:text-foreground",
                 )}
                 aria-current={activeRoute ? "page" : undefined}
@@ -79,7 +86,7 @@ export function AppHeader({
                 {activeRoute ? (
                   <span
                     aria-hidden
-                    className="absolute inset-x-2 -bottom-[15px] h-[2px] rounded-full bg-foreground"
+                    className="absolute inset-x-2 bottom-0 h-[2px] rounded-full bg-foreground"
                   />
                 ) : null}
               </Link>
@@ -89,7 +96,10 @@ export function AppHeader({
         <form action="/auth/logout" method="post">
           <button
             type="submit"
-            className="text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground"
+            className={cn(
+              "rounded-md text-sm text-muted-foreground transition-colors duration-200 hover:text-foreground",
+              FOCUS_RING,
+            )}
           >
             Log out
           </button>

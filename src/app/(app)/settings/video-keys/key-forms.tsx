@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { Eye, EyeOff, ExternalLink } from "lucide-react";
+import { Eye, EyeOff, ExternalLink, CheckCircle2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +17,12 @@ const initial: VideoKeysState = { error: null, success: null };
 
 const SELECT_CLASS =
   "flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
+
+// Codebase-standard keyboard focus ring, shared by the "Get a key" links and
+// the show/hide password toggle (neither is a styled <Button>/<Input>, so they
+// need it applied explicitly).
+const FOCUS_RING =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
 
 // Per-provider defaults so the user doesn't have to know each provider's base
 // URL or a valid model id. Picking a provider prefills `model` + `baseUrl`
@@ -97,10 +103,11 @@ export function LlmKeyForm({ configured }: { configured: boolean }) {
         {provider.keyUrl ? (
           <p className="text-xs text-muted-foreground">
             <a
-              className="inline-flex items-center gap-1 underline-offset-4 hover:underline"
+              className={`inline-flex items-center gap-1 rounded-sm underline-offset-4 hover:underline ${FOCUS_RING}`}
               href={provider.keyUrl}
               target="_blank"
               rel="noreferrer"
+              title="Opens in new window"
             >
               Get a {provider.label} key
               <ExternalLink className="h-3 w-3" aria-hidden />
@@ -113,7 +120,9 @@ export function LlmKeyForm({ configured }: { configured: boolean }) {
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="api_key">API key</Label>
+        <Label htmlFor="api_key">
+          API key <span className="text-destructive">*</span>
+        </Label>
         <div className="relative">
           <Input
             id="api_key"
@@ -127,7 +136,7 @@ export function LlmKeyForm({ configured }: { configured: boolean }) {
           <button
             type="button"
             onClick={() => setShowKey((s) => !s)}
-            className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-muted-foreground hover:text-foreground"
+            className={`absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-md text-muted-foreground hover:text-foreground ${FOCUS_RING}`}
             aria-label={showKey ? "Hide key" : "Show key"}
           >
             {showKey ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />}
@@ -164,8 +173,18 @@ export function LlmKeyForm({ configured }: { configured: boolean }) {
         </div>
       </div>
 
-      {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
-      {state.success ? <p className="text-sm text-emerald-600">{state.success}</p> : null}
+      {state.error ? (
+        <p className="flex items-center gap-1.5 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4 shrink-0" aria-hidden />
+          {state.error}
+        </p>
+      ) : null}
+      {state.success ? (
+        <p className="flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400">
+          <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />
+          {state.success}
+        </p>
+      ) : null}
 
       <Button type="submit" disabled={pending}>
         {pending ? "Saving…" : configured ? "Replace LLM key" : "Save LLM key"}
@@ -179,7 +198,9 @@ export function PexelsKeyForm({ configured }: { configured: boolean }) {
   return (
     <form action={action} className="space-y-4">
       <div className="space-y-1.5">
-        <Label htmlFor="api_keys">Pexels API key(s)</Label>
+        <Label htmlFor="api_keys">
+          Pexels API key(s) <span className="text-destructive">*</span>
+        </Label>
         <Textarea
           id="api_keys"
           name="api_keys"
@@ -191,10 +212,11 @@ export function PexelsKeyForm({ configured }: { configured: boolean }) {
         <p className="text-xs text-muted-foreground">
           Free to get — no card needed. Grab one at{" "}
           <a
-            className="inline-flex items-center gap-1 underline-offset-4 hover:underline"
+            className={`inline-flex items-center gap-1 rounded-sm underline-offset-4 hover:underline ${FOCUS_RING}`}
             href="https://www.pexels.com/api/"
             target="_blank"
             rel="noreferrer"
+            title="Opens in new window"
           >
             pexels.com/api
             <ExternalLink className="h-3 w-3" aria-hidden />
@@ -203,8 +225,18 @@ export function PexelsKeyForm({ configured }: { configured: boolean }) {
         </p>
       </div>
 
-      {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
-      {state.success ? <p className="text-sm text-emerald-600">{state.success}</p> : null}
+      {state.error ? (
+        <p className="flex items-center gap-1.5 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4 shrink-0" aria-hidden />
+          {state.error}
+        </p>
+      ) : null}
+      {state.success ? (
+        <p className="flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400">
+          <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />
+          {state.success}
+        </p>
+      ) : null}
 
       <Button type="submit" disabled={pending}>
         {pending ? "Saving…" : configured ? "Replace Pexels key(s)" : "Save Pexels key(s)"}
@@ -225,10 +257,12 @@ export function KeyStatus({
     <div className="flex items-center gap-2">
       {configured ? (
         <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/5 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
-          Configured ✓
+          <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+          Configured
         </span>
       ) : (
         <span className="inline-flex items-center gap-1 rounded-full border border-muted-foreground/30 bg-muted/30 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+          <AlertCircle className="h-3.5 w-3.5" aria-hidden />
           Not configured
         </span>
       )}

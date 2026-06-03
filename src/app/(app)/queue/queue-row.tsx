@@ -461,6 +461,11 @@ export function QueueRow({
             >
               Confirm reject
             </Button>
+            {rejectReason === null ? (
+              <span className="text-xs text-muted-foreground">Select a reason to continue.</span>
+            ) : rejectReason === "other" && rejectNote.trim().length === 0 ? (
+              <span className="text-xs text-muted-foreground">Required for &lsquo;Other&rsquo;.</span>
+            ) : null}
             <Button
               size="sm"
               variant="outline"

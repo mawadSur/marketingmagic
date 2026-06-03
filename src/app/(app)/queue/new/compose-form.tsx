@@ -115,6 +115,11 @@ export function ComposeForm({ channels }: { channels: ConnectedChannel[] }) {
           <Button variant="ghost" asChild>
             <a href="/queue">Cancel</a>
           </Button>
+          {over ? (
+            <span className="text-xs text-destructive">
+              Exceeds character limit by {text.length - maxChars}
+            </span>
+          ) : null}
           {error ? <span className="text-xs text-destructive">{error}</span> : null}
         </div>
       </CardContent>

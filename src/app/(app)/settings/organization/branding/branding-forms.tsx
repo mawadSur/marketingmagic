@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useActionState, useState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -341,6 +342,9 @@ function EmailInviteForm({
   );
 }
 
+// Two-step revoke (click → confirm) because revoking a link instantly cuts off
+// any live client-portal sessions using it — a stray click shouldn't lock a
+// client out mid-session.
 function RevokeButton({
   organizationId,
   workspaceId,
@@ -353,19 +357,51 @@ function RevokeButton({
   disabled: boolean;
 }) {
   const [state, formAction, pending] = useActionState(revokeTokenAction, revokeInitial);
+  const [confirming, setConfirming] = useState(false);
+
+  if (confirming) {
+    return (
+      <form action={formAction} className="flex flex-col items-end gap-1">
+        <input type="hidden" name="organization_id" value={organizationId} />
+        <input type="hidden" name="workspace_id" value={workspaceId} />
+        <input type="hidden" name="token_id" value={tokenId} />
+        <p className="flex items-center gap-1 text-xs text-amber-600">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          Instantly disconnects any live client-portal sessions on this link.
+        </p>
+        <div className="flex items-center gap-2">
+          <button
+            type="submit"
+            disabled={disabled || pending}
+            className="rounded-md border border-destructive/30 px-2 py-1 text-xs text-destructive hover:bg-destructive/10 disabled:opacity-50"
+          >
+            {pending ? "Revoking…" : "Yes, revoke"}
+          </button>
+          <button
+            type="button"
+            disabled={disabled || pending}
+            onClick={() => setConfirming(false)}
+            className="rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
+        {state.error ? <span className="text-xs text-destructive">{state.error}</span> : null}
+      </form>
+    );
+  }
+
   return (
-    <form action={formAction} className="flex items-center gap-2">
-      <input type="hidden" name="organization_id" value={organizationId} />
-      <input type="hidden" name="workspace_id" value={workspaceId} />
-      <input type="hidden" name="token_id" value={tokenId} />
+    <div className="flex items-center gap-2">
       <button
-        type="submit"
+        type="button"
         disabled={disabled || pending}
+        onClick={() => setConfirming(true)}
         className="rounded-md border px-2 py-1 text-xs text-destructive hover:bg-destructive/10 disabled:opacity-50"
       >
-        {pending ? "…" : "Revoke"}
+        Revoke
       </button>
       {state.error ? <span className="text-xs text-destructive">{state.error}</span> : null}
-    </form>
+    </div>
   );
 }

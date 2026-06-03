@@ -1,12 +1,12 @@
 import Link from "next/link";
 import {
-  Sparkles,
   CalendarRange,
   ShieldCheck,
   LineChart,
   Clapperboard,
   ArrowRight,
 } from "lucide-react";
+import { Logo } from "@/components/ui/logo";
 
 export const metadata = {
   title: "marketingmagic — social media on autopilot",
@@ -45,23 +45,24 @@ export default function HomePage() {
     <main className="flex min-h-screen flex-col">
       {/* Nav */}
       <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <nav className="container flex h-16 items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-600 to-violet-600 text-white">
-              <Sparkles className="h-4 w-4" aria-hidden />
-            </span>
-            marketingmagic
+        <nav className="container flex h-14 items-center justify-between">
+          <Link
+            href="/"
+            aria-label="marketingmagic home"
+            className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            <Logo variant="full" size="sm" />
           </Link>
           <div className="flex items-center gap-1 sm:gap-2">
             <Link
               href="/login"
-              className="inline-flex h-9 items-center rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+              className="inline-flex h-9 items-center rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             >
               Log in
             </Link>
             <Link
               href="/signup"
-              className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
             >
               Sign up
             </Link>
@@ -73,7 +74,11 @@ export default function HomePage() {
       <section className="relative overflow-hidden">
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 -z-10 bg-gradient-to-b from-indigo-50/60 via-background to-background dark:from-indigo-950/20"
+          className="pointer-events-none absolute inset-0 -z-10"
+          style={{
+            backgroundImage:
+              "linear-gradient(to bottom, hsl(var(--brand-grad-start) / 0.08), hsl(var(--background)) 60%)",
+          }}
         />
         <div className="container flex flex-col items-center gap-6 py-20 text-center sm:py-28">
           <div className="inline-flex items-center gap-2 rounded-full border bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground backdrop-blur">
@@ -83,9 +88,7 @@ export default function HomePage() {
 
           <h1 className="max-w-3xl text-balance text-4xl font-bold tracking-tight sm:text-6xl">
             Your social calendar,{" "}
-            <span className="bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">
-              planned and posted
-            </span>{" "}
+            <span className="brand-gradient-text">planned and posted</span>{" "}
             on autopilot.
           </h1>
 
@@ -144,9 +147,15 @@ export default function HomePage() {
             {FEATURES.map(({ icon: Icon, title, body }) => (
               <div
                 key={title}
-                className="rounded-xl border bg-card p-6 text-left transition-shadow duration-200 hover:shadow-sm"
+                className="rounded-lg border bg-card p-6 text-left transition-shadow duration-200 hover:shadow-sm"
               >
-                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-600/10 text-indigo-600 dark:text-indigo-400">
+                <span
+                  className="flex h-10 w-10 items-center justify-center rounded-lg"
+                  style={{
+                    backgroundColor: "hsl(var(--brand-grad-start) / 0.1)",
+                    color: "hsl(var(--brand-grad-start))",
+                  }}
+                >
                   <Icon className="h-5 w-5" aria-hidden />
                 </span>
                 <h3 className="mt-4 font-semibold">{title}</h3>
@@ -160,7 +169,7 @@ export default function HomePage() {
       {/* Video callout */}
       <section className="border-t">
         <div className="container py-16 sm:py-20">
-          <div className="flex flex-col items-center gap-6 rounded-2xl border bg-gradient-to-br from-indigo-600 to-violet-600 px-6 py-12 text-center text-white sm:px-12">
+          <div className="brand-gradient flex flex-col items-center gap-6 rounded-2xl border px-6 py-12 text-center text-white sm:px-12">
             <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/15">
               <Clapperboard className="h-6 w-6" aria-hidden />
             </span>
@@ -186,7 +195,7 @@ export default function HomePage() {
           </div>
           <ol className="mx-auto mt-10 grid max-w-4xl gap-5 sm:grid-cols-3">
             {STEPS.map(({ n, title, body }) => (
-              <li key={n} className="rounded-xl border bg-card p-6">
+              <li key={n} className="rounded-lg border bg-card p-6">
                 <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
                   {n}
                 </span>
@@ -225,12 +234,7 @@ export default function HomePage() {
       {/* Footer */}
       <footer className="border-t">
         <div className="container flex flex-col items-center justify-between gap-4 py-8 text-sm text-muted-foreground sm:flex-row">
-          <div className="flex items-center gap-2 font-medium text-foreground">
-            <span className="flex h-6 w-6 items-center justify-center rounded-md bg-gradient-to-br from-indigo-600 to-violet-600 text-white">
-              <Sparkles className="h-3.5 w-3.5" aria-hidden />
-            </span>
-            marketingmagic
-          </div>
+          <Logo variant="full" size="sm" className="text-foreground" />
           <div className="flex items-center gap-5">
             <Link href="/privacy" className="transition-colors hover:text-foreground">
               Privacy

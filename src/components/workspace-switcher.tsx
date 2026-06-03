@@ -34,6 +34,7 @@ export function WorkspaceSwitcher({
     <div className="flex items-center gap-2">
       <div className="relative">
         <select
+          aria-label="Select workspace"
           className="h-8 appearance-none rounded-md border bg-muted/40 pl-5 pr-7 text-xs font-medium text-foreground transition-colors duration-200 hover:bg-muted disabled:opacity-60"
           disabled={pending}
           value={active.slug}

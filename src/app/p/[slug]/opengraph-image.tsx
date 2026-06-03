@@ -1,6 +1,14 @@
 import { ImageResponse } from "next/og";
 import { getPreviewShare } from "@/lib/growth/preview-share";
 import { channelLabel } from "@/components/ui/badge";
+import {
+  OG_ACCENT_EMERALD,
+  OG_ACCENT_MINT,
+  OG_BG_GRADIENT,
+  OG_TEXT_MUTED,
+  OG_TEXT_PRIMARY,
+  OG_TEXT_SNIPPET,
+} from "@/lib/design-tokens";
 
 // Dynamic Open Graph card for a shared preview plan. Next picks this up by
 // convention for /p/<slug>, so a pasted link unfurls as a branded image:
@@ -30,19 +38,19 @@ export default async function OgImage({ params }: { params: Promise<{ slug: stri
           display: "flex",
           flexDirection: "column",
           justifyContent: "space-between",
-          background: "linear-gradient(135deg, #0b1220 0%, #111827 55%, #1f2937 100%)",
-          color: "#f8fafc",
+          background: OG_BG_GRADIENT,
+          color: OG_TEXT_PRIMARY,
           padding: "64px",
           fontFamily: "sans-serif",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 30, color: "#a7f3d0" }}>
-          <div style={{ width: 14, height: 14, borderRadius: 9999, background: "#34d399" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 30, color: OG_ACCENT_MINT }}>
+          <div style={{ width: 14, height: 14, borderRadius: 9999, background: OG_ACCENT_EMERALD }} />
           marketingmagic
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <div style={{ fontSize: 30, color: "#94a3b8" }}>
+          <div style={{ fontSize: 30, color: OG_TEXT_MUTED }}>
             {`A ${postCount}-post ${channel} plan, written in`}
           </div>
           <div style={{ fontSize: 76, fontWeight: 700, lineHeight: 1.05 }}>
@@ -55,8 +63,8 @@ export default async function OgImage({ params }: { params: Promise<{ slug: stri
                 marginTop: 12,
                 fontSize: 28,
                 lineHeight: 1.4,
-                color: "#cbd5e1",
-                borderLeft: "4px solid #34d399",
+                color: OG_TEXT_SNIPPET,
+                borderLeft: `4px solid ${OG_ACCENT_EMERALD}`,
                 paddingLeft: 24,
               }}
             >
@@ -66,7 +74,7 @@ export default async function OgImage({ params }: { params: Promise<{ slug: stri
           ) : null}
         </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 26, color: "#94a3b8" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 26, color: OG_TEXT_MUTED }}>
           <span>Made in ~30 seconds · no signup</span>
           <span>marketingmagic.app/start</span>
         </div>

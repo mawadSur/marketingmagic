@@ -63,8 +63,15 @@ function ThemeTable({ stats }: { stats: ThemeStat[] }) {
           Possible reasons, never certainties.
         </p>
       </div>
-      <div className="overflow-x-auto rounded-lg border bg-card">
-        <table className="w-full min-w-[680px] text-left text-sm">
+      {/* Below md: a stacked card per theme (no horizontal scroll at 390px).
+          At md: and up the full six-column table. Same columns either way. */}
+      <div className="space-y-3 md:hidden">
+        {stats.map((s) => (
+          <ThemeCard key={s.tag} stat={s} />
+        ))}
+      </div>
+      <div className="hidden overflow-x-auto rounded-lg border bg-card md:block">
+        <table className="w-full text-left text-sm">
           <thead className="border-b bg-muted/30 text-[10px] uppercase tracking-wide text-muted-foreground">
             <tr>
               <th className="px-4 py-2.5 font-medium">Theme</th>
@@ -125,6 +132,52 @@ function ThemeRow({ stat }: { stat: ThemeStat }) {
         <VerdictBadge verdict={stat.verdict} />
       </td>
     </tr>
+  );
+}
+
+// Stacked card used below md: theme name + verdict on top, then a small
+// stat grid carrying every column the table has (observed, posts, posterior,
+// 80% CI, lift) so nothing is dropped on narrow screens.
+function ThemeCard({ stat }: { stat: ThemeStat }) {
+  const pct = (n: number) => `${(n * 100).toFixed(2)}%`;
+  const liftClass =
+    stat.verdict === "winner"
+      ? "font-medium text-emerald-700 dark:text-emerald-400"
+      : stat.verdict === "loser"
+        ? "font-medium text-amber-700 dark:text-amber-400"
+        : "text-foreground";
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate font-medium">#{stat.tag}</p>
+          <p className="text-xs text-muted-foreground tabular-nums">
+            {pct(stat.observed_rate)} observed
+          </p>
+        </div>
+        <VerdictBadge verdict={stat.verdict} />
+      </div>
+      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+        <div className="flex items-baseline justify-between gap-2">
+          <dt className="text-xs text-muted-foreground">Posts</dt>
+          <dd className="tabular-nums">{stat.posts}</dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-2">
+          <dt className="text-xs text-muted-foreground">Posterior</dt>
+          <dd className="tabular-nums">{pct(stat.posterior_mean)}</dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-2">
+          <dt className="text-xs text-muted-foreground">Lift</dt>
+          <dd className={`tabular-nums ${liftClass}`}>{stat.lift.toFixed(2)}×</dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-2">
+          <dt className="text-xs text-muted-foreground">80% CI</dt>
+          <dd className="text-xs tabular-nums text-muted-foreground">
+            {pct(stat.ci_low)} – {pct(stat.ci_high)}
+          </dd>
+        </div>
+      </dl>
+    </div>
   );
 }
 

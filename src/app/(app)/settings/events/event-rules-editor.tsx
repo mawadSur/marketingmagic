@@ -19,6 +19,9 @@ export function EventRulesEditor({ rules }: { rules: Rule[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // Two-step delete (click → confirm) so a stray click can't drop a rule.
+  // Tracks the rule id currently awaiting confirmation, if any.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
   function run(action: () => Promise<{ error: string | null }>) {
     start(async () => {
@@ -63,14 +66,38 @@ export function EventRulesEditor({ rules }: { rules: Rule[] }) {
                   >
                     {rule.enabled ? "Disable" : "Enable"}
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => run(() => deleteEventRuleAction(rule.id))}
-                    disabled={pending}
-                  >
-                    Delete
-                  </Button>
+                  {confirmingId === rule.id ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => {
+                          setConfirmingId(null);
+                          run(() => deleteEventRuleAction(rule.id));
+                        }}
+                        disabled={pending}
+                      >
+                        {pending ? "Deleting…" : "Confirm"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setConfirmingId(null)}
+                        disabled={pending}
+                      >
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => setConfirmingId(rule.id)}
+                      disabled={pending}
+                    >
+                      Delete
+                    </Button>
+                  )}
                 </div>
               </div>
               <pre className="overflow-x-auto rounded-md border bg-muted/50 p-2 text-xs">

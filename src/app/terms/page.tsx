@@ -24,7 +24,7 @@ export default function TermsPage() {
         <p className="text-sm text-muted-foreground">Effective {EFFECTIVE_DATE}</p>
       </header>
 
-      <div className="prose prose-sm mt-10 max-w-none space-y-8 text-sm leading-relaxed">
+      <div className="mt-10 max-w-none space-y-8 text-sm leading-relaxed">
         <section className="space-y-2">
           <h2 className="text-base font-medium">Agreement to these terms</h2>
           <p>

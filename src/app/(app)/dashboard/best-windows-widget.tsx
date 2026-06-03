@@ -100,7 +100,11 @@ function ChannelHeatmapCard({ result }: { result: OptimalWindowsResult }) {
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="overflow-x-auto">
-          <div className="grid min-w-[420px] grid-cols-[24px_repeat(12,minmax(0,1fr))] gap-[2px] text-[9px] tabular-nums">
+          {/* The 2px gap (and the rounded-[2px] cells below) are an intentional
+              density outlier off the --radius scale — a heatmap reads as a tight
+              tile grid, not as spaced cards. min-w shrinks to 280px so the grid
+              fits a 390px viewport, then opens to its natural 420px from sm: up. */}
+          <div className="grid min-w-[280px] grid-cols-[24px_repeat(12,minmax(0,1fr))] gap-[2px] text-[9px] tabular-nums sm:min-w-[420px]">
             <div />
             {HOUR_BUCKETS.map((h) => (
               <div
@@ -151,18 +155,20 @@ function DayRow({
         .map((cell) => {
           const intensity = Math.max(0.04, cell.engagementRate / maxRate);
           const isTop = topKeys.has(`${dayIdx}-${cell.hourBucket}`);
-          const opacityHex = Math.round(intensity * 200 + 30)
-            .toString(16)
-            .padStart(2, "0");
+          // Map intensity to a 0.12–0.90 alpha applied to the --positive token,
+          // matching the old #10b981 + hex-alpha ramp without a hardcoded hex.
+          const alpha = Math.min(0.9, intensity * 0.78 + 0.12);
           return (
             <div
               key={`${dayIdx}-${cell.hourBucket}`}
               className={
                 "h-4 rounded-[2px] transition-colors duration-150 " +
                 (cell.isBaseline ? "ring-[0.5px] ring-dashed ring-muted-foreground/30 " : "") +
-                (isTop ? "outline outline-1 outline-offset-[1px] outline-emerald-500 " : "")
+                (isTop
+                  ? "outline outline-1 outline-offset-[1px] outline-[hsl(var(--positive))] "
+                  : "")
               }
-              style={{ backgroundColor: `#10b981${opacityHex}` }}
+              style={{ backgroundColor: `hsl(var(--positive) / ${alpha.toFixed(3)})` }}
               title={`${label} ${cell.hourBucket}:00 — ${(cell.engagementRate * 100).toFixed(2)}% engagement${
                 cell.isBaseline ? " (baseline)" : ` · ${cell.sampleSize} post${cell.sampleSize === 1 ? "" : "s"}`
               }`}
