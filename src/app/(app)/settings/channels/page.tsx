@@ -46,6 +46,12 @@ export default async function ChannelsPage({
   const hasAny = accounts && accounts.length > 0;
   const connectedCount = accounts?.length ?? 0;
 
+  // Channels that already have a connected account. We hide their tile in the
+  // "Add a channel" grid below so a connected network doesn't show up as still-
+  // connectable — the user manages it from the "Connected" list instead. (The
+  // per-channel deep-link pages still exist for reconnect/advanced flows.)
+  const connectedChannels = new Set((accounts ?? []).map((a) => a.channel));
+
   // Read the plan via service role so we get the billing column even when the
   // user session client doesn't carry it. The OAuth callbacks ALREADY enforce
   // the channel quota server-side (see assertWithinChannelQuota in
@@ -202,11 +208,26 @@ export default async function ChannelsPage({
         </div>
       ) : null}
 
-      <section className="space-y-3">
-        <h2 className="text-base font-medium">Add a channel</h2>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {CONNECTORS.map((c) =>
-            c.initiate ? (
+      {(() => {
+        // Only offer channels that aren't already connected. When every channel
+        // is connected the section collapses to a quiet "all set" note.
+        const available = CONNECTORS.filter((c) => !connectedChannels.has(c.slug));
+        if (available.length === 0) {
+          return (
+            <section className="space-y-3">
+              <h2 className="text-base font-medium">Add a channel</h2>
+              <p className="rounded-lg border bg-card px-4 py-3 text-sm text-muted-foreground">
+                Every supported channel is connected. Manage them in the list above.
+              </p>
+            </section>
+          );
+        }
+        return (
+          <section className="space-y-3">
+            <h2 className="text-base font-medium">Add a channel</h2>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {available.map((c) =>
+                c.initiate ? (
               // OAuth channel: tile is a POST form to the initiate route.
               // One-click connect — submitting kicks the user straight to
               // the provider's authorize screen. When at the channel cap we
@@ -248,10 +269,12 @@ export default async function ChannelsPage({
                 <span>{c.label}</span>
                 <span aria-hidden className="ml-auto text-muted-foreground">→</span>
               </Link>
-            ),
-          )}
-        </div>
-      </section>
+                ),
+              )}
+            </div>
+          </section>
+        );
+      })()}
     </div>
   );
 }
