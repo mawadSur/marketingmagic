@@ -10,7 +10,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:channels": "vitest run tests/unit/channel-authorize-urls.test.ts tests/unit/channel-token-exchange.test.ts tests/unit/channel-connect-meta-bluesky.test.ts tests/unit/dispatch-video.test.ts",
+    "test:channels:live": "LIVE_CHANNEL_CHECK=1 vitest run tests/unit/live-channel-connections.test.ts",
     "test:e2e": "playwright test",
+    "test:e2e:channels": "playwright test tests/e2e/channel-oauth-initiate.spec.ts tests/e2e/channel-oauth-initiate-extra.spec.ts tests/e2e/tiktok-oauth-initiate.spec.ts",
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
