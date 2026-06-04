@@ -109,4 +109,60 @@
     background-clip: text;
     color: transparent;
   }
+
+  /* Soft radial brand glow behind the hero. Animated drift adds life without
+     animating layout (transform/opacity only). Honours reduced-motion below. */
+  .brand-glow {
+    background-image: radial-gradient(
+      60% 60% at 50% 0%,
+      hsl(var(--brand-grad-start) / 0.18),
+      transparent 70%
+    );
+  }
+
+  /* Channel marquee: the showcase row scrolls horizontally on a loop. Uses
+     transform translate (compositor-only) so it stays at 60fps. The track is
+     duplicated in markup so the loop is seamless. */
+  .marquee-track {
+    display: flex;
+    width: max-content;
+    animation: marquee 32s linear infinite;
+  }
+  .marquee-mask {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent,
+      black 8%,
+      black 92%,
+      transparent
+    );
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      black 8%,
+      black 92%,
+      transparent
+    );
+  }
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    /* Shift by exactly half — the track holds two copies of the list. */
+    transform: translateX(-50%);
+  }
+}
+
+/* Accessibility: kill the looping marquee + any heavy motion when the user
+   asks for reduced motion. The row falls back to a static, wrapping flex. */
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track {
+    animation: none;
+    flex-wrap: wrap;
+    width: auto;
+    justify-content: center;
+  }
 }
