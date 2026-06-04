@@ -18,7 +18,14 @@ import { linkedinAuthorizeUrl } from "@/lib/social/linkedin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(_req: NextRequest) {
+// Shared handler. Exposed as BOTH GET and POST:
+//   - POST is what the /settings/channels "Connect LinkedIn" tile submits (the
+//     tile is a <form method="post"> like every other channel). Without a POST
+//     export Next.js returns 405 and the button silently dies — this was the
+//     "HTTP ERROR 405" the connect tile hit in production.
+//   - GET keeps deep-links working (digest emails / onboarding CTAs that drop
+//     the user straight into LinkedIn's consent screen without a form submit).
+async function handle() {
   const env = serverEnv();
   const base = siteUrl();
 
@@ -47,4 +54,12 @@ export async function GET(_req: NextRequest) {
     path: "/api/oauth/linkedin",
   });
   return res;
+}
+
+export async function GET(_req: NextRequest) {
+  return handle();
+}
+
+export async function POST(_req: NextRequest) {
+  return handle();
 }
