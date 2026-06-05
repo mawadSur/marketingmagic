@@ -27,7 +27,12 @@ export async function POST(_req: NextRequest) {
   const redirectUri = `${siteUrl()}/api/oauth/instagram/callback`;
   const authorizeUrl = instagramAuthorizeUrl({ redirectUri, state });
 
-  const res = NextResponse.redirect(authorizeUrl);
+  // 303 See Other (NOT the default 307). The /settings/channels tile POSTs to
+  // this route; a 307 preserves the method, so the browser would POST to
+  // instagram.com/oauth/authorize — which is GET-only and renders Instagram's
+  // "Page isn't available" error (PolarisErrorRoute). 303 forces the browser to
+  // follow with GET, which is what the OAuth authorize endpoint expects.
+  const res = NextResponse.redirect(authorizeUrl, 303);
   res.cookies.set("ig_oauth_nonce", nonce, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",

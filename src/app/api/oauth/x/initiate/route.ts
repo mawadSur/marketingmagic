@@ -44,7 +44,9 @@ export async function POST(_req: NextRequest) {
     codeChallenge,
   });
 
-  const res = NextResponse.redirect(authorizeUrl);
+  // 303 See Other so the POST from the connect tile follows as a GET — the
+  // authorize endpoint is GET-only (a method-preserving 307 would break it).
+  const res = NextResponse.redirect(authorizeUrl, 303);
   res.cookies.set("x_oauth_state", encoded, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",

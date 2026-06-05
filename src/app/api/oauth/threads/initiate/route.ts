@@ -21,7 +21,9 @@ export async function POST(_req: NextRequest) {
   const redirectUri = `${siteUrl()}/api/oauth/threads/callback`;
   const authorizeUrl = threadsAuthorizeUrl({ redirectUri, state });
 
-  const res = NextResponse.redirect(authorizeUrl);
+  // 303 See Other so the POST from the connect tile follows as a GET — the
+  // authorize endpoint is GET-only (a method-preserving 307 would break it).
+  const res = NextResponse.redirect(authorizeUrl, 303);
   res.cookies.set("th_oauth_nonce", nonce, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",

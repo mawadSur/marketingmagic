@@ -99,6 +99,12 @@ test.describe("connect-channel OAuth initiate", () => {
 
       expect(status, "initiate must return a redirect").toBeGreaterThanOrEqual(300);
       expect(status, "initiate must return a redirect").toBeLessThan(400);
+      // Must be a GET-following redirect (303/302), never a method-preserving
+      // 307/308: the tile POSTs here, and the provider authorize endpoints are
+      // GET-only — a 307 makes the browser POST to e.g. instagram.com/oauth/
+      // authorize, which renders "Page isn't available" (PolarisErrorRoute).
+      expect(status, `${p.channel} initiate must 303/302, never 307/308`).not.toBe(307);
+      expect(status).not.toBe(308);
       expect(location, "Location header missing on initiate response").toBeTruthy();
 
       // Branch on whether OAuth keys are configured. Both branches are
