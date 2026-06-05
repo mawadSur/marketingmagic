@@ -278,19 +278,24 @@ export async function startReferenceVideoRender(
   //   "animate"             → fal_video key     (Capability A — unchanged)
   //   "present" did_video   → did_video key     (Capability B — D-ID)
   //   "present" heygen_video → heygen_video key (Capability B — HeyGen)
+  const isHiggsfield = isPresent && presentProvider === "higgsfield_video";
   const keys = await getWorkspaceKeys(workspaceId);
   const apiKey = !isPresent
     ? keys.fal_video?.api_key
-    : isHeygen
-      ? keys.heygen_video?.api_key
-      : keys.did_video?.api_key;
+    : isHiggsfield
+      ? keys.higgsfield_video?.api_key
+      : isHeygen
+        ? keys.heygen_video?.api_key
+        : keys.did_video?.api_key;
   if (!apiKey) {
     throw new VideoRenderError(
       !isPresent
         ? "No fal video API key configured for this workspace."
-        : isHeygen
-          ? "No HeyGen API key configured for this workspace."
-          : "No D-ID API key configured for this workspace.",
+        : isHiggsfield
+          ? "No Higgsfield API key configured for this workspace."
+          : isHeygen
+            ? "No HeyGen API key configured for this workspace."
+            : "No D-ID API key configured for this workspace.",
     );
   }
 

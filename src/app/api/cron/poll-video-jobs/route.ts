@@ -197,7 +197,8 @@ function jobCapability(job: VideoJobRow): ReferenceVideoCapability {
     if (
       rec.capability === "present" ||
       rec.provider === "did_video" ||
-      rec.provider === "heygen_video"
+      rec.provider === "heygen_video" ||
+      rec.provider === "higgsfield_video"
     ) {
       return "present";
     }
@@ -211,7 +212,9 @@ function jobCapability(job: VideoJobRow): ReferenceVideoCapability {
 function jobPresentProvider(job: VideoJobRow): PresentProvider {
   const p = job.params;
   if (p && typeof p === "object" && !Array.isArray(p)) {
-    if ((p as Record<string, unknown>).provider === "heygen_video") return "heygen_video";
+    const provider = (p as Record<string, unknown>).provider;
+    if (provider === "heygen_video") return "heygen_video";
+    if (provider === "higgsfield_video") return "higgsfield_video";
   }
   return "did_video";
 }
@@ -247,18 +250,27 @@ async function processReferenceJob(
   const isPresent = capability === "present";
   const presentProvider = isPresent ? jobPresentProvider(job) : "did_video";
   const isHeygen = presentProvider === "heygen_video";
+  const isHiggsfield = presentProvider === "higgsfield_video";
 
   // The provider needs the workspace's decrypted key for THIS capability/provider:
-  //   "animate" → fal_video    "present" did_video → did_video    heygen → heygen_video
+  //   "animate" → fal_video   present: did_video | heygen_video | higgsfield_video
   const keys = await getWorkspaceKeys(job.workspace_id);
   const apiKey = !isPresent
     ? keys.fal_video?.api_key
-    : isHeygen
-      ? keys.heygen_video?.api_key
-      : keys.did_video?.api_key;
+    : isHiggsfield
+      ? keys.higgsfield_video?.api_key
+      : isHeygen
+        ? keys.heygen_video?.api_key
+        : keys.did_video?.api_key;
   if (!apiKey) {
-    const label = !isPresent ? "fal video" : isHeygen ? "HeyGen" : "D-ID";
-    const short = !isPresent ? "fal" : isHeygen ? "heygen" : "did";
+    const label = !isPresent
+      ? "fal video"
+      : isHiggsfield
+        ? "Higgsfield"
+        : isHeygen
+          ? "HeyGen"
+          : "D-ID";
+    const short = !isPresent ? "fal" : isHiggsfield ? "higgsfield" : isHeygen ? "heygen" : "did";
     await markFailed(job.id, `no ${label} key for workspace (key removed mid-render?)`);
     return { id: job.id, status: "failed", reason: `missing ${short} key` };
   }

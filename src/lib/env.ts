@@ -159,6 +159,13 @@ const serverSchema = z.object({
   // REFERENCE_VIDEO_ENABLED is on; the BYO HeyGen key lives in workspace_byo_keys
   // (provider 'heygen_video'), not in env. Read through heygenBaseUrl().
   HEYGEN_BASE_URL: z.string().min(1).default("https://api.heygen.com"),
+  // UGC avatar video — Higgsfield provider (a 'present'-class talking/UGC avatar
+  // adapter alongside D-ID + HeyGen). Base URL + model are overridable so the
+  // exact REST surface can be corrected per deployment without a code change.
+  // Only meaningful when REFERENCE_VIDEO_ENABLED is on; the BYO Higgsfield key
+  // lives in workspace_byo_keys (provider 'higgsfield_video'), not in env.
+  HIGGSFIELD_BASE_URL: z.string().min(1).default("https://platform.higgsfield.ai"),
+  HIGGSFIELD_MODEL: z.string().min(1).default("higgsfield-ugc-avatar"),
   // The default HeyGen voice the talk uses when the user doesn't pick one.
   // Overridable per deployment; read through heygenDefaultVoiceId(). HeyGen voice
   // ids are opaque tokens (not the Microsoft "en-US-*Neural" names D-ID uses), so
@@ -325,4 +332,18 @@ export function heygenBaseUrl(): string {
 // adapter rejects a render when neither the user nor this default supplies one.
 export function heygenDefaultVoiceId(): string {
   return serverEnv().HEYGEN_DEFAULT_VOICE_ID.trim();
+}
+
+// UGC avatar video — base URL of the Higgsfield API the adapter submits to.
+// Overridable via HIGGSFIELD_BASE_URL; trailing slash trimmed so
+// `${higgsfieldBaseUrl()}/v1/generations` is always well-formed. Only meaningful
+// when REFERENCE_VIDEO_ENABLED is on.
+export function higgsfieldBaseUrl(): string {
+  return serverEnv().HIGGSFIELD_BASE_URL.replace(/\/$/, "");
+}
+
+// UGC avatar video — the Higgsfield model/preset id the adapter requests.
+// Overridable via HIGGSFIELD_MODEL so the tier/model isn't hardcoded.
+export function higgsfieldModel(): string {
+  return serverEnv().HIGGSFIELD_MODEL;
 }

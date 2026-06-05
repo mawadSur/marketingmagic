@@ -15,6 +15,7 @@ import { referenceVideoEnabled } from "@/lib/env";
 import { falReferenceVideoProvider } from "./fal-video-provider";
 import { didReferenceVideoProvider } from "./did-video-provider";
 import { heygenReferenceVideoProvider } from "./heygen-video-provider";
+import { higgsfieldReferenceVideoProvider } from "./higgsfield-video-provider";
 import {
   ReferenceVideoNotEnabledError,
   type ReferenceVideoCapability,
@@ -27,7 +28,7 @@ import {
 // The two 'present' (talking-avatar) providers a user can choose between. The
 // 'animate' capability is always fal, so it has no provider knob. The orchestrator
 // + poll-cron pass one of these so the factory can resolve D-ID vs HeyGen.
-export type PresentProvider = "did_video" | "heygen_video";
+export type PresentProvider = "did_video" | "heygen_video" | "higgsfield_video";
 
 export class StubReferenceVideoProvider implements ReferenceVideoProvider {
   readonly name = "stub";
@@ -77,6 +78,7 @@ export function getReferenceVideoProvider(
   if (capability !== "present") {
     return falReferenceVideoProvider;
   }
+  if (presentProvider === "higgsfield_video") return higgsfieldReferenceVideoProvider;
   return presentProvider === "heygen_video"
     ? heygenReferenceVideoProvider
     : didReferenceVideoProvider;
