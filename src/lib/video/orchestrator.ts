@@ -47,6 +47,14 @@ export interface StartVideoRenderInput {
   postId?: string | null;
 }
 
+// MPT's TTS step (azure_tts_v1 / edge-tts) REQUIRES a non-empty voice name in
+// the form "<locale>-<Voice>Neural-<Gender>". When the caller leaves the voice
+// blank, MPT receives "" and every TTS attempt fails with `Invalid voice ''`,
+// killing the render at the audio step (state -1, ~progress 50). MPT has no
+// default of its own, so we supply one here. en-US-JennyNeural is the standard
+// neutral default; the "-Female" suffix is the gender tag MPT/edge-tts expects.
+const DEFAULT_MPT_VOICE = "en-US-JennyNeural-Female";
+
 export class VideoRenderError extends Error {
   constructor(message: string) {
     super(message);
@@ -93,7 +101,9 @@ export async function startVideoRender(
     video_subject: subject,
     video_script: input.videoScript ?? null,
     video_aspect: input.videoAspect ?? "9:16",
-    voice_name: input.voiceName ?? null,
+    // Record the voice we'll actually send (incl. the default fallback) so the
+    // job row reflects what was rendered, not a misleading null.
+    voice_name: input.voiceName?.trim() || DEFAULT_MPT_VOICE,
     subtitle_enabled: input.subtitleEnabled ?? true,
     video_clip_duration: input.videoClipDuration ?? null,
     video_count: input.videoCount ?? null,
@@ -114,13 +124,15 @@ export async function startVideoRender(
     video_aspect: input.videoAspect ?? "9:16",
     video_source: "pexels",
     subtitle_enabled: input.subtitleEnabled ?? true,
+    // Always send a voice. An empty/absent voice makes MPT's TTS step fail with
+    // `Invalid voice ''` and the whole render dies at the audio stage.
+    voice_name: input.voiceName?.trim() || DEFAULT_MPT_VOICE,
     llm_provider: keys.llm.provider,
     llm_api_key: keys.llm.api_key,
     llm_model_name: keys.llm.model_name,
     pexels_api_keys: keys.pexels.api_keys,
   };
   if (input.videoScript) renderParams.video_script = input.videoScript;
-  if (input.voiceName) renderParams.voice_name = input.voiceName;
   if (input.videoClipDuration) renderParams.video_clip_duration = input.videoClipDuration;
   if (input.videoCount) renderParams.video_count = input.videoCount;
   if (keys.llm.base_url) renderParams.llm_base_url = keys.llm.base_url;
