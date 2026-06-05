@@ -280,10 +280,16 @@ export async function startReferenceVideoRender(
   //   "present" heygen_video → heygen_video key (Capability B — HeyGen)
   const isHiggsfield = isPresent && presentProvider === "higgsfield_video";
   const keys = await getWorkspaceKeys(workspaceId);
+  // Higgsfield uses an id+secret PAIR; the provider contract takes a single
+  // string, so pack as "id:secret" (the adapter splits it). fal/D-ID/HeyGen
+  // stay single-token.
+  const higgsfieldKey = keys.higgsfield_video
+    ? `${keys.higgsfield_video.api_key_id}:${keys.higgsfield_video.api_key_secret}`
+    : undefined;
   const apiKey = !isPresent
     ? keys.fal_video?.api_key
     : isHiggsfield
-      ? keys.higgsfield_video?.api_key
+      ? higgsfieldKey
       : isHeygen
         ? keys.heygen_video?.api_key
         : keys.did_video?.api_key;
