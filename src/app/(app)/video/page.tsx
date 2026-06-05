@@ -228,7 +228,15 @@ export default async function VideoPage({
       )}
 
       <section className="space-y-3">
-        <h2 className="text-base font-semibold">Recent renders</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold">Recent renders</h2>
+          <Link
+            href="/video/library"
+            className="text-sm text-muted-foreground underline-offset-4 transition-colors hover:text-foreground"
+          >
+            Video library →
+          </Link>
+        </div>
         {jobs.length === 0 ? (
           <EmptyState
             icon="spark"
