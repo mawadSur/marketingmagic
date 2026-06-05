@@ -234,9 +234,11 @@ export async function removeHeygenVideoKeyAction(): Promise<void> {
 // provider row. Powers the UGC path on /video (a saved avatar + a script). A
 // workspace can configure Higgsfield alongside D-ID/HeyGen/fal, all, or none.
 
+// Higgsfield issues a PAIR: an API Key ID + an API Key Secret. Both required;
+// length-checked, never echoed back.
 const higgsfieldKeySchema = z.object({
-  // Higgsfield keys are an opaque token; length-checked, never echoed back.
-  api_key: z.string().trim().min(8, "API key looks too short.").max(400),
+  api_key_id: z.string().trim().min(4, "API Key ID looks too short.").max(400),
+  api_key_secret: z.string().trim().min(8, "API Key Secret looks too short.").max(400),
 });
 
 export async function saveHiggsfieldVideoKeyAction(
@@ -246,12 +248,18 @@ export async function saveHiggsfieldVideoKeyAction(
   const auth = await keyGuard();
   if ("error" in auth) return { error: auth.error, success: null };
 
-  const parsed = higgsfieldKeySchema.safeParse({ api_key: formData.get("api_key") });
+  const parsed = higgsfieldKeySchema.safeParse({
+    api_key_id: formData.get("api_key_id"),
+    api_key_secret: formData.get("api_key_secret"),
+  });
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid input.", success: null };
   }
 
-  const secrets: ByoHiggsfieldVideoSecrets = { api_key: parsed.data.api_key };
+  const secrets: ByoHiggsfieldVideoSecrets = {
+    api_key_id: parsed.data.api_key_id,
+    api_key_secret: parsed.data.api_key_secret,
+  };
   try {
     await setWorkspaceKeys(auth.workspaceId, "higgsfield_video", secrets, auth.userId);
   } catch (err) {

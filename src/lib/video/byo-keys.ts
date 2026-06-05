@@ -55,11 +55,14 @@ export interface ByoDidVideoSecrets {
 export interface ByoHeygenVideoSecrets {
   api_key: string;
 }
-// UGC avatar video (Higgsfield). The workspace's own Higgsfield API key, stored
-// as its OWN provider row ('higgsfield_video') alongside the others. Same
-// AES-256-GCM machinery; a workspace can have any combination of video keys.
+// UGC avatar video (Higgsfield). Higgsfield authenticates with a PAIR — an API
+// Key ID and an API Key Secret (sent as the `hf-api-key` + `hf-secret` headers),
+// unlike fal/D-ID/HeyGen which use a single token. Stored as its OWN provider
+// row ('higgsfield_video') with the same AES-256-GCM machinery; a workspace can
+// have any combination of video keys.
 export interface ByoHiggsfieldVideoSecrets {
-  api_key: string;
+  api_key_id: string;
+  api_key_secret: string;
 }
 export type ByoProvider =
   | "llm"

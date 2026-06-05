@@ -88,31 +88,36 @@ function KeyStatusPill({
   );
 }
 
-// Shared password key field with show/hide + a "get a key" link. Generic so the
-// fal and D-ID forms differ only in copy/href.
+// Shared password key field with show/hide + an optional "get a key" link.
+// Generic so the provider forms differ only in copy/href. `name` defaults to
+// "api_key" (single-token providers); Higgsfield passes id/secret field names.
+// The help link is only rendered on the field that supplies `helpHref` so a
+// two-field form doesn't repeat it.
 function KeyField({
   label,
   placeholder,
   helpHref,
   helpLabel,
   helpTail,
+  name = "api_key",
 }: {
   label: string;
   placeholder: string;
-  helpHref: string;
-  helpLabel: string;
-  helpTail: string;
+  helpHref?: string;
+  helpLabel?: string;
+  helpTail?: string;
+  name?: string;
 }) {
   const [showKey, setShowKey] = useState(false);
   return (
     <div className="space-y-1.5">
-      <Label htmlFor="api_key">
+      <Label htmlFor={name}>
         {label} <span className="text-destructive">*</span>
       </Label>
       <div className="relative">
         <Input
-          id="api_key"
-          name="api_key"
+          id={name}
+          name={name}
           type={showKey ? "text" : "password"}
           placeholder={placeholder}
           autoComplete="off"
@@ -128,19 +133,21 @@ function KeyField({
           {showKey ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />}
         </button>
       </div>
-      <p className="text-xs text-muted-foreground">
-        <a
-          className={`inline-flex items-center gap-1 rounded-sm underline-offset-4 hover:underline ${FOCUS_RING}`}
-          href={helpHref}
-          target="_blank"
-          rel="noreferrer"
-          title="Opens in new window"
-        >
-          {helpLabel}
-          <ExternalLink className="h-3 w-3" aria-hidden />
-        </a>{" "}
-        · {helpTail}
-      </p>
+      {helpHref ? (
+        <p className="text-xs text-muted-foreground">
+          <a
+            className={`inline-flex items-center gap-1 rounded-sm underline-offset-4 hover:underline ${FOCUS_RING}`}
+            href={helpHref}
+            target="_blank"
+            rel="noreferrer"
+            title="Opens in new window"
+          >
+            {helpLabel}
+            <ExternalLink className="h-3 w-3" aria-hidden />
+          </a>{" "}
+          · {helpTail}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -241,21 +248,30 @@ export function HiggsfieldVideoKeyStatus({ configured }: { configured: boolean }
 export function HiggsfieldVideoKeyForm({ configured }: { configured: boolean }) {
   const [state, action, pending] = useActionState(saveHiggsfieldVideoKeyAction, initial);
 
+  // Higgsfield issues a PAIR — an API Key ID and an API Key Secret. Both are
+  // required and stored encrypted together; the help link rides the second
+  // field so it appears once.
   return (
     <form action={action} className="space-y-4">
       <KeyField
-        label="Higgsfield API key"
-        placeholder={configured ? "Enter a new key to replace the stored one" : "Your Higgsfield API key"}
+        name="api_key_id"
+        label="Higgsfield API Key ID"
+        placeholder={configured ? "Enter a new ID to replace the stored one" : "Your Higgsfield API Key ID"}
+      />
+      <KeyField
+        name="api_key_secret"
+        label="Higgsfield API Key Secret"
+        placeholder={configured ? "Enter a new secret to replace the stored one" : "Your Higgsfield API Key Secret"}
         helpHref="https://higgsfield.ai/settings/api-keys"
-        helpLabel="Get a Higgsfield key"
-        helpTail="You pay Higgsfield directly. Stored encrypted — never displayed again."
+        helpLabel="Get your Higgsfield API keys"
+        helpTail="Both the Key ID and Secret. You pay Higgsfield directly. Stored encrypted — never displayed again."
       />
 
       {state.error ? <FormError message={state.error} /> : null}
       {state.success ? <FormSuccess message={state.success} /> : null}
 
       <Button type="submit" disabled={pending}>
-        {pending ? "Saving…" : configured ? "Replace Higgsfield key" : "Save Higgsfield key"}
+        {pending ? "Saving…" : configured ? "Replace Higgsfield keys" : "Save Higgsfield keys"}
       </Button>
     </form>
   );

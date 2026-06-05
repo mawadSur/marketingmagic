@@ -18,8 +18,10 @@
 //              → { status: queued|processing|completed|failed, output|video, error }
 //   result video URL: output.video_url | video.url | output.url
 //
-// Auth: Bearer <api_key> (Higgsfield personal/workspace API key). The key is the
-// workspace's own BYO secret (provider "higgsfield_video"), decrypted server-side.
+// Auth: Higgsfield uses an API Key ID + Secret PAIR, sent as the `hf-api-key`
+// and `hf-secret` headers. The workspace's BYO secret (provider
+// "higgsfield_video") stores both; the orchestrator/cron pack them as
+// "<id>:<secret>" into the single apiKey arg, which authHeaders() splits.
 //
 // Nothing here runs unless referenceVideoEnabled() is on (the factory in
 // stub-provider.ts guards the flag before returning this adapter). Tests never
@@ -114,9 +116,18 @@ export class HiggsfieldReferenceVideoProvider implements ReferenceVideoProvider 
     return higgsfieldBaseUrl();
   }
 
+  // Higgsfield authenticates with a PAIR — an API Key ID and an API Key Secret,
+  // sent as the `hf-api-key` + `hf-secret` headers. The shared provider contract
+  // hands us a single string, so the orchestrator/cron pack the pair as
+  // "<id>:<secret>"; we split on the FIRST colon (a secret may itself contain
+  // colons). A value with no colon is treated as id-only (defensive).
   private authHeaders(apiKey: string): Record<string, string> {
+    const sep = apiKey.indexOf(":");
+    const id = sep >= 0 ? apiKey.slice(0, sep) : apiKey;
+    const secret = sep >= 0 ? apiKey.slice(sep + 1) : "";
     return {
-      Authorization: `Bearer ${apiKey}`,
+      "hf-api-key": id,
+      "hf-secret": secret,
       "Content-Type": "application/json",
     };
   }

@@ -42,13 +42,17 @@ const INPUT = {
 };
 
 describe("Higgsfield submit", () => {
-  it("POSTs the avatar + script with Bearer auth and returns the job id", async () => {
+  it("POSTs the avatar + script with hf-api-key/hf-secret auth and returns the job id", async () => {
     responders.push(() => json({ id: "hf-123" }));
-    const res = await hf.submit(INPUT, "hf-key");
+    // The packed "id:secret" the orchestrator/cron hand the adapter.
+    const res = await hf.submit(INPUT, "hf-id:hf-secret");
     expect(res).toEqual({ providerJobId: "hf-123", provider: "higgsfield_video" });
     const call = calls[0]!;
     expect(call.url).toBe("https://platform.higgsfield.ai/v1/generations");
-    expect((call.init!.headers as Record<string, string>).Authorization).toBe("Bearer hf-key");
+    const headers = call.init!.headers as Record<string, string>;
+    expect(headers["hf-api-key"]).toBe("hf-id");
+    expect(headers["hf-secret"]).toBe("hf-secret");
+    expect(headers.Authorization).toBeUndefined();
     const body = JSON.parse(String(call.init!.body));
     expect(body).toMatchObject({
       model: "higgsfield-ugc-avatar",

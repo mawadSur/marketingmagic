@@ -255,10 +255,16 @@ async function processReferenceJob(
   // The provider needs the workspace's decrypted key for THIS capability/provider:
   //   "animate" → fal_video   present: did_video | heygen_video | higgsfield_video
   const keys = await getWorkspaceKeys(job.workspace_id);
+  // Higgsfield authenticates with a PAIR (id + secret); the shared provider
+  // contract passes a single `apiKey` string, so we pack them as "id:secret"
+  // and the adapter splits them back into its hf-api-key/hf-secret headers.
+  const higgsfieldKey = keys.higgsfield_video
+    ? `${keys.higgsfield_video.api_key_id}:${keys.higgsfield_video.api_key_secret}`
+    : undefined;
   const apiKey = !isPresent
     ? keys.fal_video?.api_key
     : isHiggsfield
-      ? keys.higgsfield_video?.api_key
+      ? higgsfieldKey
       : isHeygen
         ? keys.heygen_video?.api_key
         : keys.did_video?.api_key;
