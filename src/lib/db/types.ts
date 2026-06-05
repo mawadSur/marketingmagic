@@ -1380,6 +1380,39 @@ export interface Database {
         }>;
         Relationships: [];
       };
+      // UGC avatars (migration 039). A workspace's reusable presenter portraits
+      // for the Higgsfield UGC workflow. The image lives in the reference-image
+      // bucket (030); we store its path + public URL + a label here. Writes are
+      // service-role only; members read their own workspace's rows.
+      avatars: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          name: string;
+          image_path: string;
+          image_url: string;
+          is_primary: boolean;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          name: string;
+          image_path: string;
+          image_url: string;
+          is_primary?: boolean;
+          created_by?: string | null;
+        };
+        Update: Partial<{
+          name: string;
+          image_path: string;
+          image_url: string;
+          is_primary: boolean;
+        }>;
+        Relationships: [];
+      };
     };
     Views: {
       social_accounts_safe: {

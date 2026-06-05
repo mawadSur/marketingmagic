@@ -27,6 +27,8 @@ import {
   DidVideoKeyStatus,
   HeygenVideoKeyForm,
   HeygenVideoKeyStatus,
+  HiggsfieldVideoKeyForm,
+  HiggsfieldVideoKeyStatus,
 } from "./key-form";
 
 export const dynamic = "force-dynamic";
@@ -72,6 +74,7 @@ export default async function ReferenceVideoPage() {
           fal_video: false,
           did_video: false,
           heygen_video: false,
+          higgsfield_video: false,
         }),
     getUsageSnapshot(ws.id),
     supabase
@@ -169,6 +172,28 @@ export default async function ReferenceVideoPage() {
         <CardContent>
           {byo ? (
             <HeygenVideoKeyForm configured={status.heygen_video} />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Credential encryption isn&apos;t configured on this deployment (set{" "}
+              <code>BYO_ENCRYPTION_KEY</code>).
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex-row items-start justify-between space-y-0">
+          <div className="space-y-1.5">
+            <CardTitle className="text-base">Higgsfield key</CardTitle>
+            <CardDescription>
+              For UGC videos. Bring your own Higgsfield key — talking video from a saved avatar + script. Stored encrypted.
+            </CardDescription>
+          </div>
+          {byo ? <HiggsfieldVideoKeyStatus configured={status.higgsfield_video} /> : null}
+        </CardHeader>
+        <CardContent>
+          {byo ? (
+            <HiggsfieldVideoKeyForm configured={status.higgsfield_video} />
           ) : (
             <p className="text-sm text-muted-foreground">
               Credential encryption isn&apos;t configured on this deployment (set{" "}

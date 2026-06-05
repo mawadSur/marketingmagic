@@ -1,21 +1,27 @@
 import Link from "next/link";
 
-// Switcher between the two video generation modes so each is discoverable from
-// the other: the MPT "from a topic" path (/video) and the fal.ai "animate a
-// photo" path (/settings/reference-video). The reference tab only appears when
+// Switcher between the video generation modes so each is discoverable from the
+// others: the MPT "from a topic" path (/video), the UGC "saved avatar + script"
+// path (/video?mode=ugc, Higgsfield), and the fal.ai "animate a photo" path
+// (/settings/reference-video). The UGC + reference tabs only appear when
 // REFERENCE_VIDEO_ENABLED is on — so when the feature is off this collapses to
 // nothing on /video and never points anywhere dead.
+type VideoMode = "topic" | "ugc" | "reference";
+
 export function VideoModeTabs({
   active,
   referenceEnabled,
 }: {
-  active: "topic" | "reference";
+  active: VideoMode;
   referenceEnabled: boolean;
 }) {
-  const tabs: Array<{ key: "topic" | "reference"; label: string; href: string }> = [
+  const tabs: Array<{ key: VideoMode; label: string; href: string }> = [
     { key: "topic", label: "From a topic", href: "/video" },
     ...(referenceEnabled
-      ? [{ key: "reference" as const, label: "Animate a photo", href: "/settings/reference-video" }]
+      ? [
+          { key: "ugc" as const, label: "UGC avatar", href: "/video?mode=ugc" },
+          { key: "reference" as const, label: "Animate a photo", href: "/settings/reference-video" },
+        ]
       : []),
   ];
   // Nothing to switch to — hide the control entirely.

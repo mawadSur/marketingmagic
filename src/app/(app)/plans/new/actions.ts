@@ -19,7 +19,7 @@ import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits"
 import { incrementPostsGenerated } from "@/lib/billing/usage";
 import { getOptimalWindows, nextOptimalSlotIso } from "@/lib/timing/analyze";
 import type { OptimalWindowsResult } from "@/lib/timing/schema";
-import { mptConfigured, byoKeysConfigured } from "@/lib/env";
+import { mptConfigured, byoKeysConfigured, referenceVideoEnabled } from "@/lib/env";
 import { getWorkspaceKeyStatus } from "@/lib/video/byo-keys";
 import {
   parseVideoOptIns,
@@ -28,6 +28,13 @@ import {
   kickoffPlanVideos,
   type PlanVideoTarget,
 } from "@/lib/video/plan-videos";
+import {
+  parseUgcOptIns,
+  shouldGenerateUgcForPost,
+  kickoffPlanUgcVideos,
+} from "@/lib/video/plan-ugc";
+import { resolveUgcAvatar } from "@/lib/video/avatars";
+import type { UgcAvatar, UgcPlanTarget } from "@/lib/video/ugc-plan";
 
 // Voice-score threshold: posts below this auto-regenerate (up to MAX_RETRIES
 // passes); if still below after retries we keep the best-of-3 and flag as
@@ -422,6 +429,35 @@ export async function generatePlanAction(
     }
   }
 
+  // ── Plan UGC avatar videos — per-channel opt-in resolution (ADDITIVE) ─────
+  //
+  // PARALLEL to the MPT video block above and fully independent of it: a channel
+  // can opt into a stock-footage video, a UGC avatar video, both, or neither.
+  // Parse the `ugc_<accountId>="on"` flags, then resolve whether UGC is actually
+  // AVAILABLE for this workspace (the same gate the page uses to show the
+  // checkboxes): the reference-video feature is enabled on the deployment, the
+  // workspace has a Higgsfield key on file, AND it has at least one saved avatar
+  // (resolveUgcAvatar returns non-null). If unavailable, every opt-in is ignored —
+  // the plan saves as text-only. A UGC post is FORCED to pending_approval just
+  // like an MPT video post: the avatar render must complete + be reviewed before
+  // it can publish, even on a trusted channel.
+  const ugcOptIns = parseUgcOptIns(formData);
+  let ugcAvailable = false;
+  let ugcAvatar: UgcAvatar | null = null;
+  if (ugcOptIns.size > 0 && referenceVideoEnabled()) {
+    try {
+      const keyStatus = await getWorkspaceKeyStatus(ws.id);
+      if (keyStatus.higgsfield_video) {
+        ugcAvatar = await resolveUgcAvatar(ws.id);
+        ugcAvailable = ugcAvatar !== null;
+      }
+    } catch (err) {
+      // A key-status / avatar read failure must never block the plan — fall back
+      // to "no UGC" and let the text posts save.
+      console.warn("Plan UGC key/avatar check failed; skipping UGC videos:", err);
+    }
+  }
+
   // Per-payload-entry metadata, index-aligned with `postsPayload` (and therefore
   // with `insertedPosts` below, since the insert preserves order). We use it to
   // build the kickoff targets once we have real post ids.
@@ -431,6 +467,17 @@ export async function generatePlanAction(
     channel: string;
     videoSubject: string;
     videoScript: string;
+  }> = [];
+
+  // UGC counterpart of videoMeta — index-aligned with `postsPayload` too. Carries
+  // the post copy as the SCRIPT the avatar will speak (videoSubject seeds the
+  // caption + Higgsfield prompt fallback, exactly like buildUgcRenderInput wants).
+  const ugcMeta: Array<{
+    wantsUgc: boolean;
+    socialAccountId: string;
+    channel: string;
+    videoSubject: string;
+    postText: string;
   }> = [];
 
   const postsPayload = flatVariants.flatMap((p, idx) => {
@@ -480,7 +527,15 @@ export async function generatePlanAction(
       socialAccountId: acct.id,
       channel: acct.channel,
     });
-    const effectiveTrusted = trusted && !wantsVideo;
+    // UGC avatar video — independent of the MPT opt-in above. A post can want a
+    // UGC video, an MPT video, both, or neither; either one forces review.
+    const wantsUgc = shouldGenerateUgcForPost({
+      ugcAvailable,
+      optedInAccountIds: ugcOptIns,
+      socialAccountId: acct.id,
+      channel: acct.channel,
+    });
+    const effectiveTrusted = trusted && !wantsVideo && !wantsUgc;
     videoMeta.push({
       wantsVideo,
       socialAccountId: acct.id,
@@ -489,6 +544,15 @@ export async function generatePlanAction(
       // subject; fall back to the raw theme when there's no idea grouping.
       videoSubject: p.idea_label ?? p.theme,
       videoScript: text,
+    });
+    ugcMeta.push({
+      wantsUgc,
+      socialAccountId: acct.id,
+      channel: acct.channel,
+      // Subject seeds the draft caption + the Higgsfield prompt fallback (the
+      // idea theme/label); postText is the exact copy the avatar will speak.
+      videoSubject: p.idea_label ?? p.theme,
+      postText: text,
     });
 
     return [
@@ -584,6 +648,52 @@ export async function generatePlanAction(
     // Defence in depth: even an unexpected throw in the kickoff setup must not
     // sink the (already-saved) plan. Log and carry on to the redirect.
     console.warn("Plan video kickoff phase failed; plan saved without videos:", err);
+  }
+
+  // ── Plan UGC avatar videos — best-effort kickoff phase (AFTER the insert) ──
+  //
+  // ADDITIVE and independent of the MPT block above: for every inserted post that
+  // opted into a UGC avatar video, fire a Higgsfield reference-video render
+  // PRE-POPULATED from the post copy + the workspace's resolved avatar
+  // (kickoffPlanUgcVideos → buildUgcRenderInput → startReferenceVideoRender). Same
+  // two invariants, owned by kickoffPlanUgcVideos:
+  //   • QUOTA-BOUNDED: reuses remainingVideoQuota (the SAME monthly video meter as
+  //     the MPT path), computed ONCE; the loop never starts more than that and
+  //     stops on a QuotaExceededError from startReferenceVideoRender's own assert.
+  //   • BEST-EFFORT: the whole block is wrapped so a UGC failure can NEVER abort
+  //     the plan — the plan + its text posts are already committed above.
+  // Gated on ugcAvailable (referenceVideoEnabled + Higgsfield key + a resolved
+  // avatar), all checked up front; ugcAvatar is guaranteed non-null when available.
+  if (ugcAvailable && ugcAvatar) {
+    try {
+      // The acting user's id is the consent attestation (they opted the plan into
+      // UGC with a chosen, owned avatar). Best-effort — a null id still renders;
+      // buildUgcRenderInput sets consent: true regardless.
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const ids = (insertedPosts ?? []).map((r) => r.id);
+      const targets: UgcPlanTarget[] = [];
+      ugcMeta.forEach((m, i) => {
+        const postId = ids[i];
+        if (!m.wantsUgc || !postId) return;
+        targets.push({
+          postId,
+          socialAccountId: m.socialAccountId,
+          channel: m.channel,
+          videoSubject: m.videoSubject,
+          postText: m.postText,
+        });
+      });
+      if (targets.length > 0) {
+        const remaining = await remainingVideoQuota(ws.id, ws.plan);
+        await kickoffPlanUgcVideos(ws.id, targets, ugcAvatar, remaining, user?.id ?? null);
+      }
+    } catch (err) {
+      // Defence in depth: an unexpected throw in the UGC setup must not sink the
+      // (already-saved) plan. Log and carry on to the redirect.
+      console.warn("Plan UGC kickoff phase failed; plan saved without UGC videos:", err);
+    }
   }
 
   revalidatePath("/plans");

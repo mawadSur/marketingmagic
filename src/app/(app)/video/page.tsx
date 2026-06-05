@@ -9,9 +9,11 @@ import { getUsageSnapshot } from "@/lib/billing/usage";
 import { supabaseService } from "@/lib/supabase/service";
 import type { Json } from "@/lib/db/types";
 import type { VideoJobStatus } from "@/lib/video/jobs";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { listAvatars } from "@/lib/video/avatars";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { GenerateVideoForm } from "./generate-form";
+import { GenerateUgcForm, type UgcAvatarOption } from "./ugc-form";
 import { JobList, type JobListItem } from "./job-list";
 import { VideoModeTabs } from "./video-mode-tabs";
 
@@ -25,12 +27,26 @@ function paramString(params: Json, key: string, fallback: string): string {
   return fallback;
 }
 
-export default async function VideoPage() {
+export default async function VideoPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ mode?: string }>;
+}) {
   const ws = await getActiveWorkspaceOrRedirect();
+  const refEnabled = referenceVideoEnabled();
+  // The UGC tab lives on this same page (?mode=ugc) and only when the
+  // reference-video feature is on — otherwise we ignore the param and stay on
+  // the topic surface so the tab never points anywhere dead.
+  const params = await searchParams;
+  const mode: "topic" | "ugc" = refEnabled && params.mode === "ugc" ? "ugc" : "topic";
 
   const mpt = mptConfigured();
   const byo = byoKeysConfigured();
-  if (!mpt || !byo) {
+  // UGC mode rides the reference-video pipeline (Higgsfield), not MPT — so it
+  // only needs credential encryption, not the MPT render worker. Topic mode is
+  // unchanged: it still requires both. Either way, without `byo` nothing works.
+  const gateOk = mode === "ugc" ? byo : mpt && byo;
+  if (!gateOk) {
     return (
       <div className="mx-auto max-w-3xl space-y-6">
         <header className="space-y-1">
@@ -40,7 +56,7 @@ export default async function VideoPage() {
         <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
           <p className="font-medium">Video generation isn&apos;t available on this deployment.</p>
           <p className="mt-1 text-muted-foreground">
-            {!mpt && (
+            {mode !== "ugc" && !mpt && (
               <>
                 The render worker isn&apos;t configured (<code>MPT_BASE_URL</code> /{" "}
                 <code>MPT_API_TOKEN</code>).{" "}
@@ -112,6 +128,15 @@ export default async function VideoPage() {
       return { id: a.id, label: enabled ? label : `${label} (publishing not enabled yet)` };
     });
 
+  // UGC mode needs the workspace's saved avatars to populate the picker. Fetch
+  // only when on that tab (service-role read — RLS allows member SELECT, but the
+  // helper is service-role; auth/workspace gating happened above).
+  const avatars: UgcAvatarOption[] =
+    mode === "ugc"
+      ? (await listAvatars(ws.id)).map((a) => ({ id: a.id, name: a.name, isPrimary: a.isPrimary }))
+      : [];
+  const ugcKeyReady = keyStatus.higgsfield_video;
+
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -129,9 +154,9 @@ export default async function VideoPage() {
         </div>
       </header>
 
-      <VideoModeTabs active="topic" referenceEnabled={referenceVideoEnabled()} />
+      <VideoModeTabs active={mode} referenceEnabled={refEnabled} />
 
-      {!keysReady ? (
+      {mode === "topic" && !keysReady ? (
         <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
           <p className="font-medium">Finish setup to generate videos.</p>
           <p className="mt-1 text-muted-foreground">
@@ -149,14 +174,58 @@ export default async function VideoPage() {
         </div>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">New video</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <GenerateVideoForm accounts={accounts} />
-        </CardContent>
-      </Card>
+      {mode === "ugc" && !ugcKeyReady ? (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
+          <p className="font-medium">Finish setup to generate UGC videos.</p>
+          <p className="mt-1 text-muted-foreground">
+            You still need to add your Higgsfield key.{" "}
+            <Link
+              className="font-medium underline underline-offset-4"
+              href="/settings/reference-video"
+            >
+              Add key →
+            </Link>
+          </p>
+        </div>
+      ) : null}
+
+      {mode === "ugc" ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">New UGC video</CardTitle>
+            <CardDescription>
+              Pick a saved avatar, type a script, and we&apos;ll render a talking clip via Higgsfield.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {avatars.length === 0 ? (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
+                <p className="font-medium">No avatars yet.</p>
+                <p className="mt-1 text-muted-foreground">
+                  Save an avatar first, then come back to render a UGC video from it.{" "}
+                  <Link
+                    className="font-medium underline underline-offset-4"
+                    href="/settings/avatars"
+                  >
+                    Add an avatar →
+                  </Link>
+                </p>
+              </div>
+            ) : (
+              <GenerateUgcForm avatars={avatars} accounts={accounts} />
+            )}
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">New video</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <GenerateVideoForm accounts={accounts} />
+          </CardContent>
+        </Card>
+      )}
 
       <section className="space-y-3">
         <h2 className="text-base font-semibold">Recent renders</h2>

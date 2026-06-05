@@ -24,10 +24,26 @@ import {
 
 const MODEL = "claude-sonnet-4-6";
 
+// The org's Anthropic tier caps input tokens/minute (e.g. 10k/min on entry
+// tiers). A burst — two goals proposed back-to-back, or this call landing right
+// after a plan generation — can momentarily exceed it and return a 429
+// rate_limit_error. That's transient: waiting out the 1-minute window clears it.
+// So we let the SDK retry 429s (and 5xx / network blips) with exponential
+// backoff instead of surfacing the raw error to the user. The SDK honours the
+// `retry-after` header the rate-limit response carries, so these retries wait
+// exactly as long as Anthropic asks. Raising the ORG limit itself is a console
+// action (console.anthropic.com/settings/limits) — not something code can do.
+const MAX_RETRIES = 6;
+
 let cachedClient: Anthropic | null = null;
 function client(): Anthropic {
   if (cachedClient) return cachedClient;
-  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY });
+  cachedClient = new Anthropic({
+    apiKey: serverEnv().ANTHROPIC_API_KEY,
+    // Default is 2; bump so a 429 inside the per-minute window rides out the
+    // backoff (honouring retry-after) rather than failing the goal proposal.
+    maxRetries: MAX_RETRIES,
+  });
   return cachedClient;
 }
 

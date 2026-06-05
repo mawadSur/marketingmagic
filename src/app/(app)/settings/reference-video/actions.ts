@@ -23,6 +23,7 @@ import {
   type ByoFalVideoSecrets,
   type ByoDidVideoSecrets,
   type ByoHeygenVideoSecrets,
+  type ByoHiggsfieldVideoSecrets,
 } from "@/lib/video/byo-keys";
 import {
   startReferenceVideoRender,
@@ -225,6 +226,49 @@ export async function removeHeygenVideoKeyAction(): Promise<void> {
   const auth = await keyGuard();
   if ("error" in auth) return;
   await removeWorkspaceKeys(auth.workspaceId, "heygen_video");
+  revalidatePath("/settings/reference-video");
+}
+
+// ── BYO Higgsfield key (UGC avatar video) — save / remove. ───────────────────
+// Identical machinery to the D-ID/HeyGen key actions, just the `higgsfield_video`
+// provider row. Powers the UGC path on /video (a saved avatar + a script). A
+// workspace can configure Higgsfield alongside D-ID/HeyGen/fal, all, or none.
+
+const higgsfieldKeySchema = z.object({
+  // Higgsfield keys are an opaque token; length-checked, never echoed back.
+  api_key: z.string().trim().min(8, "API key looks too short.").max(400),
+});
+
+export async function saveHiggsfieldVideoKeyAction(
+  _prev: ReferenceVideoState,
+  formData: FormData,
+): Promise<ReferenceVideoState> {
+  const auth = await keyGuard();
+  if ("error" in auth) return { error: auth.error, success: null };
+
+  const parsed = higgsfieldKeySchema.safeParse({ api_key: formData.get("api_key") });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input.", success: null };
+  }
+
+  const secrets: ByoHiggsfieldVideoSecrets = { api_key: parsed.data.api_key };
+  try {
+    await setWorkspaceKeys(auth.workspaceId, "higgsfield_video", secrets, auth.userId);
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : "Failed to save Higgsfield key.",
+      success: null,
+    };
+  }
+
+  revalidatePath("/settings/reference-video");
+  return { error: null, success: "Higgsfield key saved." };
+}
+
+export async function removeHiggsfieldVideoKeyAction(): Promise<void> {
+  const auth = await keyGuard();
+  if ("error" in auth) return;
+  await removeWorkspaceKeys(auth.workspaceId, "higgsfield_video");
   revalidatePath("/settings/reference-video");
 }
 

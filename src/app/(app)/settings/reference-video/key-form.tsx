@@ -22,6 +22,8 @@ import {
   removeDidVideoKeyAction,
   saveHeygenVideoKeyAction,
   removeHeygenVideoKeyAction,
+  saveHiggsfieldVideoKeyAction,
+  removeHiggsfieldVideoKeyAction,
   type ReferenceVideoState,
 } from "./actions";
 
@@ -225,6 +227,35 @@ export function HeygenVideoKeyForm({ configured }: { configured: boolean }) {
 
       <Button type="submit" disabled={pending}>
         {pending ? "Saving…" : configured ? "Replace HeyGen key" : "Save HeyGen key"}
+      </Button>
+    </form>
+  );
+}
+
+// ── Higgsfield key (UGC avatar video — a saved avatar + a script) ────────────
+
+export function HiggsfieldVideoKeyStatus({ configured }: { configured: boolean }) {
+  return <KeyStatusPill configured={configured} removeAction={removeHiggsfieldVideoKeyAction} />;
+}
+
+export function HiggsfieldVideoKeyForm({ configured }: { configured: boolean }) {
+  const [state, action, pending] = useActionState(saveHiggsfieldVideoKeyAction, initial);
+
+  return (
+    <form action={action} className="space-y-4">
+      <KeyField
+        label="Higgsfield API key"
+        placeholder={configured ? "Enter a new key to replace the stored one" : "Your Higgsfield API key"}
+        helpHref="https://higgsfield.ai/settings/api-keys"
+        helpLabel="Get a Higgsfield key"
+        helpTail="You pay Higgsfield directly. Stored encrypted — never displayed again."
+      />
+
+      {state.error ? <FormError message={state.error} /> : null}
+      {state.success ? <FormSuccess message={state.success} /> : null}
+
+      <Button type="submit" disabled={pending}>
+        {pending ? "Saving…" : configured ? "Replace Higgsfield key" : "Save Higgsfield key"}
       </Button>
     </form>
   );
