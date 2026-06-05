@@ -163,6 +163,7 @@ describe("byo-keys: getWorkspaceKeyStatus never leaks plaintext", () => {
       fal_video: false,
       did_video: false,
       heygen_video: false,
+      higgsfield_video: false,
     });
     // Serialise the whole result and assert the secret can't appear in it.
     expect(JSON.stringify(status)).not.toContain(LLM.api_key);
@@ -177,6 +178,7 @@ describe("byo-keys: getWorkspaceKeyStatus never leaks plaintext", () => {
       fal_video: false,
       did_video: false,
       heygen_video: false,
+      higgsfield_video: false,
     });
   });
 
@@ -191,6 +193,7 @@ describe("byo-keys: getWorkspaceKeyStatus never leaks plaintext", () => {
       fal_video: false,
       did_video: false,
       heygen_video: false,
+      higgsfield_video: false,
     });
   });
 });

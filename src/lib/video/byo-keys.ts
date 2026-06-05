@@ -55,13 +55,26 @@ export interface ByoDidVideoSecrets {
 export interface ByoHeygenVideoSecrets {
   api_key: string;
 }
-export type ByoProvider = "llm" | "pexels" | "fal_video" | "did_video" | "heygen_video";
+// UGC avatar video (Higgsfield). The workspace's own Higgsfield API key, stored
+// as its OWN provider row ('higgsfield_video') alongside the others. Same
+// AES-256-GCM machinery; a workspace can have any combination of video keys.
+export interface ByoHiggsfieldVideoSecrets {
+  api_key: string;
+}
+export type ByoProvider =
+  | "llm"
+  | "pexels"
+  | "fal_video"
+  | "did_video"
+  | "heygen_video"
+  | "higgsfield_video";
 export type ByoSecrets =
   | ByoLlmSecrets
   | ByoPexelsSecrets
   | ByoFalVideoSecrets
   | ByoDidVideoSecrets
-  | ByoHeygenVideoSecrets;
+  | ByoHeygenVideoSecrets
+  | ByoHiggsfieldVideoSecrets;
 
 // Thrown when BYO_ENCRYPTION_KEY is missing/wrong-length. Distinct type so
 // callers can surface "video keys not configured" vs a generic crypto error.
@@ -166,6 +179,8 @@ export interface WorkspaceKeys {
   // talking-avatar key (the second 'present' provider). Independent of the others;
   // a workspace can have D-ID, HeyGen, both, or neither.
   heygen_video?: ByoHeygenVideoSecrets;
+  // UGC avatar video (Higgsfield) key presence/secret. Independent of the others.
+  higgsfield_video?: ByoHiggsfieldVideoSecrets;
 }
 
 export async function getWorkspaceKeys(workspaceId: string): Promise<WorkspaceKeys> {
@@ -185,6 +200,8 @@ export async function getWorkspaceKeys(workspaceId: string): Promise<WorkspaceKe
     else if (row.provider === "fal_video") out.fal_video = parsed as ByoFalVideoSecrets;
     else if (row.provider === "did_video") out.did_video = parsed as ByoDidVideoSecrets;
     else if (row.provider === "heygen_video") out.heygen_video = parsed as ByoHeygenVideoSecrets;
+    else if (row.provider === "higgsfield_video")
+      out.higgsfield_video = parsed as ByoHiggsfieldVideoSecrets;
   }
   return out;
 }
@@ -206,6 +223,8 @@ export interface WorkspaceKeyStatus {
   // Reference-image video (bet ④ · Capability B) HeyGen key presence. Drives the
   // second talking-avatar key form's Configured/Not pill — never a value.
   heygen_video: boolean;
+  // UGC avatar video (Higgsfield) key presence. Drives the settings UI pill.
+  higgsfield_video: boolean;
 }
 
 export async function getWorkspaceKeyStatus(workspaceId: string): Promise<WorkspaceKeyStatus> {
@@ -224,6 +243,7 @@ export async function getWorkspaceKeyStatus(workspaceId: string): Promise<Worksp
     fal_video: providers.has("fal_video"),
     did_video: providers.has("did_video"),
     heygen_video: providers.has("heygen_video"),
+    higgsfield_video: providers.has("higgsfield_video"),
   };
 }
 
