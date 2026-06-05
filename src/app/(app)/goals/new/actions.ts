@@ -108,8 +108,17 @@ export async function proposeStrategyAction(
       targetAudience: briefRes.data.target_audience,
     });
   } catch (err) {
+    // After the SDK exhausts its retries (maxRetries on the goal client), a
+    // persistent 429 still surfaces here. Translate the raw rate_limit_error
+    // JSON into a calm, actionable message instead of dumping the API payload.
+    const msg = err instanceof Error ? err.message : "";
+    const isRateLimit =
+      (err as { status?: number })?.status === 429 ||
+      /rate.?limit|429/i.test(msg);
     return {
-      error: err instanceof Error ? err.message : "Could not propose a strategy.",
+      error: isRateLimit
+        ? "We're generating a lot right now and hit Claude's per-minute limit. Wait about a minute and try again — your inputs are saved."
+        : msg || "Could not propose a strategy.",
       goalId: null,
     };
   }

@@ -23,6 +23,10 @@ interface RowState {
   // channels when video is available; the submitted `video_<id>="on"` flag
   // drives the kickoff in generatePlanAction.
   video: boolean;
+  // UGC avatar video — independent per-channel opt-in. Only meaningful for
+  // video-capable channels when UGC is available (Higgsfield key + a saved
+  // avatar); the submitted `ugc_<id>="on"` flag drives the UGC kickoff.
+  ugc: boolean;
 }
 
 // Per-channel sensible default for posts/week. We prefer fewer for
@@ -40,6 +44,8 @@ export function NewPlanForm({
   accounts,
   videoAvailable = false,
   videoCapableAccountIds = [],
+  ugcKeyAvailable = false,
+  ugcHasAvatar = false,
 }: {
   accounts: Account[];
   // True when MPT + BYO encryption are wired up AND this workspace has its own
@@ -47,17 +53,27 @@ export function NewPlanForm({
   videoAvailable?: boolean;
   // accountIds whose channel supports video (channelSpec(channel).supportsVideo).
   videoCapableAccountIds?: string[];
+  // True when the reference-video feature is enabled AND this workspace has a
+  // Higgsfield key on file — the precondition for the UGC opt-in. The per-channel
+  // UGC checkbox renders only when this is true AND the workspace has an avatar;
+  // when this is true but there's no avatar we show an add-avatar hint instead.
+  ugcKeyAvailable?: boolean;
+  // True when the workspace has at least one saved avatar to render against.
+  ugcHasAvatar?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(generatePlanAction, initial);
   const videoCapable = useMemo(
     () => new Set(videoCapableAccountIds),
     [videoCapableAccountIds],
   );
+  // UGC reuses the same video-capable channel set (short-form vertical clips),
+  // but is only OFFERABLE when the Higgsfield key + a saved avatar are present.
+  const ugcAvailable = ugcKeyAvailable && ugcHasAvatar;
   // Default: include the first account, exclude the rest. Users can flip.
   const [rows, setRows] = useState<Record<string, RowState>>(() => {
     const out: Record<string, RowState> = {};
     accounts.forEach((a, i) => {
-      out[a.id] = { include: i === 0, postsPerWeek: DEFAULTS[a.channel] ?? 5, video: false };
+      out[a.id] = { include: i === 0, postsPerWeek: DEFAULTS[a.channel] ?? 5, video: false, ugc: false };
     });
     return out;
   });
@@ -68,6 +84,12 @@ export function NewPlanForm({
   // rendering disabled checkboxes everywhere.
   const showVideoKeysHint =
     !videoAvailable &&
+    accounts.some((a) => videoCapable.has(a.id) && rows[a.id]?.include);
+  // UGC has a key but no avatar yet: a selected video-capable channel COULD take a
+  // UGC video, so nudge the user to add an avatar rather than hiding it silently.
+  const showUgcAvatarHint =
+    ugcKeyAvailable &&
+    !ugcHasAvatar &&
     accounts.some((a) => videoCapable.has(a.id) && rows[a.id]?.include);
 
   return (
@@ -91,6 +113,9 @@ export function NewPlanForm({
             // AND this channel can take a video. Hidden otherwise (no disabled
             // clutter); the keys hint below covers the "missing keys" case.
             const showVideo = videoAvailable && videoCapable.has(a.id);
+            // Same gate as the video checkbox, but for UGC: only when UGC is
+            // offerable (key + avatar) AND this channel can take a vertical clip.
+            const showUgc = ugcAvailable && videoCapable.has(a.id);
             return (
               <li
                 key={a.id}
@@ -137,6 +162,27 @@ export function NewPlanForm({
                       </Label>
                     </div>
                   ) : null}
+                  {showUgc ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        name={`ugc_${a.id}`}
+                        id={`ugc_${a.id}`}
+                        checked={row.ugc}
+                        disabled={!row.include}
+                        onChange={(e) =>
+                          setRows((r) => ({ ...r, [a.id]: { ...r[a.id]!, ugc: e.target.checked } }))
+                        }
+                        className="h-4 w-4 shrink-0 rounded border-input transition-colors duration-200"
+                      />
+                      <Label
+                        htmlFor={`ugc_${a.id}`}
+                        className="cursor-pointer text-xs text-muted-foreground"
+                      >
+                        Generate UGC avatar video
+                      </Label>
+                    </div>
+                  ) : null}
                   <div className="flex items-center gap-2 self-end sm:self-auto">
                     <span className="text-xs text-muted-foreground">posts/week</span>
                     <Input
@@ -168,6 +214,15 @@ export function NewPlanForm({
             Want a short video on each post?{" "}
             <Link className="font-medium underline underline-offset-4" href="/settings/video-keys">
               Add your video keys
+            </Link>{" "}
+            to enable.
+          </p>
+        ) : null}
+        {showUgcAvatarHint ? (
+          <p className="text-xs text-muted-foreground">
+            Want a UGC avatar video on each post?{" "}
+            <Link className="font-medium underline underline-offset-4" href="/settings/avatars">
+              Add an avatar
             </Link>{" "}
             to enable.
           </p>
