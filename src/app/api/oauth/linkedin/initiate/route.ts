@@ -41,7 +41,9 @@ async function handle() {
   const redirectUri = `${base}/api/oauth/linkedin/callback`;
   const authorize = linkedinAuthorizeUrl({ redirectUri, state });
 
-  const res = NextResponse.redirect(authorize);
+  // 303 See Other so the POST from the connect tile follows as a GET — the
+  // authorize endpoint is GET-only (a method-preserving 307 would break it).
+  const res = NextResponse.redirect(authorize, 303);
   // Scope the cookie path to the OAuth subtree — matches the X OAuth pattern
   // and means an attacker triggering an unrelated GET on the rest of the app
   // never sees this cookie. Callback reads at /api/oauth/linkedin/callback so

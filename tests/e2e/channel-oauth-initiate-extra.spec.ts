@@ -59,6 +59,12 @@ test.describe("connect-channel X OAuth initiate", () => {
 
     expect(status).toBeGreaterThanOrEqual(300);
     expect(status).toBeLessThan(400);
+    // Must NOT be a method-preserving 307/308: the tile POSTs here, and the
+    // provider authorize endpoints are GET-only — a 307 makes the browser POST
+    // to x.com/i/oauth2/authorize, which renders "Page isn't available".
+    // 303 (or 302) forces the follow-up to be a GET. Regression guard.
+    expect(status, "initiate must 303/302 (GET-following), never 307/308").not.toBe(307);
+    expect(status).not.toBe(308);
     expect(location, "Location header missing").toBeTruthy();
 
     if (X.notConfigured.test(location ?? "")) {
@@ -144,6 +150,10 @@ test.describe("connect-channel LinkedIn OAuth initiate", () => {
 
     expect(status).toBeGreaterThanOrEqual(300);
     expect(status).toBeLessThan(400);
+    // GET-following redirect only — never a method-preserving 307/308 (see the
+    // X test for the full rationale; LinkedIn's authorize endpoint is GET-only).
+    expect(status, "initiate must 303/302 (GET-following), never 307/308").not.toBe(307);
+    expect(status).not.toBe(308);
     expect(location, "Location header missing").toBeTruthy();
 
     if (LI.notConfigured.test(location ?? "")) {

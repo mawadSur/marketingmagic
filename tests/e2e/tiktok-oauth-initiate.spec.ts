@@ -54,6 +54,11 @@ test.describe("connect-channel TikTok OAuth initiate", () => {
 
     expect(status, "initiate must return a redirect").toBeGreaterThanOrEqual(300);
     expect(status, "initiate must return a redirect").toBeLessThan(400);
+    // GET-following redirect only — never a method-preserving 307/308. The tile
+    // POSTs here and www.tiktok.com/v2/auth/authorize is GET-only; a 307 would
+    // POST to it and fail. Regression guard (see channel-oauth-initiate.spec.ts).
+    expect(status, "TikTok initiate must 303/302, never 307/308").not.toBe(307);
+    expect(status).not.toBe(308);
     expect(location, "Location header missing on initiate response").toBeTruthy();
 
     // When TikTok keys aren't configured, the route redirects to the per-channel
