@@ -14,13 +14,17 @@ export const dynamic = "force-dynamic";
 // instead of OAuth, so it stays a link to its own page where the input form
 // lives. The per-channel pages still exist for users who land there directly
 // or follow a deep link from elsewhere in the app.
+// `comingSoon` channels are awaiting external platform approval (LinkedIn's
+// Community Management API review; TikTok's app audit), so connecting would
+// dead-end on a provider error. We surface them as a disabled "Coming soon"
+// tile instead of a live connect button. Flip the flag off once approved.
 const CONNECTORS = [
   { slug: "x", label: "Connect X", initiate: "/api/oauth/x/initiate" },
-  { slug: "linkedin", label: "Connect LinkedIn", initiate: "/api/oauth/linkedin/initiate" },
+  { slug: "linkedin", label: "Connect LinkedIn", initiate: "/api/oauth/linkedin/initiate", comingSoon: true },
   { slug: "threads", label: "Connect Threads", initiate: "/api/oauth/threads/initiate" },
   { slug: "instagram", label: "Connect Instagram", initiate: "/api/oauth/instagram/initiate" },
   { slug: "facebook", label: "Connect Facebook", initiate: "/api/oauth/facebook/initiate" },
-  { slug: "tiktok", label: "Connect TikTok", initiate: "/api/oauth/tiktok/initiate" },
+  { slug: "tiktok", label: "Connect TikTok", initiate: "/api/oauth/tiktok/initiate", comingSoon: true },
   { slug: "bluesky", label: "Connect Bluesky", initiate: null }, // app-password flow, not OAuth
 ] as const;
 
@@ -227,7 +231,22 @@ export default async function ChannelsPage({
             <h2 className="text-base font-medium">Add a channel</h2>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {available.map((c) =>
-                c.initiate ? (
+                "comingSoon" in c && c.comingSoon ? (
+              // Awaiting platform approval (LinkedIn CMA review / TikTok audit).
+              // Disabled tile with a "Coming soon" badge — no connect attempt.
+              <span
+                key={c.slug}
+                aria-disabled="true"
+                title="Awaiting platform approval"
+                className="flex items-center gap-3 rounded-md border bg-card px-3 py-2.5 text-sm font-medium opacity-60 cursor-not-allowed"
+              >
+                <ChannelBadge channel={c.slug} />
+                <span>{c.label.replace(/^Connect /, "")}</span>
+                <span className="ml-auto rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Coming soon
+                </span>
+              </span>
+            ) : c.initiate ? (
               // OAuth channel: tile is a POST form to the initiate route.
               // One-click connect — submitting kicks the user straight to
               // the provider's authorize screen. When at the channel cap we

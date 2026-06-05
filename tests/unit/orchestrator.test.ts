@@ -99,6 +99,21 @@ describe("startVideoRender: happy path", () => {
       pexels_api_keys: ["pexels-byo-a", "pexels-byo-b"],
     });
   });
+
+  it("ALWAYS sends a voice_name — defaulting when the caller leaves it blank", async () => {
+    // Regression: an empty/absent voice made MPT's TTS step fail with
+    // `Invalid voice ''`, killing the render at the audio stage (state -1).
+    // The orchestrator must substitute a valid default.
+    await startVideoRender(WS, { videoSubject: "Launch recap" });
+    const sent = createRenderJob.mock.calls[0][0] as { voice_name?: string };
+    expect(sent.voice_name).toBe("en-US-JennyNeural-Female");
+
+    createRenderJob.mockClear();
+    // Whitespace-only is treated as blank → still defaulted.
+    await startVideoRender(WS, { videoSubject: "Launch recap", voiceName: "   " });
+    const sent2 = createRenderJob.mock.calls[0][0] as { voice_name?: string };
+    expect(sent2.voice_name).toBe("en-US-JennyNeural-Female");
+  });
 });
 
 describe("startVideoRender: ordering guarantees", () => {

@@ -58,7 +58,12 @@ export function GenerateVideoForm({ accounts }: { accounts: DestinationAccount[]
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="voiceName">Voice (optional)</Label>
-          <Input id="voiceName" name="voiceName" placeholder="e.g. en-US-JennyNeural" maxLength={120} />
+          <Input id="voiceName" name="voiceName" placeholder="en-US-JennyNeural-Female" maxLength={120} />
+          <p className="text-xs text-muted-foreground">
+            Leave blank to use the default narrator (en-US-JennyNeural). Use the
+            <code className="mx-1">locale-VoiceNeural-Gender</code> format, e.g.
+            <code className="ml-1">en-US-GuyNeural-Male</code>.
+          </p>
         </div>
       </div>
 
