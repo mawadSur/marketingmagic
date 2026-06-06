@@ -4,12 +4,12 @@ import { planSchema, type GeneratedPlan } from "@/lib/plan/schema";
 import { planSystemPrompt, planUserPrompt, type PlanGenInputs } from "@/lib/plan/prompt";
 import { ENABLED_CHANNELS } from "@/lib/channels/registry";
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-opus-4-8";
 
 let cachedClient: Anthropic | null = null;
 function client(): Anthropic {
   if (cachedClient) return cachedClient;
-  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY });
+  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY, maxRetries: 6 });
   return cachedClient;
 }
 

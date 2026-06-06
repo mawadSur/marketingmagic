@@ -7,12 +7,12 @@ import {
 import { isInRecommendedWindow } from "@/lib/channels/best-times";
 import type { OutlierPost } from "@/lib/explain/outliers";
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-opus-4-8";
 
 let cachedClient: Anthropic | null = null;
 function client(): Anthropic {
   if (cachedClient) return cachedClient;
-  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY });
+  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY, maxRetries: 6 });
   return cachedClient;
 }
 

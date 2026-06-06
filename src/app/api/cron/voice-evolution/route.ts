@@ -20,7 +20,7 @@ import type { VoiceProfile, VoiceProfileDiff } from "@/lib/db/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-opus-4-8";
 const LOOKBACK_DAYS = 7;
 const MIN_REJECTIONS = 3;
 const MAX_REJECTIONS_PER_WORKSPACE = 20;
@@ -36,7 +36,7 @@ interface PerWorkspaceResult {
 let cachedClient: Anthropic | null = null;
 function client(): Anthropic {
   if (cachedClient) return cachedClient;
-  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY });
+  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY, maxRetries: 6 });
   return cachedClient;
 }
 

@@ -104,12 +104,12 @@ const urlSchema = z
 
 const MAX_HTML_BYTES = 200_000;
 const FETCH_TIMEOUT_MS = 10_000;
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-opus-4-8";
 
 let cachedClient: Anthropic | null = null;
 function client(): Anthropic {
   if (cachedClient) return cachedClient;
-  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY });
+  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY, maxRetries: 6 });
   return cachedClient;
 }
 

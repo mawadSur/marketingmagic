@@ -19,7 +19,7 @@ import {
   THREAD_MAX_TWEETS,
 } from "./schema";
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-opus-4-8";
 
 // Source text gets hard-bounded before we send it. 20k chars is enough
 // to fit a long-form essay (~3-4k words) without burning context, and
@@ -29,7 +29,7 @@ const MAX_SOURCE_CHARS = 20_000;
 let cachedClient: Anthropic | null = null;
 function client(): Anthropic {
   if (cachedClient) return cachedClient;
-  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY });
+  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY, maxRetries: 6 });
   return cachedClient;
 }
 

@@ -35,7 +35,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { serverEnv } from "@/lib/env";
 import type { VoiceProfile } from "@/lib/db/types";
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-opus-4-8";
 
 // Each draft is short. The Claude call is tool-bound to a single
 // emission with two strings so we never get back prose or a refusal.
@@ -44,7 +44,7 @@ const MAX_DRAFT_CHARS = 500;
 let cachedClient: Anthropic | null = null;
 function client(): Anthropic {
   if (cachedClient) return cachedClient;
-  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY });
+  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY, maxRetries: 6 });
   return cachedClient;
 }
 

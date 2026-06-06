@@ -11,7 +11,7 @@ import type { ChannelId } from "@/lib/channels/registry";
 
 export type Brief = Database["public"]["Tables"]["brand_briefs"]["Row"];
 
-export const MODEL = "claude-sonnet-4-6";
+export const MODEL = "claude-opus-4-8";
 
 // How many cached winners to feed Claude in the summarise branch.
 export const SUMMARISE_SAMPLE_LIMIT = 20;
@@ -23,7 +23,7 @@ export const WEB_SEARCH_MAX_USES = 5;
 let cachedClient: Anthropic | null = null;
 export function client(): Anthropic {
   if (cachedClient) return cachedClient;
-  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY });
+  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY, maxRetries: 6 });
   return cachedClient;
 }
 

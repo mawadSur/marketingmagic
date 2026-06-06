@@ -8,7 +8,7 @@ import { voiceProfileSchema, type VoiceProfileParsed } from "@/lib/voice/schema"
 // src/lib/plan/generate.ts exactly: same model, tool_choice forcing, no
 // streaming, lazy singleton client.
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-opus-4-8";
 
 // Bound how much text we send Claude. Reference posts beyond this are
 // effectively ignored — at ~280 chars/X-post * 50 posts that's 14k chars,
@@ -19,7 +19,7 @@ const MAX_TOTAL_CHARS = 20_000;
 let cachedClient: Anthropic | null = null;
 function client(): Anthropic {
   if (cachedClient) return cachedClient;
-  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY });
+  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY, maxRetries: 6 });
   return cachedClient;
 }
 
