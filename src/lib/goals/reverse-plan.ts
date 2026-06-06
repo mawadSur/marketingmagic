@@ -13,7 +13,7 @@ import {
 // Mirrors the SDK pattern used in src/lib/sources/extract-claude.ts and
 // src/lib/plan/generate.ts exactly:
 //   - Lazy singleton client
-//   - claude-sonnet-4-6
+//   - claude-opus-4-8
 //   - tool_choice forcing a single submit_strategy call
 //   - zod re-validation downstream
 //
@@ -22,7 +22,7 @@ import {
 // reason, closest_achievable }. The downstream UI surfaces the warning
 // when realistic=false — we never silently inflate the plan.
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-opus-4-8";
 
 // The org's Anthropic tier caps input tokens/minute (e.g. 10k/min on entry
 // tiers). A burst — two goals proposed back-to-back, or this call landing right

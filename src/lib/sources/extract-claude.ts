@@ -11,7 +11,7 @@ import {
 // Mirrors the pattern in src/lib/voice/extract.ts and src/lib/plan/generate.ts
 // exactly:
 //   - Lazy singleton SDK client
-//   - claude-sonnet-4-6 model
+//   - claude-opus-4-8 model
 //   - tool_choice forcing a single submit_* call
 //   - zod re-validation downstream so the JSON Schema doesn't have to be
 //     bulletproof on its own
@@ -21,7 +21,7 @@ import {
 // quotes if not told otherwise), facts include a context pointer when one
 // is available in the source.
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-opus-4-8";
 
 // Bound the input we send Claude. Long-form articles get truncated from the
 // tail; keeping the head preserves lede + thesis which is what the
@@ -32,7 +32,7 @@ const MAX_INPUT_CHARS = 32_000;
 let cachedClient: Anthropic | null = null;
 function client(): Anthropic {
   if (cachedClient) return cachedClient;
-  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY });
+  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY, maxRetries: 6 });
   return cachedClient;
 }
 

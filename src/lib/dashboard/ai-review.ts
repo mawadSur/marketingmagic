@@ -3,7 +3,7 @@ import { serverEnv } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { getStatsByChannel, getTopAndBottomPosts, getEngagementByDay } from "./analytics";
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-opus-4-8";
 const FRESHNESS_HOURS = 24 * 7;
 
 export interface AiReview {
@@ -19,7 +19,7 @@ export interface AiReview {
 let cachedClient: Anthropic | null = null;
 function client(): Anthropic {
   if (cachedClient) return cachedClient;
-  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY });
+  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY, maxRetries: 6 });
   return cachedClient;
 }
 

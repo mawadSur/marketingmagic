@@ -15,7 +15,7 @@ import { serverEnv } from "@/lib/env";
 import type { VoiceProfile } from "@/lib/db/types";
 import { maxCharsFor } from "@/lib/channels/registry";
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-opus-4-8";
 
 // Cap variant count at 5 (spec). The minimum is 2 — a 1-variant
 // experiment would just be a reschedule.
@@ -25,7 +25,7 @@ export const MAX_VARIANT_COUNT = 5;
 let cachedClient: Anthropic | null = null;
 function client(): Anthropic {
   if (cachedClient) return cachedClient;
-  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY });
+  cachedClient = new Anthropic({ apiKey: serverEnv().ANTHROPIC_API_KEY, maxRetries: 6 });
   return cachedClient;
 }
 
