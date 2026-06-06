@@ -93,7 +93,7 @@ export function TimezoneSection({ initial }: { initial: string | null }) {
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
       {savedAt && !error ? (
         <p className="text-xs text-emerald-600 dark:text-emerald-400">
-          Saved {new Date(savedAt).toLocaleTimeString()}. Smart-timing will use this on next refresh.
+          Saved {new Date(savedAt).toLocaleTimeString("en-US")}. Smart-timing will use this on next refresh.
         </p>
       ) : null}
     </section>

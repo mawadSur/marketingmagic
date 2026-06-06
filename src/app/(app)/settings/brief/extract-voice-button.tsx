@@ -107,7 +107,7 @@ function ProfileCard({
       ) : null}
       {extractedAt ? (
         <p className="text-[11px] text-muted-foreground">
-          Extracted {new Date(extractedAt).toLocaleString()}
+          Extracted {new Date(extractedAt).toLocaleString("en-US")}
         </p>
       ) : null}
     </div>

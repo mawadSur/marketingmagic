@@ -43,6 +43,11 @@ function client(): Anthropic {
     // Default is 2; bump so a 429 inside the per-minute window rides out the
     // backoff (honouring retry-after) rather than failing the goal proposal.
     maxRetries: MAX_RETRIES,
+    // Strategy generation forces a single large tool call and can run long; cap
+    // it so a hung Anthropic request can't hold this serverless function open
+    // indefinitely. The SDK still applies maxRetries within this per-attempt
+    // budget.
+    timeout: 90_000,
   });
   return cachedClient;
 }

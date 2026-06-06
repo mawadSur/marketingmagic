@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { getInboxInteractions } from "@/lib/interactions/queries";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Notice } from "@/components/ui/notice";
 import { Badge, ChannelBadge } from "@/components/ui/badge";
 import {
   bandForScore,
@@ -119,10 +120,11 @@ export default async function InboxPage({
       />
 
       {hasMetaAccounts ? (
-        <p className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-          Instagram and Threads reply paths are pending Meta App Review. You can read inbound items
-          once the scopes land; for now the schema and cron are wired up so nothing is lost.
-        </p>
+        <Notice
+          variant="warning"
+          className="px-3 py-2 text-xs"
+          title="Instagram and Threads reply paths are pending Meta App Review. You can read inbound items once the scopes land; for now the schema and cron are wired up so nothing is lost."
+        />
       ) : null}
 
       {interactions.length === 0 ? (

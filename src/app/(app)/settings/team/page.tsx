@@ -133,7 +133,7 @@ export default async function TeamPage() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{inv.email}</p>
                   <p className="text-xs text-muted-foreground">
-                    Expires {new Date(inv.expires_at).toLocaleDateString()}
+                    Expires {new Date(inv.expires_at).toLocaleDateString("en-US")}
                   </p>
                 </div>
                 <div className="flex items-center gap-3">

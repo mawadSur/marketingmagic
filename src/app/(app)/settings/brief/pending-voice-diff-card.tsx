@@ -43,7 +43,7 @@ export function PendingVoiceDiffCard({ diff, proposedAt }: Props) {
       <DiffPreview diff={diff} />
       {proposedAt ? (
         <p className="text-[11px] text-muted-foreground">
-          Proposed {new Date(proposedAt).toLocaleString()} from{" "}
+          Proposed {new Date(proposedAt).toLocaleString("en-US")} from{" "}
           {diff.source_rejection_count} rejection
           {diff.source_rejection_count === 1 ? "" : "s"} in the last week.
         </p>

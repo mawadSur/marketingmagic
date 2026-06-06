@@ -26,6 +26,26 @@ export interface FacebookCredentials {
 
 const GRAPH = "https://graph.facebook.com/v23.0";
 
+// Per-call network timeout. Graph API calls are quick (token exchange, publish,
+// metrics); a hung connection must not hold a serverless function open. Mirrors
+// the AbortController idiom used in lib/sources/* and lib/preview/scrape.ts.
+const FB_FETCH_TIMEOUT_MS = 20_000;
+
+async function fbFetch(url: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FB_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`Facebook request timed out after ${FB_FETCH_TIMEOUT_MS / 1000}s.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export interface FacebookPostResult {
   id: string; // composite id "{page-id}_{post-id}"
 }
@@ -108,7 +128,7 @@ export async function facebookExchangeCode(opts: {
   }
 
   // 1. Code → short-lived user token.
-  const tokenRes = await fetch(
+  const tokenRes = await fbFetch(
     `${GRAPH}/oauth/access_token?` +
       new URLSearchParams({
         client_id: env.META_APP_ID,
@@ -123,7 +143,7 @@ export async function facebookExchangeCode(opts: {
   const tok = (await tokenRes.json()) as { access_token: string; expires_in?: number };
 
   // 2. Short-lived → long-lived user token (60 days).
-  const longRes = await fetch(
+  const longRes = await fbFetch(
     `${GRAPH}/oauth/access_token?` +
       new URLSearchParams({
         grant_type: "fb_exchange_token",
@@ -142,7 +162,7 @@ export async function facebookExchangeCode(opts: {
   //    as the app stays authorized). We keep ALL publishable Pages so the
   //    callback can offer a picker; we never auto-discard the operator's other
   //    Pages here.
-  const pagesRes = await fetch(
+  const pagesRes = await fbFetch(
     `${GRAPH}/me/accounts?access_token=${encodeURIComponent(long.access_token)}`,
   );
   if (!pagesRes.ok) {
@@ -175,7 +195,7 @@ export async function facebookVerify(
   pageId: string,
   pageAccessToken: string,
 ): Promise<{ name: string }> {
-  const res = await fetch(
+  const res = await fbFetch(
     `${GRAPH}/${pageId}?fields=name&access_token=${encodeURIComponent(pageAccessToken)}`,
   );
   if (!res.ok) throw new Error(`Facebook verify failed (${res.status}): ${await res.text()}`);
@@ -200,7 +220,7 @@ export async function facebookPost(
   });
   if (linkUrl) body.set("link", linkUrl);
 
-  const res = await fetch(`${GRAPH}/${creds.pageId}/feed`, {
+  const res = await fbFetch(`${GRAPH}/${creds.pageId}/feed`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
@@ -238,7 +258,7 @@ export async function facebookPostVideo(
     description: caption,
     access_token: creds.pageAccessToken,
   });
-  const res = await fetch(`${GRAPH}/${creds.pageId}/videos`, {
+  const res = await fbFetch(`${GRAPH}/${creds.pageId}/videos`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
@@ -266,7 +286,7 @@ export async function facebookPostVideo(
 async function pollVideoStatus(videoId: string, token: string): Promise<void> {
   const deadline = Date.now() + FB_VIDEO_POLL_TIMEOUT_MS;
   for (;;) {
-    const res = await fetch(
+    const res = await fbFetch(
       `${GRAPH}/${videoId}?fields=status&access_token=${encodeURIComponent(token)}`,
     );
     if (!res.ok) {
@@ -299,7 +319,7 @@ export async function facebookMetrics(
   postId: string,
 ): Promise<FacebookMetrics> {
   const metrics = "post_impressions,post_impressions_unique,post_reactions_by_type_total,post_clicks";
-  const res = await fetch(
+  const res = await fbFetch(
     `${GRAPH}/${postId}/insights?metric=${metrics}&access_token=${encodeURIComponent(creds.pageAccessToken)}`,
   );
   if (!res.ok) {
@@ -323,7 +343,7 @@ export async function facebookMetrics(
 
   // Comments + shares need a separate /comments and field-summary call;
   // include them with a graph query for accuracy.
-  const sumRes = await fetch(
+  const sumRes = await fbFetch(
     `${GRAPH}/${postId}?fields=comments.summary(true),shares&access_token=${encodeURIComponent(creds.pageAccessToken)}`,
   );
   let comments = 0;

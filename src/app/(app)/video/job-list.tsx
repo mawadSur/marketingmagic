@@ -36,7 +36,7 @@ const STATUS_LABEL: Record<VideoJobStatus, string> = {
 
 function fmt(iso: string): string {
   try {
-    return new Date(iso).toLocaleString();
+    return new Date(iso).toLocaleString("en-US");
   } catch {
     return iso;
   }

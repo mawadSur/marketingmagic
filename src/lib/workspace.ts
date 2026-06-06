@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
@@ -9,14 +10,16 @@ export const ACTIVE_WS_COOKIE = "mm_active_ws";
 type Workspace = Database["public"]["Tables"]["workspaces"]["Row"];
 type Organization = Database["public"]["Tables"]["organizations"]["Row"];
 
-export async function listWorkspaces(): Promise<Workspace[]> {
+// Memoized per request (React cache): the (app) layout and the page tree both
+// read the workspace list in the same render → one Supabase round-trip, shared.
+export const listWorkspaces = cache(async (): Promise<Workspace[]> => {
   const supabase = await supabaseServer();
   const { data } = await supabase
     .from("workspaces")
     .select("*")
     .order("created_at", { ascending: true });
   return data ?? [];
-}
+});
 
 // ─── Organization / agency awareness (Phase A — migration 029) ──────────
 //
@@ -72,12 +75,15 @@ export async function listClientWorkspaces(organizationId: string): Promise<Work
   return data ?? [];
 }
 
-export async function getAuthedUserOrRedirect(redirectTo = "/login"): Promise<User> {
+// Memoized per request (React cache): keyed on redirectTo, so the layout and
+// every page share the single auth.getUser() round-trip. Redirect on no-user is
+// preserved (it runs the first time and the cached value is always a real User).
+export const getAuthedUserOrRedirect = cache(async (redirectTo = "/login"): Promise<User> => {
   const supabase = await supabaseServer();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect(redirectTo);
   return user;
-}
+});
 
 // ─── Client ACCOUNTS (migration 037) — agency-vs-client routing ─────────
 //
@@ -122,7 +128,11 @@ export async function blockClientsFromAgencyApp(): Promise<void> {
   }
 }
 
-export async function getActiveWorkspaceOrRedirect(): Promise<Workspace> {
+// Memoized per request (React cache): the (app) layout resolves the active
+// workspace and so does the page tree — same render, one resolution. The two
+// memoized reads above (user + workspaces) are deduped too, and the cookie read
+// has no side effect, so redirect behavior is unchanged.
+export const getActiveWorkspaceOrRedirect = cache(async (): Promise<Workspace> => {
   await getAuthedUserOrRedirect();
   const workspaces = await listWorkspaces();
   if (workspaces.length === 0) redirect("/onboarding/workspace");
@@ -131,7 +141,7 @@ export async function getActiveWorkspaceOrRedirect(): Promise<Workspace> {
   const slug = cookieStore.get(ACTIVE_WS_COOKIE)?.value;
   const active = (slug && workspaces.find((w) => w.slug === slug)) || workspaces[0]!;
   return active;
-}
+});
 
 export async function setActiveWorkspaceCookie(slug: string) {
   const cookieStore = await cookies();

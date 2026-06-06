@@ -82,7 +82,7 @@ export function BrandingForm({
       </div>
 
       {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
-      {state.ok ? <p className="text-sm text-emerald-600">Branding saved.</p> : null}
+      {state.ok ? <p className="text-sm text-success">Branding saved.</p> : null}
 
       <Button type="submit" disabled={disabled || pending}>
         {pending ? "Saving…" : "Save branding"}
@@ -272,7 +272,7 @@ function MintLinkForm({
       {state.rawUrl ? (
         <div className="space-y-2 rounded-md border bg-background p-2">
           <div className="space-y-1">
-            <p className="text-xs font-medium text-emerald-600">
+            <p className="text-xs font-medium text-success">
               Link created — copy it now, it won&apos;t be shown again:
             </p>
             <code className="block break-all text-xs">{state.rawUrl}</code>
@@ -330,10 +330,10 @@ function EmailInviteForm({
       </div>
       {state.error ? <p className="text-xs text-destructive">{state.error}</p> : null}
       {state.status === "sent" ? (
-        <p className="text-xs text-emerald-600">Sent. The client now has their link.</p>
+        <p className="text-xs text-success">Sent. The client now has their link.</p>
       ) : null}
       {state.status === "skipped" ? (
-        <p className="text-xs text-amber-600">
+        <p className="text-xs text-warning">
           Email isn&apos;t configured on this deployment, so nothing was sent —
           copy the link above and share it manually.
         </p>
@@ -365,7 +365,7 @@ function RevokeButton({
         <input type="hidden" name="organization_id" value={organizationId} />
         <input type="hidden" name="workspace_id" value={workspaceId} />
         <input type="hidden" name="token_id" value={tokenId} />
-        <p className="flex items-center gap-1 text-xs text-amber-600">
+        <p className="flex items-center gap-1 text-xs text-warning">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
           Instantly disconnects any live client-portal sessions on this link.
         </p>

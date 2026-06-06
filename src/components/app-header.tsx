@@ -66,7 +66,13 @@ export function AppHeader({
           </span>
         </Link>
         <WorkspaceSwitcher active={active} workspaces={workspaces} />
-        <nav className="flex flex-1 items-center gap-1 overflow-x-auto text-sm">
+        {/* Right-edge fade affordance: on mobile the 7 nav items scroll past
+            the viewport, so a gradient mask signals there's more to swipe.
+            Right-only (not the both-edge .marquee-mask) so the left-anchored
+            "Dashboard" label is never clipped. Removed at sm+ where all fit. */}
+        <nav
+          className="flex flex-1 items-center gap-1 overflow-x-auto text-sm [-webkit-mask-image:linear-gradient(to_right,black_85%,transparent)] [mask-image:linear-gradient(to_right,black_85%,transparent)] sm:[-webkit-mask-image:none] sm:[mask-image:none]"
+        >
           {nav.map((item) => {
             const activeRoute = isActive(pathname, item.href);
             return (

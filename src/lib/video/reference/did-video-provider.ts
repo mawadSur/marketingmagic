@@ -87,6 +87,28 @@ function looksLikeModeration(text: string): boolean {
   return MODERATION_MARKERS.some((m) => lower.includes(m));
 }
 
+// Per-call network timeout. submit/poll are quick API calls; a hung connection
+// must not hold the (cron) serverless function open. Mirrors the AbortController
+// idiom used in lib/sources/* and lib/preview/scrape.ts. The mp4 fetchBytes
+// download streams a larger body, so it passes a more generous budget.
+const DID_FETCH_TIMEOUT_MS = 15_000;
+const DID_DOWNLOAD_TIMEOUT_MS = 120_000;
+
+async function didFetch(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`D-ID request timed out after ${timeoutMs / 1000}s.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Pull a human-readable error string out of D-ID's various error shapes
 // (top-level description/message, or a nested error object/string).
 function extractError(body: DidPollResponse | DidSubmitResponse): string | undefined {
@@ -145,11 +167,15 @@ export class DIdReferenceVideoProvider implements ReferenceVideoProvider {
       },
     };
 
-    const res = await fetch(this.endpoint(), {
-      method: "POST",
-      headers: this.authHeaders(apiKey),
-      body: JSON.stringify(body),
-    });
+    const res = await didFetch(
+      this.endpoint(),
+      {
+        method: "POST",
+        headers: this.authHeaders(apiKey),
+        body: JSON.stringify(body),
+      },
+      DID_FETCH_TIMEOUT_MS,
+    );
 
     if (!res.ok) {
       const text = await res.text();
@@ -179,7 +205,7 @@ export class DIdReferenceVideoProvider implements ReferenceVideoProvider {
   // result_url), error/rejected → failed (provider reason surfaced).
   async poll(providerJobId: string, apiKey: string): Promise<ReferenceVideoPoll> {
     const statusUrl = `${this.endpoint()}/${providerJobId}`;
-    const res = await fetch(statusUrl, { headers: this.authHeaders(apiKey) });
+    const res = await didFetch(statusUrl, { headers: this.authHeaders(apiKey) }, DID_FETCH_TIMEOUT_MS);
 
     if (!res.ok) {
       const text = await res.text();
@@ -235,7 +261,7 @@ export class DIdReferenceVideoProvider implements ReferenceVideoProvider {
     _apiKey: string,
   ): Promise<{ bytes: Uint8Array; contentType: string }> {
     // result_url is pre-signed; no auth header needed (mirrors the fal adapter).
-    const res = await fetch(videoUrl);
+    const res = await didFetch(videoUrl, {}, DID_DOWNLOAD_TIMEOUT_MS);
     if (!res.ok) {
       throw new Error(`D-ID video fetch failed (${res.status}).`);
     }

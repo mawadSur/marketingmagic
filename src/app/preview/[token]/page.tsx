@@ -41,7 +41,7 @@ export default async function PreviewPage({
   const formatDate = (iso: string) => {
     try {
       const d = new Date(iso);
-      return d.toLocaleString(undefined, {
+      return d.toLocaleString("en-US", {
         weekday: "short",
         month: "short",
         day: "numeric",

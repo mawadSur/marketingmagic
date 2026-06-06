@@ -3,7 +3,13 @@ import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
 import { EmptyState } from "@/components/ui/empty-state";
 import { QueueIdeaRow, QueueRow, type QueueMediaItem } from "./queue-row";
-import { HashtagSuggestionsServer } from "./hashtag-suggestions-server";
+import { QueueTabs } from "./queue-tabs";
+import { HashtagPillRow } from "@/components/hashtag-pill-row";
+import { recommendHashtags } from "@/lib/hashtags/recommend";
+import { extractHashtags } from "@/lib/hashtags/extract";
+import { getChannelHashtagPolicy } from "@/lib/hashtags/rules";
+import type { ChannelId } from "@/lib/channels/registry";
+import type { HashtagSuggestion } from "@/lib/hashtags/schema";
 import { ThreadBuilderRow, type ThreadTweetRow } from "@/components/thread-builder-ui";
 import { readThreadMeta } from "@/lib/threads/schema";
 
@@ -193,22 +199,53 @@ export default async function QueuePage() {
 
   // Phase 6.10: pre-render per-post hashtag chip rows so the client
   // QueueRow component can just slot them in. We only build slots for
-  // pending posts (scheduled is read-only). Server components render
-  // serially here; for typical queue sizes (10–30 pending posts) this
-  // is one DB roundtrip per channel-in-view via the recommender.
+  // pending posts (scheduled is read-only).
   // Phase 6.8: skip hashtag suggestions for thread tweets — X threads
   // are explicitly no-hashtags (the algorithm penalises them) and the
   // chip row would clutter the per-tweet editor.
+  //
+  // Batch the recommender by channel: the suggestion set only depends on
+  // (workspace × channel), not the individual post, so we fetch ONCE per
+  // unique channel in view instead of once per post (the old per-post
+  // path was an N+1 against hashtag_usage). Per-post draft tags are still
+  // extracted locally (no DB) and surfaced first by HashtagPillRow.
+  const hashtagPosts = pending.filter(
+    (p) => readThreadMeta(p.generation_metadata) === null,
+  );
+  const VALID_HASHTAG_CHANNELS: ReadonlyArray<ChannelId> = [
+    "x",
+    "linkedin",
+    "threads",
+    "instagram",
+    "bluesky",
+  ];
+  const channelsInView = Array.from(
+    new Set(
+      hashtagPosts
+        .map((p) => p.channel as ChannelId)
+        .filter((c) => VALID_HASHTAG_CHANNELS.includes(c)),
+    ),
+  );
+  const suggestionsByChannel = new Map<ChannelId, HashtagSuggestion[]>();
+  await Promise.all(
+    channelsInView.map(async (ch) => {
+      suggestionsByChannel.set(ch, await recommendHashtags(ws.id, ch));
+    }),
+  );
+
   const hashtagSlots = new Map<string, React.ReactNode>();
-  for (const p of pending) {
-    if (readThreadMeta(p.generation_metadata) !== null) continue;
+  for (const p of hashtagPosts) {
+    const ch = p.channel as ChannelId;
+    if (!VALID_HASHTAG_CHANNELS.includes(ch)) continue;
+    const policy = getChannelHashtagPolicy(ch);
+    const showsChips = policy.showChips || policy.recommendedCount[1] > 0;
     hashtagSlots.set(
       p.id,
-      <HashtagSuggestionsServer
-        workspaceId={ws.id}
+      <HashtagPillRow
         postId={p.id}
-        channel={p.channel}
-        text={p.text}
+        channel={ch}
+        suggestions={showsChips ? suggestionsByChannel.get(ch) ?? [] : []}
+        initialTags={extractHashtags(p.text)}
       />,
     );
   }
@@ -230,6 +267,8 @@ export default async function QueuePage() {
           New post
         </Link>
       </header>
+
+      <QueueTabs />
 
       <Section
         title="Pending approval"
