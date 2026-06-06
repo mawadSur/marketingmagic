@@ -1,0 +1,236 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { z } from "zod";
+import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseService } from "@/lib/supabase/service";
+import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
+import { atomize } from "@/lib/atomize/generate";
+import { sourceContextFromRow } from "@/lib/sources/generate-from-source";
+import { channelSpec, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
+import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits";
+import { incrementPostsGenerated } from "@/lib/billing/usage";
+
+// /sources/[id] — "Atomize" server action (Bet 2 — Atomization Engine).
+//
+// Turns ONE source into N channel-native posts and drops them into the
+// approval queue as drafts. Distinct from generateClusterAction (which builds
+// a multi-week posting *calendar* with scheduled times): atomization is a
+// direct 1→N decomposition — each atom becomes per-channel variants, and the
+// drafts land UNSCHEDULED in pending_approval (the user reviews/schedules them
+// in the queue).
+//
+// Reuse, not duplicate:
+//   - atomize() reuses the planner's Opus 4.8 streaming structured-output
+//     pattern (and the SHARED channel-cap + tone guidance module).
+//   - The persistence path mirrors generateClusterAction: same idea→variants
+//     fan-out, same posts table, same source_id tagging, same theme tags, same
+//     low_confidence / trust gate, same billing quota enforcement.
+//
+// Returns a count of created drafts (unlike the cluster action it does NOT
+// redirect — the source page re-renders its "Generated posts" list in place).
+
+const VOICE_SCORE_THRESHOLD = 70;
+
+// Roughly how many atoms to ask Claude for, scaled by how much usable material
+// the source extracted. A thin summary shouldn't be stretched into 30 posts; a
+// dense transcript with many quotes/facts can support more.
+const MIN_ATOMS = 6;
+const MAX_ATOMS = 24;
+
+export type AtomizeState = { error: string | null; created: number | null };
+
+const idSchema = z.string().uuid();
+
+export async function atomizeSourceAction(
+  _prev: AtomizeState,
+  formData: FormData,
+): Promise<AtomizeState> {
+  const ws = await getActiveWorkspaceOrRedirect();
+  const sourceId = formData.get("source_id");
+  if (typeof sourceId !== "string" || !idSchema.safeParse(sourceId).success) {
+    return { error: "Bad source id.", created: null };
+  }
+
+  const supabase = await supabaseServer();
+
+  const [sourceRes, briefRes, accountsRes] = await Promise.all([
+    supabase.from("sources").select("*").eq("id", sourceId).eq("workspace_id", ws.id).maybeSingle(),
+    supabase.from("brand_briefs").select("*").eq("workspace_id", ws.id).maybeSingle(),
+    supabase
+      .from("social_accounts_safe")
+      .select("id, channel, handle, trust_mode")
+      .eq("workspace_id", ws.id)
+      .eq("status", "connected"),
+  ]);
+
+  if (!sourceRes.data) return { error: "Source not found.", created: null };
+  if (!briefRes.data) return { error: "Workspace has no brand brief.", created: null };
+
+  const accounts = (accountsRes.data ?? []).filter((a) =>
+    ENABLED_CHANNELS.includes(a.channel as ChannelId),
+  );
+  if (accounts.length === 0) {
+    return { error: "Connect at least one channel before atomizing.", created: null };
+  }
+
+  const channels = Array.from(new Set(accounts.map((a) => a.channel as ChannelId)));
+  const source = sourceContextFromRow(sourceRes.data);
+
+  // Scale the atom target by the source's material density: more
+  // quotes/facts/themes → more atoms, clamped to [MIN_ATOMS, MAX_ATOMS].
+  const material = source.quotes.length + source.facts.length + source.themes.length;
+  const atomTarget = Math.min(MAX_ATOMS, Math.max(MIN_ATOMS, material));
+
+  // Quota check BEFORE the Claude call so we never burn tokens for an
+  // over-quota workspace. Mirrors generatePlanAction: estimate an upper bound
+  // (atoms × channels) — we charge for what actually inserts below.
+  const estimatedPosts = atomTarget * channels.length;
+  try {
+    await assertWithinPostQuota(ws.id, estimatedPosts);
+  } catch (err) {
+    if (err instanceof QuotaExceededError) {
+      return { error: err.message, created: null };
+    }
+    throw err;
+  }
+
+  let result;
+  try {
+    result = await atomize({ brief: briefRes.data, source, channels, atomTarget });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Atomization failed.", created: null };
+  }
+
+  // Persist. We mint a posting_plans row to satisfy the posts.plan_id FK and
+  // group the batch (same as the cluster path), then fan out each atom's
+  // variants into draft posts tagged with source_id + theme.
+  const svc = supabaseService();
+  const now = new Date();
+  const { data: planRow, error: planErr } = await svc
+    .from("posting_plans")
+    .insert({
+      workspace_id: ws.id,
+      name: `Atomized: ${source.title}`.slice(0, 120),
+      start_at: now.toISOString(),
+      // Atomized drafts are unscheduled; the plan window is nominal (1 week)
+      // purely so the row satisfies the NOT NULL end_at constraint.
+      end_at: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      status: "active",
+      generation_prompt: result.atomization.overview,
+      generation_response: result.atomization as unknown as import("@/lib/db/types").Json,
+    })
+    .select("id")
+    .single();
+  if (planErr || !planRow) {
+    return { error: planErr?.message ?? "Failed to save atomization.", created: null };
+  }
+
+  const accountByChannel = new Map<string, (typeof accounts)[number]>();
+  for (const a of accounts) accountByChannel.set(a.channel, a);
+  const hasVoiceProfile = briefRes.data.voice_profile != null;
+
+  // Flatten atoms → variants. Each atom mints a UUID idea_id so the queue can
+  // group an atom's channel variants together (same grouping the planner uses).
+  type FlatVariant = {
+    channel: string;
+    text: string;
+    theme: string;
+    rationale: string;
+    image_prompt?: string;
+    idea_id: string;
+    idea_label: string;
+    voice_score?: number;
+  };
+  const flatVariants: FlatVariant[] = result.atomization.atoms.flatMap((atom) => {
+    const ideaId = crypto.randomUUID();
+    return atom.variants
+      .filter((v) => !v.skip)
+      .map((v) => ({
+        channel: v.channel,
+        text: v.text,
+        theme: atom.theme,
+        rationale: v.rationale,
+        image_prompt: v.image_prompt,
+        idea_id: ideaId,
+        idea_label: atom.atom_label,
+        voice_score: v.voice_score,
+      }));
+  });
+
+  const skipped: string[] = [];
+  const postsPayload = flatVariants.flatMap((p) => {
+    const acct = accountByChannel.get(p.channel);
+    if (!acct) {
+      skipped.push(p.channel);
+      return [];
+    }
+    const voiceScore = typeof p.voice_score === "number" ? p.voice_score : null;
+    const lowConfidence =
+      hasVoiceProfile && voiceScore !== null && voiceScore < VOICE_SCORE_THRESHOLD;
+    // Truncate rather than reject if Claude overran the cap — losing one line
+    // beats throwing the draft away.
+    const max = channelSpec(acct.channel)?.maxChars ?? 280;
+    const text = p.text.length > max ? p.text.slice(0, max - 1) + "…" : p.text;
+
+    return [
+      {
+        workspace_id: ws.id,
+        plan_id: planRow.id,
+        social_account_id: acct.id,
+        channel: acct.channel,
+        text,
+        theme: p.theme,
+        // Atomized drafts are unscheduled — the user picks timing in the queue.
+        // They always land in pending_approval (never auto-scheduled): trust
+        // mode auto-publishes a continuous calendar, but a one-shot atomization
+        // is an exploratory burst the user should eyeball before it ships.
+        scheduled_at: null,
+        status: "pending_approval" as const,
+        voice_score: voiceScore,
+        low_confidence: lowConfidence,
+        idea_id: p.idea_id,
+        source_id: sourceId,
+        generation_metadata: {
+          rationale: p.rationale,
+          cache_read_input_tokens: result.usage.cache_read_input_tokens ?? 0,
+          auto_scheduled: false,
+          image_prompt: p.image_prompt ?? null,
+          idea_label: p.idea_label,
+          source_id: sourceId,
+          source: "atomize",
+        },
+      },
+    ];
+  });
+
+  if (postsPayload.length === 0) {
+    await svc.from("posting_plans").delete().eq("id", planRow.id);
+    return {
+      error: "Claude produced only posts for channels you haven't connected.",
+      created: null,
+    };
+  }
+
+  const { error: postsErr } = await svc.from("posts").insert(postsPayload);
+  if (postsErr) {
+    await svc.from("posting_plans").delete().eq("id", planRow.id);
+    return { error: postsErr.message, created: null };
+  }
+
+  // Charge for the actual number of drafts inserted (we may have dropped some
+  // for unconnected channels). Best-effort — a counter failure shouldn't hide
+  // the drafts from the user.
+  try {
+    await incrementPostsGenerated(ws.id, postsPayload.length);
+  } catch (err) {
+    console.warn("Failed to increment posts usage counter:", err);
+  }
+
+  revalidatePath("/queue");
+  revalidatePath(`/sources/${sourceId}`);
+  if (skipped.length > 0) {
+    console.warn("Atomization dropped posts for unconnected channels:", skipped);
+  }
+  return { error: null, created: postsPayload.length };
+}
