@@ -23,16 +23,41 @@ const weekdaysSchema = z
   .max(7)
   .transform((days) => Array.from(new Set(days)).sort((a, b) => a - b));
 
+// Validate a Facebook group URL by *parsing* it, not by substring-matching the
+// raw string. A substring check (e.g. /facebook\.com\/groups\//) is unsafe here
+// because the stored URL is later rendered as an <a href> / window.open target
+// in group-card.tsx: hostile inputs like "https://evil.com/x?q=facebook.com/groups/abc",
+// "https://notfacebook.com/groups/", or "https://facebook.com.evil.com/groups/"
+// all contain the substring but point elsewhere, and "javascript:" pseudo-URLs
+// can carry the substring too. The WHATWG parser gives us the real protocol,
+// host, and path so we can require https + the genuine facebook.com host.
+function isFacebookGroupUrl(u: string): boolean {
+  try {
+    const parsed = new URL(u);
+    // Only real web links — rejects javascript:, data:, etc.
+    if (parsed.protocol !== "https:") return false;
+    // Exact host or a true subdomain (www./m./mbasic.facebook.com), never a
+    // substring (so "notfacebook.com" and "facebook.com.evil.com" are rejected).
+    const host = parsed.hostname.toLowerCase();
+    const isFacebookHost = host === "facebook.com" || host.endsWith(".facebook.com");
+    if (!isFacebookHost) return false;
+    return parsed.pathname.startsWith("/groups/");
+  } catch {
+    // new URL throws on garbage / pseudo-URLs — treat as invalid.
+    return false;
+  }
+}
+
 const groupInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  // Accept any facebook.com/groups URL. We keep validation light (vanity URLs,
-  // mobile hosts) but require it to look like a Facebook group link.
+  // Require a real Facebook group link (vanity URLs + mobile hosts are fine).
+  // Host/protocol are parsed (see isFacebookGroupUrl) rather than substring-matched.
   url: z
     .string()
     .trim()
     .url()
     .refine(
-      (u) => /facebook\.com\/groups\//i.test(u),
+      isFacebookGroupUrl,
       "Enter a Facebook group URL (facebook.com/groups/…).",
     ),
   member_count: z
