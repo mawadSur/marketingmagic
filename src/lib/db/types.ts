@@ -78,6 +78,13 @@ export interface ExtractedFact {
 // in migration 006. `other` is the catch-all; `reason_note` carries the prose.
 export type RejectionReason = "off_voice" | "wrong_theme" | "factually_wrong" | "other";
 
+// Facebook Group Assist (migration 040). See the facebook_groups table.
+// How a group tolerates promotional posts: 'open' (any day), 'limited'
+// (only on promo_weekdays), 'value_only' (never straight promo).
+export type FacebookGroupPromoPolicy = "open" | "limited" | "value_only";
+export type FacebookGroupDraftSource = "ai" | "manual";
+export type FacebookGroupDraftStatus = "draft" | "posted" | "dismissed";
+
 // PLG share (migration 032): the content persisted under a preview_shares.slug
 // so an anonymous /start preview can be re-rendered read-only and unfurled on
 // social. Mirrors the signed preview-token payload but is the SHAREABLE subset
@@ -1410,6 +1417,79 @@ export interface Database {
           image_path: string;
           image_url: string;
           is_primary: boolean;
+        }>;
+        Relationships: [];
+      };
+      // Facebook Group Assist (migration 040). Meta removed the Groups API
+      // (2024-04-22), so there is no way to post to a group programmatically —
+      // these tables back a ToS-safe, human-in-the-loop workflow: we draft the
+      // copy, the operator pastes & posts it. Deliberately separate from
+      // `posts` so group drafts NEVER enter the auto-publish cron/dispatcher.
+      facebook_groups: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          name: string;
+          url: string;
+          member_count: number | null;
+          promo_policy: FacebookGroupPromoPolicy;
+          promo_weekdays: number[];
+          allow_links: boolean;
+          rules_notes: string;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          name: string;
+          url: string;
+          member_count?: number | null;
+          promo_policy?: FacebookGroupPromoPolicy;
+          promo_weekdays?: number[];
+          allow_links?: boolean;
+          rules_notes?: string;
+          created_by?: string | null;
+        };
+        Update: Partial<{
+          name: string;
+          url: string;
+          member_count: number | null;
+          promo_policy: FacebookGroupPromoPolicy;
+          promo_weekdays: number[];
+          allow_links: boolean;
+          rules_notes: string;
+        }>;
+        Relationships: [];
+      };
+      facebook_group_drafts: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          group_id: string;
+          text: string;
+          source: FacebookGroupDraftSource;
+          status: FacebookGroupDraftStatus;
+          posted_at: string | null;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          group_id: string;
+          text: string;
+          source?: FacebookGroupDraftSource;
+          status?: FacebookGroupDraftStatus;
+          posted_at?: string | null;
+          created_by?: string | null;
+        };
+        Update: Partial<{
+          text: string;
+          status: FacebookGroupDraftStatus;
+          posted_at: string | null;
         }>;
         Relationships: [];
       };

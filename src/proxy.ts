@@ -1,7 +1,27 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
-const PROTECTED_PREFIXES = ["/dashboard", "/queue", "/plans", "/settings", "/workspaces", "/onboarding"];
+// Routes that require auth. The matcher below covers nested paths
+// (path === p || startsWith(p + "/")), so a logged-out deep link gets bounced
+// to /login?next=<path> and lands back here after sign-in. Keep this in sync
+// with the (app)/layout gate so every authed page redirects consistently.
+const PROTECTED_PREFIXES = [
+  "/dashboard",
+  "/queue",
+  "/plans",
+  "/settings",
+  "/workspaces",
+  "/onboarding",
+  "/goals",
+  "/analytics",
+  "/video",
+  "/inbox",
+  "/competitors",
+  "/sources",
+  "/portfolio",
+  "/integrations",
+  "/record",
+];
 
 export async function proxy(req: NextRequest) {
   let res = NextResponse.next({ request: req });

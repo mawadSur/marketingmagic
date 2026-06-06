@@ -11,9 +11,15 @@ interface ChannelOption {
   label: string;
   description: string;
   // Shown as a small tag. "ready" = publishes today; "setup" = needs an extra
-  // account/approval step before it can post. Ordering below puts the
-  // ready-today channels first so a new user hits a guaranteed win.
-  badge?: "ready" | "setup";
+  // account/approval step before it can post; "soon" = awaiting external
+  // platform approval (see `comingSoon`). Ordering below puts the ready-today
+  // channels first so a new user hits a guaranteed win.
+  badge?: "ready" | "setup" | "soon";
+  // Awaiting platform approval (e.g. LinkedIn's Community Management API
+  // review), so connecting would dead-end on a provider error. Rendered as a
+  // disabled card with a "Coming soon" tag — never a live connect — to stay in
+  // sync with settings/channels (CONNECTORS[].comingSoon). Flip off once approved.
+  comingSoon?: boolean;
 }
 
 const CHANNELS: ChannelOption[] = [
@@ -44,8 +50,9 @@ const CHANNELS: ChannelOption[] = [
   {
     slug: "linkedin",
     label: "LinkedIn",
-    description: "Long-form professional. OAuth — no passwords to manage.",
-    badge: "ready",
+    description: "Long-form professional. Awaiting LinkedIn's Community Management API approval.",
+    badge: "soon",
+    comingSoon: true,
   },
   {
     slug: "instagram",
@@ -63,11 +70,14 @@ interface Step2Props {
 
 /**
  * Step 2: a card grid of the supported channels, ready-to-publish ones first
- * so a new user hits a guaranteed win (Facebook/Bluesky/Threads/X/LinkedIn)
- * before the setup-gated one (Instagram). Each card links to that
- * channel's existing settings page. Connection state is read from the DB
- * (passed in by the server page), so connecting via any flow — OAuth, X paste,
- * Bluesky app password — lights up the right card on return.
+ * so a new user hits a guaranteed win (Facebook/Bluesky/Threads/X) before the
+ * setup-gated one (Instagram). Coming-soon channels (LinkedIn, awaiting its
+ * Community Management API review) render as disabled cards — never a live
+ * connect — so the wizard doesn't dead-end on a provider error, matching
+ * settings/channels. Each connectable card links to that channel's existing
+ * settings page. Connection state is read from the DB (passed in by the server
+ * page), so connecting via any flow — OAuth, X paste, Bluesky app password —
+ * lights up the right card on return.
  */
 export function Step2Channels({ connectedChannels, justConnected }: Step2Props) {
   const router = useRouter();
@@ -89,10 +99,22 @@ export function Step2Channels({ connectedChannels, justConnected }: Step2Props) 
       <div className="grid gap-3 sm:grid-cols-2">
         {CHANNELS.map((c) => {
           const isConnected = connected.has(c.slug);
+          // Awaiting platform approval (LinkedIn CMA review): show the card but
+          // never a live connect — connecting would dead-end on a provider
+          // error. Mirrors the disabled "Coming soon" tile in settings/channels.
+          const comingSoon = Boolean(c.comingSoon) && !isConnected;
           return (
             <Card
               key={c.slug}
-              className={isConnected ? "border-emerald-500/40 bg-emerald-500/5" : undefined}
+              className={
+                isConnected
+                  ? "border-emerald-500/40 bg-emerald-500/5"
+                  : comingSoon
+                    ? "opacity-60"
+                    : undefined
+              }
+              aria-disabled={comingSoon || undefined}
+              title={comingSoon ? "Awaiting platform approval" : undefined}
             >
               <CardContent className="flex h-full flex-col gap-3 p-5">
                 <div className="flex items-start justify-between gap-2">
@@ -106,7 +128,7 @@ export function Step2Channels({ connectedChannels, justConnected }: Step2Props) 
                             : "rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
                         }
                       >
-                        {c.badge === "ready" ? "Ready" : "Setup"}
+                        {c.badge === "ready" ? "Ready" : c.badge === "soon" ? "Coming soon" : "Setup"}
                       </span>
                     ) : null}
                   </div>
@@ -118,13 +140,19 @@ export function Step2Channels({ connectedChannels, justConnected }: Step2Props) 
                   ) : null}
                 </div>
                 <p className="flex-1 text-xs text-muted-foreground">{c.description}</p>
-                <Link
-                  href={`/settings/channels/${c.slug}?from=wizard`}
-                  className="inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline"
-                >
-                  {isConnected ? "Reconnect" : "Connect"}
-                  <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-                </Link>
+                {comingSoon ? (
+                  <span className="inline-flex items-center gap-1 text-sm font-medium text-muted-foreground">
+                    Coming soon
+                  </span>
+                ) : (
+                  <Link
+                    href={`/settings/channels/${c.slug}?from=wizard`}
+                    className="inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline"
+                  >
+                    {isConnected ? "Reconnect" : "Connect"}
+                    <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                  </Link>
+                )}
               </CardContent>
             </Card>
           );

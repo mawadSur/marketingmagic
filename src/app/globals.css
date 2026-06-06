@@ -30,6 +30,14 @@
     /* Positive/success signal (emerald-500). Used by the dashboard heatmap +
        success feedback so they stop hardcoding #10b981. */
     --positive: 160 84% 39%;
+    /* Success / warning callout tokens (emerald-600 / amber-600). Single
+       source of truth for the success + warning moments (badges, notices,
+       inline feedback) so they stop re-implementing raw emerald-/amber- at
+       inconsistent shades. */
+    --success: 160 84% 32%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 42%;
+    --warning-foreground: 0 0% 100%;
   }
 
   .dark {
@@ -55,6 +63,11 @@
     --brand-grad-start: 243 75% 65%;
     --brand-grad-end: 262 83% 67%;
     --positive: 160 84% 45%;
+    /* Slightly brighter stops so success/warning text reads on dark surfaces. */
+    --success: 160 84% 42%;
+    --success-foreground: 160 84% 8%;
+    --warning: 38 92% 52%;
+    --warning-foreground: 38 92% 10%;
   }
 }
 

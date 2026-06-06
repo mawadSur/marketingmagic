@@ -108,6 +108,28 @@ function resultVideoUrl(body: HiggsfieldStatusResponse): string | null {
 const TERMINAL_OK = new Set(["completed", "succeeded"]);
 const TERMINAL_FAIL = new Set(["failed", "error", "canceled"]);
 
+// Per-call network timeout. submit/poll are quick API calls; a hung connection
+// must not hold the (cron) serverless function open. Mirrors the AbortController
+// idiom used in lib/sources/* and lib/preview/scrape.ts. The mp4 fetchBytes
+// download streams a larger body, so it passes a more generous budget.
+const HF_FETCH_TIMEOUT_MS = 15_000;
+const HF_DOWNLOAD_TIMEOUT_MS = 120_000;
+
+async function hfFetch(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`Higgsfield request timed out after ${timeoutMs / 1000}s.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class HiggsfieldReferenceVideoProvider implements ReferenceVideoProvider {
   readonly name = "higgsfield_video";
 
@@ -150,11 +172,15 @@ export class HiggsfieldReferenceVideoProvider implements ReferenceVideoProvider 
     }
     if (input.voiceId?.trim()) body.voice_id = input.voiceId.trim();
 
-    const res = await fetch(`${this.base()}/v1/generations`, {
-      method: "POST",
-      headers: this.authHeaders(apiKey),
-      body: JSON.stringify(body),
-    });
+    const res = await hfFetch(
+      `${this.base()}/v1/generations`,
+      {
+        method: "POST",
+        headers: this.authHeaders(apiKey),
+        body: JSON.stringify(body),
+      },
+      HF_FETCH_TIMEOUT_MS,
+    );
 
     if (!res.ok) {
       const text = await res.text();
@@ -176,9 +202,11 @@ export class HiggsfieldReferenceVideoProvider implements ReferenceVideoProvider 
   // (with the video URL); failed/error → failed; moderation → failed with a clear
   // reason. Transient 5xx → processing so the cron retries instead of killing it.
   async poll(providerJobId: string, apiKey: string): Promise<ReferenceVideoPoll> {
-    const res = await fetch(`${this.base()}/v1/generations/${encodeURIComponent(providerJobId)}`, {
-      headers: this.authHeaders(apiKey),
-    });
+    const res = await hfFetch(
+      `${this.base()}/v1/generations/${encodeURIComponent(providerJobId)}`,
+      { headers: this.authHeaders(apiKey) },
+      HF_FETCH_TIMEOUT_MS,
+    );
 
     if (!res.ok) {
       const text = await res.text();
@@ -231,7 +259,7 @@ export class HiggsfieldReferenceVideoProvider implements ReferenceVideoProvider 
     videoUrl: string,
     _apiKey: string,
   ): Promise<{ bytes: Uint8Array; contentType: string }> {
-    const res = await fetch(videoUrl);
+    const res = await hfFetch(videoUrl, {}, HF_DOWNLOAD_TIMEOUT_MS);
     if (!res.ok) {
       throw new Error(`Higgsfield video fetch failed (${res.status}).`);
     }

@@ -33,7 +33,7 @@ function toLocalInputValue(iso: string | null): string {
 }
 function formatLocal(iso: string | null): string {
   if (!iso) return "no time set";
-  return new Date(iso).toLocaleString(undefined, {
+  return new Date(iso).toLocaleString("en-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -325,6 +325,8 @@ export function QueueRow({
               <img
                 src={post.mediaPublicUrl!}
                 alt={post.media[0]?.prompt ?? "Generated image"}
+                loading="lazy"
+                decoding="async"
                 className="max-h-64 w-full rounded-md border object-cover"
               />
             </div>
@@ -335,10 +337,14 @@ export function QueueRow({
           )}
 
           <div className="space-y-1">
-            <label className="text-xs font-medium text-muted-foreground">
+            <label
+              htmlFor={`image-prompt-${post.id}`}
+              className="text-xs font-medium text-muted-foreground"
+            >
               Image prompt
             </label>
             <Input
+              id={`image-prompt-${post.id}`}
               value={imagePrompt}
               onChange={(e) => setImagePrompt(e.target.value)}
               placeholder="Describe the image you want…"
@@ -392,6 +398,8 @@ export function QueueRow({
         <img
           src={post.mediaPublicUrl!}
           alt={post.media[0]?.prompt ?? "Generated image"}
+          loading="lazy"
+          decoding="async"
           className="max-h-64 w-full rounded-md border object-cover"
         />
       ) : null}

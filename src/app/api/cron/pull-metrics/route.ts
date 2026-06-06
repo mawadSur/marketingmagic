@@ -57,6 +57,24 @@ async function handle(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+  // Batch-fetch credentials for every distinct account in this batch once,
+  // instead of a per-post serial round-trip (N+1). Keyed by account id so the
+  // in-loop lookup is O(1) and preserves the "account missing" semantics — a
+  // post whose social_account_id is null/unknown simply misses the map.
+  const accountIds = Array.from(
+    new Set((posts ?? []).map((p) => p.social_account_id).filter((id): id is string => !!id)),
+  );
+  const accountById = new Map<string, { credentials: unknown }>();
+  if (accountIds.length > 0) {
+    const { data: accounts } = await svc
+      .from("social_accounts")
+      .select("id, credentials")
+      .in("id", accountIds);
+    for (const a of accounts ?? []) {
+      accountById.set(a.id, { credentials: a.credentials });
+    }
+  }
+
   const results: Array<{ id: string; ok: boolean; reason?: string }> = [];
 
   for (const post of posts ?? []) {
@@ -70,11 +88,9 @@ async function handle(req: NextRequest) {
       continue;
     }
 
-    const { data: account } = await svc
-      .from("social_accounts")
-      .select("credentials")
-      .eq("id", post.social_account_id)
-      .maybeSingle();
+    const account = post.social_account_id
+      ? accountById.get(post.social_account_id)
+      : undefined;
     if (!account) {
       results.push({ id: post.id, ok: false, reason: "account missing" });
       continue;

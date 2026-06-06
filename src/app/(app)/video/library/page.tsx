@@ -174,7 +174,7 @@ export default async function VideoLibraryPage() {
                   ) : null}
                 </div>
                 <p className="text-xs text-muted-foreground tabular-nums">
-                  {r.aspect} · {new Date(r.createdAt).toLocaleDateString()}
+                  {r.aspect} · {new Date(r.createdAt).toLocaleDateString("en-US")}
                 </p>
 
                 {/* Deployment status — where this render lives now. */}

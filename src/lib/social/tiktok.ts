@@ -56,6 +56,33 @@ const AUTHORIZE_URL = "https://www.tiktok.com/v2/auth/authorize/";
 const API_BASE = "https://open.tiktokapis.com";
 const TOKEN_URL = `${API_BASE}/v2/oauth/token/`;
 
+// Per-call network timeout. The Content Posting API calls (token, creator_info,
+// init, status) are quick; a hung connection must not hold a serverless
+// function open. Mirrors the AbortController idiom used in lib/sources/* and
+// lib/preview/scrape.ts. The chunked byte PUT streams a chunk of video, so that
+// caller passes a more generous budget via `timeoutMs`.
+const TIKTOK_FETCH_TIMEOUT_MS = 20_000;
+const TIKTOK_UPLOAD_TIMEOUT_MS = 120_000;
+
+async function tiktokFetch(
+  url: string,
+  init?: RequestInit,
+  timeoutMs = TIKTOK_FETCH_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`TikTok request timed out after ${timeoutMs / 1000}s.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Scopes are COMMA-separated for TikTok (every other provider uses spaces).
 //   user.info.basic — resolve the open_id / display handle after connect.
 //   video.publish   — publish a video directly to the user's profile.
@@ -127,7 +154,7 @@ export async function tiktokExchangeCode(opts: {
     redirect_uri: opts.redirectUri,
     code_verifier: opts.codeVerifier,
   });
-  const res = await fetch(TOKEN_URL, {
+  const res = await tiktokFetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -152,7 +179,7 @@ export async function tiktokRefreshToken(opts: {
     grant_type: "refresh_token",
     refresh_token: opts.refreshToken,
   });
-  const res = await fetch(TOKEN_URL, {
+  const res = await tiktokFetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -212,7 +239,7 @@ export async function tiktokVerify(
   creds: TikTokCredentials,
 ): Promise<{ openId: string; handle: string }> {
   const url = `${API_BASE}/v2/user/info/?fields=open_id,display_name`;
-  const res = await fetch(url, { headers: authHeader(creds) });
+  const res = await tiktokFetch(url, { headers: authHeader(creds) });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`TikTok verify failed (${res.status}): ${text.slice(0, 200)}`);
@@ -251,7 +278,7 @@ export interface TikTokCreatorInfo {
 
 export async function tiktokCreatorInfo(creds: TikTokCredentials): Promise<TikTokCreatorInfo> {
   const url = `${API_BASE}/v2/post/publish/creator_info/query/`;
-  const res = await fetch(url, {
+  const res = await tiktokFetch(url, {
     method: "POST",
     headers: { ...authHeader(creds), "Content-Type": "application/json; charset=UTF-8" },
   });
@@ -364,7 +391,7 @@ export async function tiktokVideoInit(
   },
 ): Promise<TikTokVideoInitResult> {
   const url = `${API_BASE}/v2/post/publish/video/init/`;
-  const res = await fetch(url, {
+  const res = await tiktokFetch(url, {
     method: "POST",
     headers: { ...authHeader(creds), "Content-Type": "application/json; charset=UTF-8" },
     body: JSON.stringify({
@@ -421,15 +448,19 @@ export async function tiktokUploadBytes(
     // remainder past the even chunk boundary is uploaded.
     const end = i === plan.totalChunkCount - 1 ? total - 1 : start + plan.chunkSize - 1;
     const chunk = bytes.subarray(start, end + 1);
-    const res = await fetch(uploadUrl, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "video/mp4",
-        "Content-Length": String(chunk.byteLength),
-        "Content-Range": `bytes ${start}-${end}/${total}`,
+    const res = await tiktokFetch(
+      uploadUrl,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "video/mp4",
+          "Content-Length": String(chunk.byteLength),
+          "Content-Range": `bytes ${start}-${end}/${total}`,
+        },
+        body: chunk as BodyInit,
       },
-      body: chunk as BodyInit,
-    });
+      TIKTOK_UPLOAD_TIMEOUT_MS,
+    );
     // TikTok returns 201 for the final chunk and 206 (partial) for earlier
     // ones; any other status is a hard failure.
     if (res.status !== 201 && res.status !== 206 && !res.ok) {
@@ -458,7 +489,7 @@ export async function tiktokStatus(
   publishId: string,
 ): Promise<{ status: string; postId: string | null; failReason: string | null }> {
   const url = `${API_BASE}/v2/post/publish/status/fetch/`;
-  const res = await fetch(url, {
+  const res = await tiktokFetch(url, {
     method: "POST",
     headers: { ...authHeader(creds), "Content-Type": "application/json; charset=UTF-8" },
     body: JSON.stringify({ publish_id: publishId }),

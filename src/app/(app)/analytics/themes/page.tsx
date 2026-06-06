@@ -119,9 +119,9 @@ function ThemeRow({ stat }: { stat: ThemeStat }) {
         <span
           className={
             stat.verdict === "winner"
-              ? "font-medium text-emerald-700 dark:text-emerald-400"
+              ? "font-medium text-success"
               : stat.verdict === "loser"
-                ? "font-medium text-amber-700 dark:text-amber-400"
+                ? "font-medium text-warning"
                 : "text-muted-foreground"
           }
         >
@@ -142,9 +142,9 @@ function ThemeCard({ stat }: { stat: ThemeStat }) {
   const pct = (n: number) => `${(n * 100).toFixed(2)}%`;
   const liftClass =
     stat.verdict === "winner"
-      ? "font-medium text-emerald-700 dark:text-emerald-400"
+      ? "font-medium text-success"
       : stat.verdict === "loser"
-        ? "font-medium text-amber-700 dark:text-amber-400"
+        ? "font-medium text-warning"
         : "text-foreground";
   return (
     <div className="rounded-lg border bg-card p-4">

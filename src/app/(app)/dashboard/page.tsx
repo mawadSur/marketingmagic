@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import {
@@ -9,6 +10,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge, ChannelBadge, statusBadgeLabel, statusBadgeVariant } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
 import { TrustNudge } from "@/components/trust-nudge";
 import { ExplainSection } from "./explain-section";
 import { BestWindowsWidget } from "./best-windows-widget";
@@ -58,11 +60,17 @@ export default async function DashboardPage() {
         </div>
       </header>
 
-      <TrustNudge workspaceId={ws.id} />
+      <Suspense fallback={null}>
+        <TrustNudge workspaceId={ws.id} />
+      </Suspense>
 
-      <EngagementDebtWidget workspaceId={ws.id} />
+      <Suspense fallback={null}>
+        <EngagementDebtWidget workspaceId={ws.id} />
+      </Suspense>
 
-      <ExplainSection workspaceId={ws.id} />
+      <Suspense fallback={null}>
+        <ExplainSection workspaceId={ws.id} />
+      </Suspense>
 
       <section className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
         <KpiCard label="Posts shipped (7d)" value={kpis.posts_shipped_7d.toString()} />
@@ -92,7 +100,9 @@ export default async function DashboardPage() {
 
       {/* Bet ① — the learning loop, made visible. Hides until there are
           statistically-confident winners, so it only appears with real signal. */}
-      <WinningThemesWidget workspaceId={ws.id} />
+      <Suspense fallback={null}>
+        <WinningThemesWidget workspaceId={ws.id} />
+      </Suspense>
 
       <div className="grid gap-6 lg:grid-cols-3">
         <section className="space-y-3 lg:col-span-2">
@@ -200,11 +210,17 @@ export default async function DashboardPage() {
 
       {neglected.length > 0 ? <NeglectedThemesWidget themes={neglected} /> : null}
 
-      <QuickExperimentsWidget workspaceId={ws.id} />
+      <Suspense fallback={null}>
+        <QuickExperimentsWidget workspaceId={ws.id} />
+      </Suspense>
 
-      <GoalProgressWidget workspaceId={ws.id} />
+      <Suspense fallback={null}>
+        <GoalProgressWidget workspaceId={ws.id} />
+      </Suspense>
 
-      <BestWindowsWidget workspaceId={ws.id} />
+      <Suspense fallback={<Skeleton className="h-64 w-full rounded-lg" />}>
+        <BestWindowsWidget workspaceId={ws.id} />
+      </Suspense>
 
       {/* Phase 2.5 — source attribution. Only renders when source-anchored
           posts have shipped and have engagement metrics; cold-start hides

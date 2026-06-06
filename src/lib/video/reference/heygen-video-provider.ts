@@ -107,6 +107,28 @@ function looksLikeModeration(text: string): boolean {
   return MODERATION_MARKERS.some((m) => lower.includes(m));
 }
 
+// Per-call network timeout. submit/poll are quick API calls; a hung connection
+// must not hold the (cron) serverless function open. Mirrors the AbortController
+// idiom used in lib/sources/* and lib/preview/scrape.ts. The mp4 fetchBytes
+// download streams a larger body, so it passes a more generous budget.
+const HEYGEN_FETCH_TIMEOUT_MS = 15_000;
+const HEYGEN_DOWNLOAD_TIMEOUT_MS = 120_000;
+
+async function heygenFetch(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`HeyGen request timed out after ${timeoutMs / 1000}s.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Pull a human-readable error string out of HeyGen's various error shapes
 // (top-level message, a nested data.error object/string, or a top-level error).
 function extractError(body: HeyGenSubmitResponse | HeyGenPollResponse): string | undefined {
@@ -194,11 +216,15 @@ export class HeyGenReferenceVideoProvider implements ReferenceVideoProvider {
       dimension,
     };
 
-    const res = await fetch(this.generateEndpoint(), {
-      method: "POST",
-      headers: this.authHeaders(apiKey),
-      body: JSON.stringify(body),
-    });
+    const res = await heygenFetch(
+      this.generateEndpoint(),
+      {
+        method: "POST",
+        headers: this.authHeaders(apiKey),
+        body: JSON.stringify(body),
+      },
+      HEYGEN_FETCH_TIMEOUT_MS,
+    );
 
     if (!res.ok) {
       const text = await res.text();
@@ -229,9 +255,11 @@ export class HeyGenReferenceVideoProvider implements ReferenceVideoProvider {
   // completed → ready (with video_url), failed → failed (provider reason
   // surfaced; moderation/consent flagged).
   async poll(providerJobId: string, apiKey: string): Promise<ReferenceVideoPoll> {
-    const res = await fetch(this.statusEndpoint(providerJobId), {
-      headers: this.authHeaders(apiKey),
-    });
+    const res = await heygenFetch(
+      this.statusEndpoint(providerJobId),
+      { headers: this.authHeaders(apiKey) },
+      HEYGEN_FETCH_TIMEOUT_MS,
+    );
 
     if (!res.ok) {
       const text = await res.text();
@@ -287,7 +315,7 @@ export class HeyGenReferenceVideoProvider implements ReferenceVideoProvider {
     _apiKey: string,
   ): Promise<{ bytes: Uint8Array; contentType: string }> {
     // video_url is pre-signed; no auth header needed (mirrors the D-ID adapter).
-    const res = await fetch(videoUrl);
+    const res = await heygenFetch(videoUrl, {}, HEYGEN_DOWNLOAD_TIMEOUT_MS);
     if (!res.ok) {
       throw new Error(`HeyGen video fetch failed (${res.status}).`);
     }

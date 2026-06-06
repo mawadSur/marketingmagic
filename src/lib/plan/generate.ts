@@ -130,9 +130,14 @@ export async function generatePlan(inputs: PlanGenInputs): Promise<PlanGenResult
   const system = planSystemPrompt(inputs);
   const user = planUserPrompt(inputs);
 
-  const response = await client().messages.create({
+  // Stream the response. A full multi-week × multi-channel plan can run well
+  // past 16k output tokens (up to 50 ideas × ~7 variants, each with body text
+  // + a rationale), and Opus 4.8 counts tokens more heavily than the Sonnet
+  // this used to run on — so we give a generous ceiling and stream to avoid
+  // the SDK HTTP timeout that non-streaming requests hit above ~16k.
+  const stream = client().messages.stream({
     model: MODEL,
-    max_tokens: 8192,
+    max_tokens: 32000,
     // Cache the system prompt (brand brief + rules) — same brief produces the
     // same system block across regenerations within 5 minutes, so we hit the
     // cache.
@@ -141,6 +146,18 @@ export async function generatePlan(inputs: PlanGenInputs): Promise<PlanGenResult
     tool_choice: { type: "tool", name: "submit_plan" },
     messages: [{ role: "user", content: user }],
   });
+  const response = await stream.finalMessage();
+
+  // Truncation guard. If the model runs out of output budget mid-tool-call the
+  // tool_use.input comes back partial (missing `ideas`), which otherwise
+  // surfaces downstream as a baffling "exactly one of ideas or posts" schema
+  // error. Catch it here and report the real cause.
+  if (response.stop_reason === "max_tokens") {
+    throw new Error(
+      "Plan generation hit the output-token limit before completing. " +
+        "Try a shorter window or fewer channels per plan.",
+    );
+  }
 
   const toolUse = response.content.find((b) => b.type === "tool_use");
   if (!toolUse || toolUse.type !== "tool_use" || toolUse.name !== "submit_plan") {

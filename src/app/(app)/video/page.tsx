@@ -12,6 +12,7 @@ import type { VideoJobStatus } from "@/lib/video/jobs";
 import { listAvatars } from "@/lib/video/avatars";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Notice } from "@/components/ui/notice";
 import { GenerateVideoForm } from "./generate-form";
 import { GenerateUgcForm, type UgcAvatarOption } from "./ugc-form";
 import { JobList, type JobListItem } from "./job-list";
@@ -53,22 +54,19 @@ export default async function VideoPage({
           <h1 className="text-2xl font-semibold tracking-tight">Video</h1>
           <p className="text-sm text-muted-foreground">Generate short videos from a subject.</p>
         </header>
-        <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
-          <p className="font-medium">Video generation isn&apos;t available on this deployment.</p>
-          <p className="mt-1 text-muted-foreground">
-            {mode !== "ugc" && !mpt && (
-              <>
-                The render worker isn&apos;t configured (<code>MPT_BASE_URL</code> /{" "}
-                <code>MPT_API_TOKEN</code>).{" "}
-              </>
-            )}
-            {!byo && (
-              <>
-                Credential encryption isn&apos;t configured (<code>BYO_ENCRYPTION_KEY</code>).
-              </>
-            )}
-          </p>
-        </div>
+        <Notice variant="warning" title="Video generation isn't available on this deployment.">
+          {mode !== "ugc" && !mpt && (
+            <>
+              The render worker isn&apos;t configured (<code>MPT_BASE_URL</code> /{" "}
+              <code>MPT_API_TOKEN</code>).{" "}
+            </>
+          )}
+          {!byo && (
+            <>
+              Credential encryption isn&apos;t configured (<code>BYO_ENCRYPTION_KEY</code>).
+            </>
+          )}
+        </Notice>
       </div>
     );
   }
@@ -157,36 +155,30 @@ export default async function VideoPage({
       <VideoModeTabs active={mode} referenceEnabled={refEnabled} />
 
       {mode === "topic" && !keysReady ? (
-        <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
-          <p className="font-medium">Finish setup to generate videos.</p>
-          <p className="mt-1 text-muted-foreground">
-            You still need to add your{" "}
-            {!keyStatus.llm && !keyStatus.pexels
-              ? "LLM and Pexels keys"
-              : !keyStatus.llm
-                ? "LLM key"
-                : "Pexels key"}
-            .{" "}
-            <Link className="font-medium underline underline-offset-4" href="/settings/video-keys">
-              Add keys →
-            </Link>
-          </p>
-        </div>
+        <Notice variant="warning" title="Finish setup to generate videos.">
+          You still need to add your{" "}
+          {!keyStatus.llm && !keyStatus.pexels
+            ? "LLM and Pexels keys"
+            : !keyStatus.llm
+              ? "LLM key"
+              : "Pexels key"}
+          .{" "}
+          <Link className="font-medium underline underline-offset-4" href="/settings/video-keys">
+            Add keys →
+          </Link>
+        </Notice>
       ) : null}
 
       {mode === "ugc" && !ugcKeyReady ? (
-        <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
-          <p className="font-medium">Finish setup to generate UGC videos.</p>
-          <p className="mt-1 text-muted-foreground">
-            You still need to add your Higgsfield key.{" "}
-            <Link
-              className="font-medium underline underline-offset-4"
-              href="/settings/reference-video"
-            >
-              Add key →
-            </Link>
-          </p>
-        </div>
+        <Notice variant="warning" title="Finish setup to generate UGC videos.">
+          You still need to add your Higgsfield key.{" "}
+          <Link
+            className="font-medium underline underline-offset-4"
+            href="/settings/reference-video"
+          >
+            Add key →
+          </Link>
+        </Notice>
       ) : null}
 
       {mode === "ugc" ? (
@@ -199,18 +191,15 @@ export default async function VideoPage({
           </CardHeader>
           <CardContent>
             {avatars.length === 0 ? (
-              <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
-                <p className="font-medium">No avatars yet.</p>
-                <p className="mt-1 text-muted-foreground">
-                  Save an avatar first, then come back to render a UGC video from it.{" "}
-                  <Link
-                    className="font-medium underline underline-offset-4"
-                    href="/settings/avatars"
-                  >
-                    Add an avatar →
-                  </Link>
-                </p>
-              </div>
+              <Notice variant="warning" title="No avatars yet.">
+                Save an avatar first, then come back to render a UGC video from it.{" "}
+                <Link
+                  className="font-medium underline underline-offset-4"
+                  href="/settings/avatars"
+                >
+                  Add an avatar →
+                </Link>
+              </Notice>
             ) : (
               <GenerateUgcForm avatars={avatars} accounts={accounts} />
             )}

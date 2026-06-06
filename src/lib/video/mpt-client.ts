@@ -90,19 +90,41 @@ function mptConfig(): { baseUrl: string; token: string } {
   return { baseUrl: env.MPT_BASE_URL.replace(/\/$/, ""), token: env.MPT_API_TOKEN };
 }
 
-async function mptFetch(path: string, init?: RequestInit): Promise<Response> {
+// Per-call network timeout. Renders are async (we poll), so the HTTP calls
+// themselves are quick — bound them so a hung worker can't hold a serverless
+// function open. Mirrors the AbortController idiom used in lib/sources/* and
+// lib/preview/scrape.ts. The timeout only bounds time-to-response (connect +
+// headers); once fetch resolves we clear it, so a streaming download body keeps
+// reading past the budget.
+const MPT_FETCH_TIMEOUT_MS = 15_000;
+
+async function mptFetch(
+  path: string,
+  init?: RequestInit,
+  timeoutMs = MPT_FETCH_TIMEOUT_MS,
+): Promise<Response> {
   const { baseUrl, token } = mptConfig();
-  const res = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers: {
-      "x-api-key": token,
-      ...(init?.headers ?? {}),
-    },
-    // Renders are async (we poll), but the HTTP calls themselves are quick.
-    // Never cache — task state changes constantly.
-    cache: "no-store",
-  });
-  return res;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(`${baseUrl}${path}`, {
+      ...init,
+      headers: {
+        "x-api-key": token,
+        ...(init?.headers ?? {}),
+      },
+      // Never cache — task state changes constantly.
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new MptError(`MPT request timed out after ${timeoutMs / 1000}s`, 408);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function readBody(res: Response): Promise<string> {

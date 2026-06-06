@@ -212,7 +212,7 @@ export function BriefForm({ initial: brief }: { initial: Brief | null }) {
         </Button>
         {state.savedAt ? (
           <span className="text-xs text-muted-foreground">
-            Saved {new Date(state.savedAt).toLocaleTimeString()}
+            Saved {new Date(state.savedAt).toLocaleTimeString("en-US")}
           </span>
         ) : null}
         {state.error ? <span className="text-xs text-destructive">{state.error}</span> : null}

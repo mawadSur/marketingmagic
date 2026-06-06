@@ -58,6 +58,26 @@ export function isLegacyXCreds(creds: XCredentialsAny): creds is XCredentialsLeg
   );
 }
 
+// Per-call network timeout. X's API calls are quick (publish/lookup/upload); a
+// hung connection must not hold a serverless function open. Mirrors the
+// AbortController idiom used in lib/sources/* and lib/preview/scrape.ts.
+const X_FETCH_TIMEOUT_MS = 20_000;
+
+async function xFetch(url: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), X_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`X request timed out after ${X_FETCH_TIMEOUT_MS / 1000}s.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export interface XPostResult {
   id: string;
   text: string;
@@ -166,7 +186,7 @@ export async function xExchangeCode(opts: {
     client_id: opts.clientId,
   });
   const basicAuth = Buffer.from(`${opts.clientId}:${opts.clientSecret}`).toString("base64");
-  const res = await fetch(TOKEN_URL, {
+  const res = await xFetch(TOKEN_URL, {
     method: "POST",
     headers: {
       Authorization: `Basic ${basicAuth}`,
@@ -194,7 +214,7 @@ export async function xRefreshToken(opts: {
     client_id: opts.clientId,
   });
   const basicAuth = Buffer.from(`${opts.clientId}:${opts.clientSecret}`).toString("base64");
-  const res = await fetch(TOKEN_URL, {
+  const res = await xFetch(TOKEN_URL, {
     method: "POST",
     headers: {
       Authorization: `Basic ${basicAuth}`,
@@ -281,7 +301,7 @@ function xAuth(creds: XCredentialsAny, url: string, method: "GET" | "POST"): Hea
 
 export async function xVerify(creds: XCredentialsAny): Promise<{ id: string; username: string }> {
   const url = `${BASE_URL}/2/users/me`;
-  const res = await fetch(url, { headers: xAuth(creds, url, "GET") });
+  const res = await xFetch(url, { headers: xAuth(creds, url, "GET") });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`X verify failed (${res.status}): ${text.slice(0, 200)}`);
@@ -308,7 +328,7 @@ export async function xPost(
   if (inReplyToTweetId) {
     body.reply = { in_reply_to_tweet_id: inReplyToTweetId };
   }
-  const res = await fetch(url, {
+  const res = await xFetch(url, {
     method: "POST",
     headers: { ...xAuth(creds, url, "POST"), "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -389,7 +409,7 @@ export async function xUploadMedia(
   const form = new FormData();
   form.append("media", new Blob([bytes as BlobPart], { type: contentType }));
 
-  const res = await fetch(url, {
+  const res = await xFetch(url, {
     method: "POST",
     headers: { ...xAuth(creds, url, "POST") },
     body: form,
@@ -436,7 +456,7 @@ export async function xUploadVideo(
   // INIT — declare the upload up front. media_category=tweet_video routes it
   // through the video transcode pipeline.
   const initUrl = `${X_API_HOST}/2/media/upload/initialize`;
-  const initRes = await fetch(initUrl, {
+  const initRes = await xFetch(initUrl, {
     method: "POST",
     headers: { ...baseHeaders(initUrl, "POST"), "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -460,7 +480,7 @@ export async function xUploadVideo(
     const form = new FormData();
     form.append("media", new Blob([chunk as BlobPart], { type: contentType || "video/mp4" }));
     form.append("segment_index", String(segmentIndex));
-    const appendRes = await fetch(appendUrl, {
+    const appendRes = await xFetch(appendUrl, {
       method: "POST",
       headers: { ...baseHeaders(appendUrl, "POST") },
       body: form,
@@ -476,7 +496,7 @@ export async function xUploadVideo(
   // FINALIZE — closes the upload. The response may carry processing_info, in
   // which case the media is NOT ready to attach until STATUS reports succeeded.
   const finalizeUrl = `${X_API_HOST}/2/media/upload/${mediaId}/finalize`;
-  const finalizeRes = await fetch(finalizeUrl, {
+  const finalizeRes = await xFetch(finalizeUrl, {
     method: "POST",
     headers: { ...baseHeaders(finalizeUrl, "POST") },
   });
@@ -512,7 +532,7 @@ async function pollMediaStatus(
     await new Promise((r) => setTimeout(r, waitSecs * 1000));
     const params = new URLSearchParams({ command: "STATUS", media_id: mediaId });
     const statusUrl = `${X_API_HOST}/2/media/upload?${params}`;
-    const res = await fetch(statusUrl, { headers: xAuth(creds, statusUrl, "GET") });
+    const res = await xFetch(statusUrl, { headers: xAuth(creds, statusUrl, "GET") });
     if (!res.ok) {
       throw new Error(`X video STATUS failed (${res.status}): ${(await res.text()).slice(0, 400)}`);
     }
@@ -556,7 +576,7 @@ export async function xMetrics(creds: XCredentialsAny, tweetId: string): Promise
     "tweet.fields": "public_metrics,non_public_metrics,organic_metrics",
   });
   const url = `${BASE_URL}/2/tweets/${tweetId}?${params}`;
-  const res = await fetch(url, { headers: xAuth(creds, url, "GET") });
+  const res = await xFetch(url, { headers: xAuth(creds, url, "GET") });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`X metrics failed (${res.status}): ${text.slice(0, 200)}`);
@@ -631,7 +651,7 @@ export async function xMentions(
     "user.fields": "verified,public_metrics,name",
   });
   const url = `${BASE_URL}/2/users/${encodeURIComponent(userId)}/mentions?${params}`;
-  const res = await fetch(url, { headers: xAuth(creds, url, "GET") });
+  const res = await xFetch(url, { headers: xAuth(creds, url, "GET") });
   if (!res.ok) {
     const text = await res.text();
     const err = new Error(`X mentions failed (${res.status}): ${text.slice(0, 200)}`);
@@ -700,7 +720,7 @@ export async function xResolveUsername(
 ): Promise<{ id: string; username: string; name: string | null }> {
   const cleaned = username.replace(/^@/, "").trim();
   const url = `${BASE_URL}/2/users/by/username/${encodeURIComponent(cleaned)}`;
-  const res = await fetch(url, { headers: xAuth(creds, url, "GET") });
+  const res = await xFetch(url, { headers: xAuth(creds, url, "GET") });
   if (!res.ok) {
     const text = await res.text();
     const err = new Error(`X resolve username failed (${res.status}): ${text.slice(0, 200)}`);
@@ -726,7 +746,7 @@ export async function xGetUserPosts(
     exclude: "retweets,replies",
   });
   const url = `${BASE_URL}/2/users/${encodeURIComponent(userId)}/tweets?${params}`;
-  const res = await fetch(url, { headers: xAuth(creds, url, "GET") });
+  const res = await xFetch(url, { headers: xAuth(creds, url, "GET") });
   if (!res.ok) {
     const text = await res.text();
     const err = new Error(`X get user tweets failed (${res.status}): ${text.slice(0, 200)}`);

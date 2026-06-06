@@ -18,6 +18,33 @@ const SERVICE = "https://bsky.social";
 const VIDEO_SERVICE = "https://video.bsky.app";
 const VIDEO_SERVICE_DID = "did:web:video.bsky.app";
 
+// Per-call network timeout. XRPC calls (session, createRecord, blob upload,
+// metrics) are quick; a hung connection must not hold a serverless function
+// open. Mirrors the AbortController idiom used in lib/sources/* and
+// lib/preview/scrape.ts. The raw-video PUT streams the whole file, so callers
+// pass a more generous budget via `timeoutMs`.
+const BSKY_FETCH_TIMEOUT_MS = 20_000;
+const BSKY_UPLOAD_TIMEOUT_MS = 120_000;
+
+async function bskyFetch(
+  url: string,
+  init?: RequestInit,
+  timeoutMs = BSKY_FETCH_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`Bluesky request timed out after ${timeoutMs / 1000}s.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 interface Session {
   accessJwt: string;
   refreshJwt: string;
@@ -25,7 +52,7 @@ interface Session {
 }
 
 async function createSession(creds: BlueskyCredentials): Promise<Session> {
-  const res = await fetch(`${SERVICE}/xrpc/com.atproto.server.createSession`, {
+  const res = await bskyFetch(`${SERVICE}/xrpc/com.atproto.server.createSession`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ identifier: creds.handle, password: creds.appPassword }),
@@ -61,7 +88,7 @@ export async function blueskyPost(
   // Optional: upload image blob first.
   let embed: Record<string, unknown> | undefined;
   if (image) {
-    const upRes = await fetch(`${SERVICE}/xrpc/com.atproto.repo.uploadBlob`, {
+    const upRes = await bskyFetch(`${SERVICE}/xrpc/com.atproto.repo.uploadBlob`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${session.accessJwt}`,
@@ -83,7 +110,7 @@ export async function blueskyPost(
     createdAt: new Date().toISOString(),
     ...(embed ? { embed } : {}),
   };
-  const createRes = await fetch(`${SERVICE}/xrpc/com.atproto.repo.createRecord`, {
+  const createRes = await bskyFetch(`${SERVICE}/xrpc/com.atproto.repo.createRecord`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${session.accessJwt}`,
@@ -139,7 +166,7 @@ export async function blueskyPostVideo(
     VIDEO_SERVICE_DID,
     "app.bsky.video.getUploadLimits",
   );
-  const limitsRes = await fetch(
+  const limitsRes = await bskyFetch(
     `${VIDEO_SERVICE}/xrpc/app.bsky.video.getUploadLimits`,
     { headers: { Authorization: `Bearer ${limitsToken}` } },
   );
@@ -175,15 +202,19 @@ export async function blueskyPostVideo(
   const uploadUrl = new URL(`${VIDEO_SERVICE}/xrpc/app.bsky.video.uploadVideo`);
   uploadUrl.searchParams.set("did", session.did);
   uploadUrl.searchParams.set("name", name);
-  const upRes = await fetch(uploadUrl.toString(), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${uploadToken}`,
-      "Content-Type": "video/mp4",
-      "Content-Length": String(video.bytes.byteLength),
+  const upRes = await bskyFetch(
+    uploadUrl.toString(),
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${uploadToken}`,
+        "Content-Type": "video/mp4",
+        "Content-Length": String(video.bytes.byteLength),
+      },
+      body: video.bytes as BlobPart,
     },
-    body: video.bytes as BlobPart,
-  });
+    BSKY_UPLOAD_TIMEOUT_MS,
+  );
   if (!upRes.ok) {
     throw new Error(`Bluesky uploadVideo failed (${upRes.status}): ${await upRes.text()}`);
   }
@@ -208,7 +239,7 @@ export async function blueskyPostVideo(
     createdAt: new Date().toISOString(),
     embed,
   };
-  const createRes = await fetch(`${SERVICE}/xrpc/com.atproto.repo.createRecord`, {
+  const createRes = await bskyFetch(`${SERVICE}/xrpc/com.atproto.repo.createRecord`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${session.accessJwt}`,
@@ -236,7 +267,7 @@ async function getServiceAuth(
   url.searchParams.set("lxm", lxm);
   // Default ~5 min expiry — long enough for an upload, short enough to be safe.
   url.searchParams.set("exp", String(exp ?? Math.floor(Date.now() / 1000) + 60 * 5));
-  const res = await fetch(url.toString(), {
+  const res = await bskyFetch(url.toString(), {
     headers: { Authorization: `Bearer ${accessJwt}` },
   });
   if (!res.ok) {
@@ -259,7 +290,7 @@ async function resolvePdsDid(did: string): Promise<string> {
   } else {
     throw new Error(`Bluesky: unsupported DID method for PDS resolution: ${did}`);
   }
-  const res = await fetch(docUrl);
+  const res = await bskyFetch(docUrl);
   if (!res.ok) {
     throw new Error(`Bluesky DID doc fetch failed (${res.status}): ${await res.text()}`);
   }
@@ -287,7 +318,7 @@ async function pollJobStatus(jobId: string): Promise<VideoBlobRef> {
   for (;;) {
     const url = new URL(`${VIDEO_SERVICE}/xrpc/app.bsky.video.getJobStatus`);
     url.searchParams.set("jobId", jobId);
-    const res = await fetch(url.toString());
+    const res = await bskyFetch(url.toString());
     if (!res.ok) {
       throw new Error(`Bluesky getJobStatus failed (${res.status}): ${await res.text()}`);
     }
@@ -324,7 +355,7 @@ export async function blueskyMetrics(
 ): Promise<BlueskyMetrics> {
   const session = await createSession(creds);
   // getPostThread returns the post with attached counts.
-  const res = await fetch(
+  const res = await bskyFetch(
     `${SERVICE}/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(postUri)}&depth=0`,
     { headers: { Authorization: `Bearer ${session.accessJwt}` } },
   );
@@ -378,7 +409,7 @@ export async function blueskyGetAuthorFeed(
   url.searchParams.set("limit", String(bounded));
   url.searchParams.set("filter", "posts_no_replies");
 
-  const res = await fetch(url.toString(), {
+  const res = await bskyFetch(url.toString(), {
     method: "GET",
     headers: { Accept: "application/json", "User-Agent": "marketingmagic-competitors/1.0" },
     cache: "no-store",
@@ -454,7 +485,7 @@ export async function blueskyReply(
     createdAt: new Date().toISOString(),
     reply: { root, parent },
   };
-  const res = await fetch(`${SERVICE}/xrpc/com.atproto.repo.createRecord`, {
+  const res = await bskyFetch(`${SERVICE}/xrpc/com.atproto.repo.createRecord`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${session.accessJwt}`,
@@ -493,7 +524,7 @@ export async function blueskyListNotifications(
   const session = await createSession(creds);
   const bounded = Math.max(1, Math.min(100, Math.floor(limit)));
   const url = `${SERVICE}/xrpc/app.bsky.notification.listNotifications?limit=${bounded}`;
-  const res = await fetch(url, {
+  const res = await bskyFetch(url, {
     headers: { Authorization: `Bearer ${session.accessJwt}` },
   });
   if (!res.ok) {

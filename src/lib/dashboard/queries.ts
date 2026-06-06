@@ -26,6 +26,13 @@ export interface CalendarPost {
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
+// Bound the JS-side aggregations below. These helpers pull posts + their
+// embedded metric snapshots and reduce in JS; without a cap a busy
+// workspace could drag the whole window into memory. The window is already
+// 7d/30d, so this only bites pathological volumes — pick the most-recent
+// posts (order posted_at desc) so the cap keeps the freshest signal.
+const LEADERBOARD_POST_CAP = 2000;
+
 export async function getKpiSummary(workspaceId: string): Promise<KpiSummary> {
   const svc = supabaseService();
   const since = new Date(Date.now() - WEEK_MS).toISOString();
@@ -75,7 +82,9 @@ async function getImpressionsLastWeek(workspaceId: string, since: string): Promi
     .select("post_metrics(impressions, fetched_at)")
     .eq("workspace_id", workspaceId)
     .eq("status", "posted")
-    .gte("posted_at", since);
+    .gte("posted_at", since)
+    .order("posted_at", { ascending: false })
+    .limit(LEADERBOARD_POST_CAP);
 
   type Row = { post_metrics: Array<{ impressions: number | null; fetched_at: string }> };
   let total = 0;
@@ -97,7 +106,9 @@ export async function getThemeLeaderboard(workspaceId: string): Promise<ThemeRow
     .eq("workspace_id", workspaceId)
     .eq("status", "posted")
     .gte("posted_at", since)
-    .not("theme", "is", null);
+    .not("theme", "is", null)
+    .order("posted_at", { ascending: false })
+    .limit(LEADERBOARD_POST_CAP);
 
   type Row = {
     theme: string | null;
@@ -151,7 +162,9 @@ export async function getSourceLeaderboard(workspaceId: string): Promise<SourceL
     .eq("workspace_id", workspaceId)
     .eq("status", "posted")
     .gte("posted_at", since)
-    .not("source_id", "is", null);
+    .not("source_id", "is", null)
+    .order("posted_at", { ascending: false })
+    .limit(LEADERBOARD_POST_CAP);
 
   type Row = {
     source_id: string | null;

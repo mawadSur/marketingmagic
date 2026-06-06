@@ -20,11 +20,10 @@ const badgeVariants = cva(
         default: "border-border bg-background text-foreground/80",
         // Subdued muted background for low-emphasis labels.
         muted: "border-transparent bg-muted text-muted-foreground",
-        // Status colours. Hand-tuned so they read in both light and dark.
-        success:
-          "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-        warning:
-          "border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+        // Status colours, driven by the --success / --warning tokens so the
+        // shades live in one place and read in both light and dark.
+        success: "border-success/20 bg-success/10 text-success",
+        warning: "border-warning/20 bg-warning/10 text-warning",
         danger:
           "border-destructive/30 bg-destructive/10 text-destructive dark:text-destructive",
         info: "border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-400",

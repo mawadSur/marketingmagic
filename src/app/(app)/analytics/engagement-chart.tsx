@@ -47,7 +47,11 @@ export function EngagementChart({ data }: { data: DayBucket[] }) {
   const { points, path, areaPath, max, ticks } = useMemo(() => {
     const values = data.map((d) => d[mode]);
     const rawMax = Math.max(...values, 0);
-    // Round up to a "nice" max so y-ticks read cleanly.
+    // No real data to scale against (empty range, or every bucket is 0).
+    const hasData = rawMax > 0;
+    // Round up to a "nice" max so y-ticks read cleanly. niceCeil(0) is 1, so a
+    // no-data axis would otherwise render a fake 0/50%/100% scale — see the
+    // tick guard below, which collapses it to a single baseline label instead.
     const m = niceCeil(rawMax);
     const stepX = data.length > 1 ? innerW / (data.length - 1) : innerW;
     const pts = data.map((d, i) => {
@@ -61,13 +65,19 @@ export function EngagementChart({ data }: { data: DayBucket[] }) {
     const a = pts.length
       ? `${p} L ${pts[pts.length - 1]!.x.toFixed(1)} ${H - PAD_BOTTOM} L ${pts[0]!.x.toFixed(1)} ${H - PAD_BOTTOM} Z`
       : "";
-    // Three horizontal gridlines: 0, m/2, m.
-    const t = [0, m / 2, m];
+    // Three horizontal gridlines: 0, m/2, m. With no data, the 0/50%/100%
+    // scale niceCeil(0)=1 produces is meaningless (and in rate mode misleads —
+    // it implies 100% is on-scale), so collapse to a single baseline tick.
+    const t = hasData ? [0, m / 2, m] : [0];
     return { points: pts, path: p, areaPath: a, max: m, ticks: t };
   }, [data, mode, innerH, innerW]);
 
   function format(v: number): string {
-    if (mode === "engagement_rate") return `${(v * 100).toFixed(2)}%`;
+    if (mode === "engagement_rate") {
+      // A clean "0%" reads better than "0.00%" — matters for the no-data axis,
+      // whose single tick is exactly 0.
+      return v === 0 ? "0%" : `${(v * 100).toFixed(2)}%`;
+    }
     return Math.round(v).toLocaleString();
   }
 
