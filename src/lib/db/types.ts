@@ -213,6 +213,9 @@ export interface Database {
           // the "Made with marketingmagic" toggle (only ever applied on hobby).
           referral_bonus_posts: number;
           attribution_enabled: boolean;
+          // Bet 4 (migration 045): workspace-wide hard stop for autonomous
+          // auto-replies. TRUE = no account auto-sends, period. Defaults false.
+          auto_reply_kill_switch: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -229,6 +232,7 @@ export interface Database {
           subscription_status?: string | null;
           referral_bonus_posts?: number;
           attribution_enabled?: boolean;
+          auto_reply_kill_switch?: boolean;
         };
         Update: Partial<{
           slug: string;
@@ -241,6 +245,7 @@ export interface Database {
           subscription_status: string | null;
           referral_bonus_posts: number;
           attribution_enabled: boolean;
+          auto_reply_kill_switch: boolean;
         }>;
         Relationships: [];
       };
@@ -583,6 +588,10 @@ export interface Database {
           trust_mode: boolean;
           trust_threshold: number;
           successful_post_count: number;
+          // Bet 4 (migration 045): per-account opt-in for auto-SENDING drafted
+          // replies. Auto-send requires (trust_mode AND auto_reply_enabled).
+          // Defaults false — auto-publish trust does NOT imply auto-reply.
+          auto_reply_enabled: boolean;
           status: AccountStatus;
           created_at: string;
           updated_at: string;
@@ -596,6 +605,7 @@ export interface Database {
           trust_mode?: boolean;
           trust_threshold?: number;
           successful_post_count?: number;
+          auto_reply_enabled?: boolean;
           status?: AccountStatus;
         };
         Update: Partial<{
@@ -604,6 +614,7 @@ export interface Database {
           trust_mode: boolean;
           trust_threshold: number;
           successful_post_count: number;
+          auto_reply_enabled: boolean;
           status: AccountStatus;
         }>;
         Relationships: [];
@@ -1297,6 +1308,44 @@ export interface Database {
           replied_to_post_id: string | null;
           parent_post_id: string | null;
           author_display_name: string | null;
+        }>;
+        Relationships: [];
+      };
+      auto_reply_log: {
+        // Bet 4 (migration 045): audit trail of every autonomous reply
+        // auto-sent / blocked / failed on X, Bluesky, LinkedIn. Also the
+        // source the per-account hourly rate cap counts against. See
+        // src/lib/interactions/auto-reply/*.
+        Row: {
+          id: string;
+          workspace_id: string;
+          social_account_id: string;
+          interaction_id: string | null;
+          channel: "x" | "bluesky" | "linkedin";
+          outcome: "sent" | "blocked" | "failed";
+          outcome_reason: string | null;
+          reply_text: string;
+          external_id: string | null;
+          reply_post_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          social_account_id: string;
+          interaction_id?: string | null;
+          channel: "x" | "bluesky" | "linkedin";
+          outcome: "sent" | "blocked" | "failed";
+          outcome_reason?: string | null;
+          reply_text: string;
+          external_id?: string | null;
+          reply_post_id?: string | null;
+        };
+        Update: Partial<{
+          outcome: "sent" | "blocked" | "failed";
+          outcome_reason: string | null;
+          external_id: string | null;
+          reply_post_id: string | null;
         }>;
         Relationships: [];
       };

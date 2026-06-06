@@ -8,6 +8,11 @@ import { pollInstagram, pollThreads } from "@/lib/interactions/pollers/meta-stub
 import type { PollerResult, PollerInteraction } from "@/lib/interactions/pollers/types";
 import { MetaAppReviewPendingError } from "@/lib/interactions/errors";
 import { computePriorityScore } from "@/lib/interactions/priority";
+import {
+  attemptAutoReply,
+  type AutoReplyVoiceContext,
+} from "@/lib/interactions/auto-reply/send";
+import { isAutoReplyChannel } from "@/lib/interactions/auto-reply/policy";
 import { loadFreshXCredentials, type XCredentials } from "@/lib/social/x";
 import type { LinkedInCredentials } from "@/lib/social/linkedin";
 import type { BlueskyCredentials } from "@/lib/social/bluesky";
@@ -35,6 +40,14 @@ import type { Database, InteractionChannel } from "@/lib/db/types";
 //      already replied natively in the thread (detected as a sibling
 //      with author == workspace handle), demote priority to 0 and
 //      mark status=read.
+//   6. Bet 4 — AUTONOMOUS AUTO-REPLY (X/Bluesky/LinkedIn only). For each
+//      newly-inserted row that is still `unread` on an account that has
+//      BOTH the existing publishing trust model (trust_mode) AND the
+//      per-account auto_reply_enabled opt-in on, with the workspace
+//      kill switch OFF and the hourly rate cap not exceeded, we draft a
+//      reply in brand voice and SEND it, then log to auto_reply_log.
+//      Everything is OFF by default; the gate + cap live in the pure
+//      src/lib/interactions/auto-reply/policy module.
 //
 // Errors are caught per-account so one failure doesn't kill the run.
 
@@ -67,6 +80,16 @@ const LINKEDIN_OWN_POSTS_LOOKBACK_DAYS = 14;
 type SocialAccountRow = Database["public"]["Tables"]["social_accounts"]["Row"];
 type InteractionRow = Database["public"]["Tables"]["interactions"]["Row"];
 
+// Per-workspace context loaded once and shared across the workspace's
+// accounts during a single cron run.
+interface WorkspaceContextCache {
+  referenceLinks: string[];
+  // Bet 4 — workspace-wide auto-reply hard stop.
+  killSwitch: boolean;
+  // Bet 4 — voice context the auto-reply drafter needs.
+  voice: AutoReplyVoiceContext;
+}
+
 interface PerAccountResult {
   socialAccountId: string;
   workspaceId: string;
@@ -79,6 +102,8 @@ interface PerAccountResult {
     | "throttled";
   inserted?: number;
   fetched?: number;
+  // Bet 4 — count of rows we auto-replied to on this account this run.
+  autoReplied?: number;
   reason?: string;
 }
 
@@ -110,9 +135,13 @@ async function handle(req: NextRequest) {
   const rows = (accounts ?? []) as SocialAccountRow[];
   const results: PerAccountResult[] = [];
 
-  // Workspace-level cache for brand brief reference_links (used by
-  // priority computation). One row per workspace; share across accounts.
-  const briefByWs = new Map<string, { referenceLinks: string[] }>();
+  // Workspace-level cache. One fetch per workspace, shared across the
+  // workspace's accounts:
+  //   * referenceLinks  — for priority computation (Phase 4.5).
+  //   * killSwitch       — Bet 4 workspace-wide auto-reply hard stop.
+  //   * voice            — drafter context for auto-reply (voice profile +
+  //                        do-not-say + product description).
+  const briefByWs = new Map<string, WorkspaceContextCache>();
 
   for (const acct of rows) {
     const channel = acct.channel as InteractionChannel;
@@ -149,14 +178,10 @@ async function handle(req: NextRequest) {
 
     // Workspace-context fetch (once per workspace).
     if (!briefByWs.has(acct.workspace_id)) {
-      const { data: brief } = await svc
-        .from("brand_briefs")
-        .select("reference_links")
-        .eq("workspace_id", acct.workspace_id)
-        .maybeSingle();
-      briefByWs.set(acct.workspace_id, {
-        referenceLinks: brief?.reference_links ?? [],
-      });
+      briefByWs.set(
+        acct.workspace_id,
+        await loadWorkspaceContext(acct.workspace_id),
+      );
     }
     const briefCtx = briefByWs.get(acct.workspace_id)!;
 
@@ -173,19 +198,35 @@ async function handle(req: NextRequest) {
         continue;
       }
 
-      const inserted = await persistInteractions(
+      const insertedIds = await persistInteractions(
         acct,
         result.interactions,
         briefCtx.referenceLinks,
         now,
       );
+
+      // Bet 4 — autonomous auto-reply pass. Only on shippable channels.
+      // The per-interaction gate (trust_mode + opt-in + kill switch +
+      // rate cap) lives in attemptAutoReply; this just feeds it the
+      // newly-inserted, still-unread rows.
+      let autoReplied = 0;
+      if (insertedIds.length > 0 && isAutoReplyChannel(acct.channel)) {
+        autoReplied = await runAutoReplies(
+          acct,
+          insertedIds,
+          briefCtx,
+          now,
+        );
+      }
+
       results.push({
         socialAccountId: acct.id,
         workspaceId: acct.workspace_id,
         channel,
         status: "ok",
         fetched: result.interactions.length,
-        inserted,
+        inserted: insertedIds.length,
+        autoReplied,
       });
     } catch (err) {
       // Special-case the Meta-App-Review-pending error so the response
@@ -218,9 +259,76 @@ async function handle(req: NextRequest) {
     throttled: results.filter((r) => r.status === "throttled").length,
     skipped: results.filter((r) => r.status === "skipped").length,
     tierPending: results.filter((r) => r.status === "tier_pending").length,
+    autoReplied: results.reduce((sum, r) => sum + (r.autoReplied ?? 0), 0),
     results,
     at: now.toISOString(),
   });
+}
+
+// Load the once-per-workspace context: brand-brief reference links +
+// voice for drafting, plus the Bet 4 auto-reply kill switch.
+async function loadWorkspaceContext(
+  workspaceId: string,
+): Promise<WorkspaceContextCache> {
+  const svc = supabaseService();
+  const [{ data: brief }, { data: ws }] = await Promise.all([
+    svc
+      .from("brand_briefs")
+      .select("reference_links, voice, voice_profile, do_not_say, product_description")
+      .eq("workspace_id", workspaceId)
+      .maybeSingle(),
+    svc
+      .from("workspaces")
+      .select("auto_reply_kill_switch")
+      .eq("id", workspaceId)
+      .maybeSingle(),
+  ]);
+  return {
+    referenceLinks: brief?.reference_links ?? [],
+    // Default-closed: if the column read fails for any reason, treat the
+    // kill switch as ENGAGED rather than risk an unwanted auto-send.
+    killSwitch: ws?.auto_reply_kill_switch ?? true,
+    voice: {
+      voiceProfile: brief?.voice_profile ?? null,
+      voice: brief?.voice ?? "",
+      doNotSay: brief?.do_not_say ?? [],
+      productDescription: brief?.product_description ?? "",
+    },
+  };
+}
+
+// Bet 4 — run the autonomous auto-reply pass for one account over the
+// newly-inserted, still-unread interaction rows. Returns the count sent.
+// Each attempt is independently guarded + audited inside attemptAutoReply;
+// a single failure never poisons the rest.
+async function runAutoReplies(
+  acct: SocialAccountRow,
+  insertedIds: string[],
+  ctx: WorkspaceContextCache,
+  now: Date,
+): Promise<number> {
+  const svc = supabaseService();
+  // Re-load the rows: the native-reply conflict pass may have flipped some
+  // to status='read', and we only auto-reply to ones still 'unread'.
+  const { data: freshRows } = await svc
+    .from("interactions")
+    .select("*")
+    .in("id", insertedIds)
+    .eq("status", "unread");
+  const rows = (freshRows ?? []) as InteractionRow[];
+  let sent = 0;
+  for (const row of rows) {
+    const result = await attemptAutoReply(
+      svc,
+      acct,
+      row,
+      ctx.killSwitch,
+      ctx.voice,
+      now,
+    );
+    if (result.outcome === "sent") sent += 1;
+  }
+  return sent;
 }
 
 // Dispatch to the channel-specific poller.
@@ -279,14 +387,15 @@ async function runPoller(
 }
 
 // Insert new interactions + recompute priority + handle native-reply
-// conflict. Returns the count of NEW rows inserted (excludes dedup hits).
+// conflict. Returns the ids of the NEW rows inserted (excludes dedup hits)
+// so the caller can run the Bet 4 auto-reply pass over them.
 async function persistInteractions(
   acct: SocialAccountRow,
   items: PollerInteraction[],
   referenceLinks: string[],
   now: Date,
-): Promise<number> {
-  if (items.length === 0) return 0;
+): Promise<string[]> {
+  if (items.length === 0) return [];
   const svc = supabaseService();
 
   // Pre-resolve parent_post_id by matching in_reply_to_external_id
@@ -401,7 +510,7 @@ async function persistInteractions(
     }
   }
 
-  return inserted.length;
+  return inserted.map((r) => r.id);
 }
 
 function authorized(req: NextRequest): boolean {

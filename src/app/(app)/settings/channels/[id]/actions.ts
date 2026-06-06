@@ -5,6 +5,7 @@ import { z } from "zod";
 import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseService } from "@/lib/supabase/service";
 import { getActiveWorkspaceOrRedirect, getAuthedUserOrRedirect } from "@/lib/workspace";
+import { isAutoReplyChannel } from "@/lib/interactions/auto-reply/policy";
 
 type ActionResult = { error: string | null };
 const uuid = z.string().uuid();
@@ -38,7 +39,86 @@ export async function setTrustModeAction(
     .eq("workspace_id", ws.id);
   if (error) return { error: error.message };
 
+  // Safety: turning OFF the publishing trust model must also disable the
+  // riskier auto-reply behaviour. We never auto-send on an account whose
+  // trust was just revoked.
+  if (!enable) {
+    await supabase
+      .from("social_accounts")
+      .update({ auto_reply_enabled: false })
+      .eq("id", accountId)
+      .eq("workspace_id", ws.id);
+  }
+
   revalidatePath(`/settings/channels/${accountId}`);
+  revalidatePath("/dashboard");
+  return { error: null };
+}
+
+// Bet 4 — per-account opt-in for AUTONOMOUS auto-replies. This is the
+// riskier "we send public replies at named people with no human in the
+// loop" toggle, so it requires the existing publishing trust model
+// (trust_mode) to already be ON, and only applies to the shippable
+// channels (X / Bluesky / LinkedIn). Turning it OFF is always allowed.
+export async function setAutoReplyEnabledAction(
+  accountId: string,
+  enable: boolean,
+): Promise<ActionResult> {
+  if (!uuid.safeParse(accountId).success) return { error: "Bad account id." };
+  const ws = await getActiveWorkspaceOrRedirect();
+  const supabase = await supabaseServer();
+
+  if (enable) {
+    const { data: acct } = await supabase
+      .from("social_accounts")
+      .select("channel, trust_mode, status")
+      .eq("id", accountId)
+      .eq("workspace_id", ws.id)
+      .maybeSingle();
+    if (!acct) return { error: "Account not found." };
+    if (acct.status !== "connected") {
+      return { error: "Account isn't connected." };
+    }
+    if (!isAutoReplyChannel(acct.channel)) {
+      return {
+        error: "Auto-reply is only available on X, Bluesky, and LinkedIn.",
+      };
+    }
+    if (acct.trust_mode !== true) {
+      return {
+        error: "Turn on trust mode first — auto-reply builds on it.",
+      };
+    }
+  }
+
+  const { error } = await supabase
+    .from("social_accounts")
+    .update({ auto_reply_enabled: enable })
+    .eq("id", accountId)
+    .eq("workspace_id", ws.id);
+  if (error) return { error: error.message };
+
+  revalidatePath(`/settings/channels/${accountId}`);
+  return { error: null };
+}
+
+// Bet 4 — the workspace-wide KILL SWITCH. When engaged (kill=true), NO
+// account in the workspace auto-sends, regardless of per-account opt-in.
+// Stored as workspaces.auto_reply_kill_switch. Always allowed in both
+// directions; this is a safety lever, never gated.
+export async function setAutoReplyKillSwitchAction(
+  kill: boolean,
+): Promise<ActionResult> {
+  const ws = await getActiveWorkspaceOrRedirect();
+  const supabase = await supabaseServer();
+  const { error } = await supabase
+    .from("workspaces")
+    .update({ auto_reply_kill_switch: kill })
+    .eq("id", ws.id);
+  if (error) return { error: error.message };
+
+  revalidatePath("/settings/channels");
+  revalidatePath("/inbox");
   revalidatePath("/dashboard");
   return { error: null };
 }

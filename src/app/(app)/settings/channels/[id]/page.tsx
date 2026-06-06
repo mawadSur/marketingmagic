@@ -2,7 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
+import { isAutoReplyChannel } from "@/lib/interactions/auto-reply/policy";
 import { TrustToggle } from "./trust-toggle";
+import { AutoReplyToggle } from "./auto-reply-toggle";
 import { DisconnectButton } from "./disconnect-button";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +24,22 @@ export default async function ChannelDetailPage({
     .eq("workspace_id", ws.id)
     .maybeSingle();
   if (!account) notFound();
+
+  // The safe view omits auto_reply_enabled; read it (member-RLS-gated) off
+  // the base table along with the workspace kill switch.
+  const [{ data: autoReplyRow }, { data: wsRow }] = await Promise.all([
+    supabase
+      .from("social_accounts")
+      .select("auto_reply_enabled")
+      .eq("id", id)
+      .eq("workspace_id", ws.id)
+      .maybeSingle(),
+    supabase
+      .from("workspaces")
+      .select("auto_reply_kill_switch")
+      .eq("id", ws.id)
+      .maybeSingle(),
+  ]);
 
   const eligible = account.successful_post_count >= account.trust_threshold;
   const isDisconnected = account.status === "disconnected";
@@ -61,6 +79,15 @@ export default async function ChannelDetailPage({
             accountId={account.id}
             trustMode={account.trust_mode}
             eligible={eligible || account.trust_mode}
+          />
+
+          <AutoReplyToggle
+            accountId={account.id}
+            channel={account.channel}
+            trustMode={account.trust_mode}
+            autoReplyEnabled={autoReplyRow?.auto_reply_enabled ?? false}
+            supported={isAutoReplyChannel(account.channel)}
+            killSwitchEngaged={wsRow?.auto_reply_kill_switch ?? false}
           />
 
           <DisconnectButton
