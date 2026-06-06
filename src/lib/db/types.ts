@@ -85,6 +85,13 @@ export type FacebookGroupPromoPolicy = "open" | "limited" | "value_only";
 export type FacebookGroupDraftSource = "ai" | "manual";
 export type FacebookGroupDraftStatus = "draft" | "posted" | "dismissed";
 
+// Outcome Loop MVP (migration 042). The kind of self-reported BUSINESS outcome
+// a user attributes to a live post. Closed vocabulary so the per-theme roll-up
+// (src/lib/analytics/outcomes.ts) stays comparable; 'other' is the catch-all.
+// Mirrors the CHECK constraint on post_outcomes.outcome_type and the Zod enum
+// in src/lib/analytics/outcome-schema.ts.
+export type PostOutcomeType = "lead" | "sale" | "signup" | "booking" | "other";
+
 // PLG share (migration 032): the content persisted under a preview_shares.slug
 // so an anonymous /start preview can be re-rendered read-only and unfurled on
 // social. Mirrors the signed preview-token payload but is the SHAREABLE subset
@@ -1490,6 +1497,42 @@ export interface Database {
           text: string;
           status: FacebookGroupDraftStatus;
           posted_at: string | null;
+        }>;
+        Relationships: [];
+      };
+      // Outcome Loop MVP (migration 042). One self-reported BUSINESS outcome
+      // (lead / sale / signup / booking / other) attributed to a live post,
+      // optionally with a dollar amount (value_cents). A post can have MANY
+      // outcomes. Members read/write their own workspace's rows (RLS via
+      // is_workspace_member); analytics rolls these up per theme in
+      // src/lib/analytics/outcomes.ts. SCOPE: self-report only — no UTM /
+      // pixel ingestion (deferred phase 2).
+      post_outcomes: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          post_id: string;
+          outcome_type: PostOutcomeType;
+          // Revenue in CENTS when known; null for value-less outcomes (a 'lead'
+          // or 'signup' with no dollar figure attached).
+          value_cents: number | null;
+          note: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          post_id: string;
+          outcome_type: PostOutcomeType;
+          value_cents?: number | null;
+          note?: string | null;
+          created_by?: string | null;
+        };
+        Update: Partial<{
+          outcome_type: PostOutcomeType;
+          value_cents: number | null;
+          note: string | null;
         }>;
         Relationships: [];
       };
