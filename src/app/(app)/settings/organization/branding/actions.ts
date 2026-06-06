@@ -10,6 +10,11 @@ import {
   recordClientInvite,
 } from "@/lib/portal/manage";
 import {
+  mintSelfConnectToken,
+  revokeSelfConnectToken,
+  SELF_CONNECT_DEFAULT_TTL_DAYS,
+} from "@/lib/client-connect/token";
+import {
   ORG_BRANDING_BUCKET,
   ALLOWED_LOGO_MIME,
   logoExtForMime,
@@ -219,6 +224,101 @@ export async function revokeTokenAction(
   }
 
   const { error } = await revokePortalToken(tokenId, workspaceId);
+  if (error) return { error };
+  revalidatePath("/settings/organization/branding");
+  return { error: null };
+}
+
+// ─── Client self-connect link (token) management ────────────────────────
+//
+// A tokenized link the agency sends a CLIENT so the client connects THEIR OWN
+// social channels (no credential handoff). Mirrors the portal-token mint/revoke
+// authz exactly: owner-gated, the target workspace must belong to THIS org. The
+// link lands on /connect/<token>, which drives the existing per-channel OAuth
+// initiate flow and attributes the connection to the client workspace.
+
+export type MintSelfConnectState = { error: string | null; rawUrl: string | null };
+
+export async function mintSelfConnectAction(
+  _prev: MintSelfConnectState,
+  formData: FormData,
+): Promise<MintSelfConnectState> {
+  const organizationId = String(formData.get("organization_id") ?? "");
+  const workspaceId = String(formData.get("workspace_id") ?? "");
+  const owner = await requireOwnedOrg(organizationId);
+  if (!owner) return { error: "Only the organization owner can create links.", rawUrl: null };
+  if (!z.string().uuid().safeParse(workspaceId).success) {
+    return { error: "Pick a client workspace.", rawUrl: null };
+  }
+
+  // Confirm the target workspace belongs to this org (authed read — RLS scopes
+  // it to the caller's orgs). Same gate as mintTokenAction.
+  const supabase = await supabaseServer();
+  const { data: ws } = await supabase
+    .from("workspaces")
+    .select("id, organization_id")
+    .eq("id", workspaceId)
+    .maybeSingle();
+  if (!ws || ws.organization_id !== organizationId) {
+    return { error: "That workspace isn't in your organization.", rawUrl: null };
+  }
+
+  const label = String(formData.get("label") ?? "").trim().slice(0, 120) || null;
+
+  // Optional custom expiry; defaults to the lib's standard TTL otherwise.
+  let expiresAt: string = new Date(
+    Date.now() + SELF_CONNECT_DEFAULT_TTL_DAYS * 86_400_000,
+  ).toISOString();
+  const daysRaw = formData.get("expires_days");
+  if (daysRaw && String(daysRaw).length > 0) {
+    const daysParsed = expiryDaysSchema.safeParse(daysRaw);
+    if (!daysParsed.success || daysParsed.data === undefined) {
+      return { error: "Expiry must be 1–365 days.", rawUrl: null };
+    }
+    expiresAt = new Date(Date.now() + daysParsed.data * 86_400_000).toISOString();
+  }
+
+  try {
+    const { rawToken } = await mintSelfConnectToken({
+      workspaceId,
+      createdBy: owner.userId,
+      label,
+      expiresAt,
+    });
+    revalidatePath("/settings/organization/branding");
+    return { error: null, rawUrl: `${siteUrl()}/connect/${rawToken}` };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Failed to create link.", rawUrl: null };
+  }
+}
+
+export async function revokeSelfConnectAction(
+  _prev: RevokeTokenState,
+  formData: FormData,
+): Promise<RevokeTokenState> {
+  const organizationId = String(formData.get("organization_id") ?? "");
+  const tokenId = String(formData.get("token_id") ?? "");
+  const workspaceId = String(formData.get("workspace_id") ?? "");
+  const owner = await requireOwnedOrg(organizationId);
+  if (!owner) return { error: "Only the organization owner can revoke links." };
+  if (
+    !z.string().uuid().safeParse(tokenId).success ||
+    !z.string().uuid().safeParse(workspaceId).success
+  ) {
+    return { error: "Bad request." };
+  }
+
+  const supabase = await supabaseServer();
+  const { data: ws } = await supabase
+    .from("workspaces")
+    .select("id, organization_id")
+    .eq("id", workspaceId)
+    .maybeSingle();
+  if (!ws || ws.organization_id !== organizationId) {
+    return { error: "That workspace isn't in your organization." };
+  }
+
+  const { error } = await revokeSelfConnectToken(tokenId, workspaceId);
   if (error) return { error };
   revalidatePath("/settings/organization/branding");
   return { error: null };

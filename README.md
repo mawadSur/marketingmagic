@@ -62,7 +62,8 @@ Vercel Cron hits the handlers in `src/app/api/cron/*`, each gated by
 `Authorization: Bearer $CRON_SECRET` (see `vercel.json`): `post-scheduled`,
 `pull-metrics`, `poll-video-jobs`, `poll-interactions`, `competitor-watch`,
 `learning-digest`, `email-digest`, `engagement-report`, `goal-replan-check`,
-`theme-gaps`, `voice-evolution`.
+`theme-gaps`, `voice-evolution`, `client-report` (monthly agency proof-of-work
+report, 1st of the month).
 
 ## Webhook ingestion
 

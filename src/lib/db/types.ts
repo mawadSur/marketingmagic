@@ -364,6 +364,39 @@ export interface Database {
         }>;
         Relationships: [];
       };
+      // Client self-connect tokens (migration 044, Agency Proof Engine bet ③).
+      // A tokenized link the agency sends a client so the CLIENT connects their
+      // own social channels — the /connect/[token] surface resolves the hash to
+      // exactly one workspace_id and drives the existing per-channel OAuth
+      // initiate, attributing the account to that client workspace. Mirrors
+      // client_portal_tokens: SHA-256(raw) stored, short expiry, revocation.
+      client_self_connect_tokens: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          token_hash: string;
+          label: string | null;
+          expires_at: string | null;
+          revoked_at: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          token_hash: string;
+          label?: string | null;
+          expires_at?: string | null;
+          revoked_at?: string | null;
+          created_by?: string | null;
+        };
+        Update: Partial<{
+          label: string | null;
+          expires_at: string | null;
+          revoked_at: string | null;
+        }>;
+        Relationships: [];
+      };
       // Client ACCOUNTS (migration 037). The NARROW link between an authenticated
       // client user and a client workspace they may read the REPORT for. This is
       // deliberately SEPARATE from `memberships` (full member rights) — it grants
