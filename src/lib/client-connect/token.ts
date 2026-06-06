@@ -26,6 +26,7 @@
 
 import crypto from "node:crypto";
 import { supabaseService } from "@/lib/supabase/service";
+import type { Database } from "@/lib/db/types";
 
 // Resolved, validated self-connect session. Immutable: the initiate route reads
 // workspaceId off this and stamps it into the OAuth `state` — it must not
@@ -148,6 +149,30 @@ export async function mintSelfConnectToken(
     throw new Error(error?.message ?? "Failed to create self-connect link.");
   }
   return { rawToken, tokenId: data.id };
+}
+
+// A self-connect token row sans the hash — never surface the hash to the UI.
+// Mirrors ManagedToken in src/lib/portal/manage.ts (this table has no `scopes`).
+type SelfConnectTokenRow =
+  Database["public"]["Tables"]["client_self_connect_tokens"]["Row"];
+export type ManagedSelfConnectToken = Omit<SelfConnectTokenRow, "token_hash">;
+
+/**
+ * List self-connect tokens for a workspace (most recent first). Scoped to the
+ * given workspace_id. Authorization MUST be checked by the caller first. Mirrors
+ * listPortalTokens in src/lib/portal/manage.ts — read-only, the hash is never
+ * selected.
+ */
+export async function listSelfConnectTokens(
+  workspaceId: string,
+): Promise<ManagedSelfConnectToken[]> {
+  const svc = supabaseService();
+  const { data } = await svc
+    .from("client_self_connect_tokens")
+    .select("id, workspace_id, label, expires_at, revoked_at, created_by, created_at")
+    .eq("workspace_id", workspaceId)
+    .order("created_at", { ascending: false });
+  return (data ?? []) as ManagedSelfConnectToken[];
 }
 
 /**
