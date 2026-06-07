@@ -5,10 +5,34 @@ import { z } from "zod";
 import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseService } from "@/lib/supabase/service";
 import { getActiveWorkspaceOrRedirect, getAuthedUserOrRedirect } from "@/lib/workspace";
-import { isAutoReplyChannel } from "@/lib/interactions/auto-reply/policy";
+import {
+  isAutoReplyChannel,
+  ENGAGEMENT_MODES,
+  type EngagementMode,
+  evaluateDmCaptureEnableGate,
+  type DmCaptureEnableBlockReason,
+} from "@/lib/interactions/auto-reply/policy";
+import {
+  parseLeadRuleForm,
+  type LeadRuleFormInput,
+} from "@/lib/interactions/auto-reply/lead-rule-input";
+import type { Json } from "@/lib/db/types";
 
 type ActionResult = { error: string | null };
+// Field-keyed errors for the lead-rule editor (e.g. { link: "..." }), or a
+// single top-level `error`. The editor renders whichever is present.
+type FieldActionResult = { error: string | null; fieldErrors?: Record<string, string> };
 const uuid = z.string().uuid();
+const engagementMode = z.enum(ENGAGEMENT_MODES);
+
+// Human copy for each settings-time DM-capture enable block reason. Keeps the
+// (pure, testable) gate decoupled from the UI strings.
+const DM_CAPTURE_BLOCK_COPY: Record<DmCaptureEnableBlockReason, string> = {
+  not_connected: "Account isn't connected.",
+  channel_unsupported:
+    "Comment→DM is only available on X, Bluesky, and LinkedIn.",
+  not_trusted: "Turn on trust mode first — comment→DM builds on it.",
+};
 
 export async function setTrustModeAction(
   accountId: string,
@@ -39,13 +63,20 @@ export async function setTrustModeAction(
     .eq("workspace_id", ws.id);
   if (error) return { error: error.message };
 
-  // Safety: turning OFF the publishing trust model must also disable the
-  // riskier auto-reply behaviour. We never auto-send on an account whose
-  // trust was just revoked.
+  // Safety: turning OFF the publishing trust model must also disable BOTH
+  // riskier autonomous behaviours that build on it — auto-reply (045) AND
+  // comment→DM (046). We never engage (even in shadow) on an account whose
+  // trust was just revoked. Reset BOTH tri-state modes (the source of truth,
+  // migration 048) AND the legacy booleans so every reader stays in sync.
   if (!enable) {
     await supabase
       .from("social_accounts")
-      .update({ auto_reply_enabled: false })
+      .update({
+        auto_reply_mode: "off",
+        auto_reply_enabled: false,
+        dm_capture_mode: "off",
+        dm_capture_enabled: false,
+      })
       .eq("id", accountId)
       .eq("workspace_id", ws.id);
   }
@@ -55,20 +86,28 @@ export async function setTrustModeAction(
   return { error: null };
 }
 
-// Bet 4 — per-account opt-in for AUTONOMOUS auto-replies. This is the
-// riskier "we send public replies at named people with no human in the
-// loop" toggle, so it requires the existing publishing trust model
-// (trust_mode) to already be ON, and only applies to the shippable
-// channels (X / Bluesky / LinkedIn). Turning it OFF is always allowed.
-export async function setAutoReplyEnabledAction(
+// Bet 4 (migration 048) — set the per-account auto-reply MODE (tri-state):
+//   * 'off'    — feature does nothing for this account.
+//   * 'shadow' — drafts + audits what it WOULD reply, but NEVER posts and
+//                NEVER flips the interaction. The safe review state.
+//   * 'live'   — drafts AND auto-sends public replies at named people, no
+//                human in the loop — the riskiest thing this product does.
+// Engaging (shadow OR live) requires the existing publishing trust model
+// (trust_mode) ON, and only applies to the shippable channels (X / Bluesky /
+// LinkedIn). Going to 'off' is always allowed. We write BOTH the tri-state
+// column (source of truth) AND the legacy auto_reply_enabled boolean (kept in
+// sync: true iff mode='live') so any reader of either stays consistent.
+export async function setAutoReplyModeAction(
   accountId: string,
-  enable: boolean,
+  mode: EngagementMode,
 ): Promise<ActionResult> {
   if (!uuid.safeParse(accountId).success) return { error: "Bad account id." };
+  if (!engagementMode.safeParse(mode).success) return { error: "Bad mode." };
   const ws = await getActiveWorkspaceOrRedirect();
   const supabase = await supabaseServer();
 
-  if (enable) {
+  // Engaging (shadow OR live) is gated; going 'off' is always allowed.
+  if (mode !== "off") {
     const { data: acct } = await supabase
       .from("social_accounts")
       .select("channel, trust_mode, status")
@@ -93,7 +132,107 @@ export async function setAutoReplyEnabledAction(
 
   const { error } = await supabase
     .from("social_accounts")
-    .update({ auto_reply_enabled: enable })
+    .update({ auto_reply_mode: mode, auto_reply_enabled: mode === "live" })
+    .eq("id", accountId)
+    .eq("workspace_id", ws.id);
+  if (error) return { error: error.message };
+
+  revalidatePath(`/settings/channels/${accountId}`);
+  return { error: null };
+}
+
+// Bet 4 (046 + 048) — set the per-account comment→DM MODE (tri-state):
+//   * 'off'    — comment→DM does nothing for this account.
+//   * 'shadow' — drafts + audits the DM it WOULD send (outcome='shadow' with
+//                would_send_text), but NEVER DMs, NEVER tags a lead, NEVER flips
+//                the interaction. The safe review state.
+//   * 'live'   — drafts AND auto-sends a private DM to a stranger, no human in
+//                the loop.
+// Engaging (shadow OR live) is gated by the same pure evaluateDmCaptureEnableGate
+// (connected + trust_mode + shippable channel), and only applies to X / Bluesky /
+// LinkedIn. dm_capture_mode is INDEPENDENT of auto_reply_mode. Going 'off' is
+// always allowed. We write BOTH the tri-state column (source of truth — this is
+// what dm-send.ts reads) AND the legacy dm_capture_enabled boolean (kept in sync:
+// true iff mode='live') so any reader of either stays consistent.
+export async function setDmCaptureModeAction(
+  accountId: string,
+  mode: EngagementMode,
+): Promise<ActionResult> {
+  if (!uuid.safeParse(accountId).success) return { error: "Bad account id." };
+  if (!engagementMode.safeParse(mode).success) return { error: "Bad mode." };
+  const ws = await getActiveWorkspaceOrRedirect();
+  const supabase = await supabaseServer();
+
+  if (mode !== "off") {
+    const { data: acct } = await supabase
+      .from("social_accounts")
+      .select("channel, trust_mode, status")
+      .eq("id", accountId)
+      .eq("workspace_id", ws.id)
+      .maybeSingle();
+    if (!acct) return { error: "Account not found." };
+    const gate = evaluateDmCaptureEnableGate({
+      channel: acct.channel,
+      status: acct.status,
+      trustMode: acct.trust_mode === true,
+    });
+    if (!gate.ok && gate.reason) {
+      return { error: DM_CAPTURE_BLOCK_COPY[gate.reason] };
+    }
+  }
+
+  const { error } = await supabase
+    .from("social_accounts")
+    .update({ dm_capture_mode: mode, dm_capture_enabled: mode === "live" })
+    .eq("id", accountId)
+    .eq("workspace_id", ws.id);
+  if (error) return { error: error.message };
+
+  revalidatePath(`/settings/channels/${accountId}`);
+  return { error: null };
+}
+
+// Bet 4 (046) — set (or CLEAR) the per-account comment→DM keyword rule. The raw
+// settings-form input is validated at the boundary by parseLeadRuleForm (zod):
+//   * an entirely empty form CLEARS the rule → we write NULL (the comment→DM
+//     path then no-ops by design),
+//   * a partial/invalid form returns field errors (we persist nothing),
+//   * a valid form is normalised to { keywords[], link, valueCents?, message? }.
+// Enabling the rule does NOT auto-send anything; this is config only. Allowed
+// regardless of trust/opt-in state (you can prep the rule before enabling), but
+// it never fires unless dm_capture_enabled + trust_mode are also on.
+export async function setLeadKeywordRuleAction(
+  accountId: string,
+  form: LeadRuleFormInput,
+): Promise<FieldActionResult> {
+  if (!uuid.safeParse(accountId).success) return { error: "Bad account id." };
+  const ws = await getActiveWorkspaceOrRedirect();
+  const supabase = await supabaseServer();
+
+  const parsed = parseLeadRuleForm(form);
+  if (!parsed.ok) {
+    return { error: "Fix the highlighted fields.", fieldErrors: parsed.errors };
+  }
+
+  // Confirm the account exists in this workspace (and is a shippable channel)
+  // before writing — same posture as the toggle actions.
+  const { data: acct } = await supabase
+    .from("social_accounts")
+    .select("channel")
+    .eq("id", accountId)
+    .eq("workspace_id", ws.id)
+    .maybeSingle();
+  if (!acct) return { error: "Account not found." };
+  if (!isAutoReplyChannel(acct.channel)) {
+    return {
+      error: "Comment→DM is only available on X, Bluesky, and LinkedIn.",
+    };
+  }
+
+  // null rule → NULL column (path no-ops); otherwise the normalised blob.
+  const { error } = await supabase
+    .from("social_accounts")
+    .update({ lead_keyword_rule: (parsed.rule as Json | null) ?? null })
     .eq("id", accountId)
     .eq("workspace_id", ws.id);
   if (error) return { error: error.message };

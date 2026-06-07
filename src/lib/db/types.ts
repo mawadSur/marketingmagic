@@ -13,6 +13,10 @@ export type PostStatus =
 export type ApprovalAction = "approved" | "rejected" | "edited" | "unapproved";
 export type PlanStatus = "draft" | "active" | "archived";
 export type AccountStatus = "connected" | "expired" | "revoked" | "disconnected";
+// Bet 4 (migration 048): tri-state engagement mode for the autonomous
+// auto-reply + comment→DM paths. 'shadow' is the safe middle state — drafts
+// + audits what it WOULD send, but never posts. Mirrors policy.EngagementMode.
+export type EngagementMode = "off" | "shadow" | "live";
 
 // Agency / Organization layer (Phase A — migration 029). An organization is
 // the agency tenant; it owns many client workspaces (workspaces.organization_id
@@ -216,6 +220,10 @@ export interface Database {
           // Bet 4 (migration 045): workspace-wide hard stop for autonomous
           // auto-replies. TRUE = no account auto-sends, period. Defaults false.
           auto_reply_kill_switch: boolean;
+          // Bet 5 (migration 047): weekly-growth-orchestrator trust dial.
+          // 'draft' (default) = prepare + email a recommendation, never act
+          // autonomously. 'auto' = reserved future graduation.
+          autopilot_mode: "draft" | "auto";
           created_at: string;
           updated_at: string;
         };
@@ -233,6 +241,7 @@ export interface Database {
           referral_bonus_posts?: number;
           attribution_enabled?: boolean;
           auto_reply_kill_switch?: boolean;
+          autopilot_mode?: "draft" | "auto";
         };
         Update: Partial<{
           slug: string;
@@ -246,6 +255,7 @@ export interface Database {
           referral_bonus_posts: number;
           attribution_enabled: boolean;
           auto_reply_kill_switch: boolean;
+          autopilot_mode: "draft" | "auto";
         }>;
         Relationships: [];
       };
@@ -589,13 +599,22 @@ export interface Database {
           trust_threshold: number;
           successful_post_count: number;
           // Bet 4 (migration 045): per-account opt-in for auto-SENDING drafted
-          // replies. Auto-send requires (trust_mode AND auto_reply_enabled).
-          // Defaults false — auto-publish trust does NOT imply auto-reply.
+          // replies. KEPT for backward-compat; the tri-state auto_reply_mode
+          // below is the source of truth, and this boolean is kept in sync
+          // (true iff auto_reply_mode='live'). Defaults false.
           auto_reply_enabled: boolean;
           // Bet 4 (migration 046): per-account opt-in for the comment→DM lead-
-          // capture path. Auto-DM requires (trust_mode AND dm_capture_enabled).
+          // capture path. KEPT for backward-compat; dm_capture_mode below is the
+          // source of truth, kept in sync (true iff dm_capture_mode='live').
           // Independent of auto_reply_enabled. Defaults false.
           dm_capture_enabled: boolean;
+          // Bet 4 (migration 048): tri-state engagement mode — the source of
+          // truth for the gate/orchestrator. 'shadow' = draft + audit, never
+          // send/flip. Defaults 'off'. Requires trust_mode to engage.
+          auto_reply_mode: EngagementMode;
+          // Bet 4 (migration 048): tri-state comment→DM mode. 'shadow' = draft +
+          // audit, never DM/tag/flip. Independent of auto_reply_mode. Defaults 'off'.
+          dm_capture_mode: EngagementMode;
           // Bet 4 (migration 046): { keywords[], link, valueCents?, message? }
           // keyword→DM rule, or null when no rule is configured (path no-ops).
           lead_keyword_rule: Json | null;
@@ -614,6 +633,8 @@ export interface Database {
           successful_post_count?: number;
           auto_reply_enabled?: boolean;
           dm_capture_enabled?: boolean;
+          auto_reply_mode?: EngagementMode;
+          dm_capture_mode?: EngagementMode;
           lead_keyword_rule?: Json | null;
           status?: AccountStatus;
         };
@@ -625,6 +646,8 @@ export interface Database {
           successful_post_count: number;
           auto_reply_enabled: boolean;
           dm_capture_enabled: boolean;
+          auto_reply_mode: EngagementMode;
+          dm_capture_mode: EngagementMode;
           lead_keyword_rule: Json | null;
           status: AccountStatus;
         }>;
@@ -1324,18 +1347,23 @@ export interface Database {
       };
       auto_reply_log: {
         // Bet 4 (migration 045): audit trail of every autonomous reply
-        // auto-sent / blocked / failed on X, Bluesky, LinkedIn. Also the
-        // source the per-account hourly rate cap counts against. See
-        // src/lib/interactions/auto-reply/*.
+        // auto-sent / shadow / blocked / failed on X, Bluesky, LinkedIn. Also
+        // the source the per-account hourly rate cap counts against (counts
+        // outcome='sent' only — 'shadow' never consumes budget). See
+        // src/lib/interactions/auto-reply/*. 'shadow' (migration 048) =
+        // drafted + audited but NOT sent and the interaction NOT flipped.
         Row: {
           id: string;
           workspace_id: string;
           social_account_id: string;
           interaction_id: string | null;
           channel: "x" | "bluesky" | "linkedin";
-          outcome: "sent" | "blocked" | "failed";
+          outcome: "sent" | "shadow" | "blocked" | "failed";
           outcome_reason: string | null;
           reply_text: string;
+          // Bet 4 (migration 048): the exact reply we WOULD have sent, set only
+          // for outcome='shadow' (operator review). Null otherwise.
+          would_send_text: string | null;
           external_id: string | null;
           reply_post_id: string | null;
           created_at: string;
@@ -1346,15 +1374,17 @@ export interface Database {
           social_account_id: string;
           interaction_id?: string | null;
           channel: "x" | "bluesky" | "linkedin";
-          outcome: "sent" | "blocked" | "failed";
+          outcome: "sent" | "shadow" | "blocked" | "failed";
           outcome_reason?: string | null;
           reply_text: string;
+          would_send_text?: string | null;
           external_id?: string | null;
           reply_post_id?: string | null;
         };
         Update: Partial<{
-          outcome: "sent" | "blocked" | "failed";
+          outcome: "sent" | "shadow" | "blocked" | "failed";
           outcome_reason: string | null;
+          would_send_text: string | null;
           external_id: string | null;
           reply_post_id: string | null;
         }>;
@@ -1362,19 +1392,25 @@ export interface Database {
       };
       dm_capture_log: {
         // Bet 4 (migration 046): audit trail of every comment→DM auto-send
-        // (sent / blocked / failed / scope_missing) on X, Bluesky, LinkedIn.
-        // Also the source the per-account hourly DM rate cap counts against.
+        // (sent / shadow / blocked / failed / scope_missing) on X, Bluesky,
+        // LinkedIn. Also the source the per-account hourly DM rate cap counts
+        // against (counts outcome='sent' only — 'shadow' never consumes budget).
         // See src/lib/interactions/auto-reply/dm-send.ts + lead-capture.ts.
+        // 'shadow' (migration 048) = drafted + audited but NO DM sent, NO lead
+        // tagged, and the interaction NOT flipped.
         Row: {
           id: string;
           workspace_id: string;
           social_account_id: string;
           interaction_id: string | null;
           channel: "x" | "bluesky" | "linkedin";
-          outcome: "sent" | "blocked" | "failed" | "scope_missing";
+          outcome: "sent" | "shadow" | "blocked" | "failed" | "scope_missing";
           outcome_reason: string | null;
           matched_keyword: string | null;
           dm_text: string;
+          // Bet 4 (migration 048): the exact DM we WOULD have sent, set only for
+          // outcome='shadow' (operator review). Null otherwise.
+          would_send_text: string | null;
           external_id: string | null;
           lead_tagged: boolean;
           created_at: string;
@@ -1385,19 +1421,53 @@ export interface Database {
           social_account_id: string;
           interaction_id?: string | null;
           channel: "x" | "bluesky" | "linkedin";
-          outcome: "sent" | "blocked" | "failed" | "scope_missing";
+          outcome: "sent" | "shadow" | "blocked" | "failed" | "scope_missing";
           outcome_reason?: string | null;
           matched_keyword?: string | null;
           dm_text: string;
+          would_send_text?: string | null;
           external_id?: string | null;
           lead_tagged?: boolean;
         };
         Update: Partial<{
-          outcome: "sent" | "blocked" | "failed" | "scope_missing";
+          outcome: "sent" | "shadow" | "blocked" | "failed" | "scope_missing";
           outcome_reason: string | null;
           matched_keyword: string | null;
+          would_send_text: string | null;
           external_id: string | null;
           lead_tagged: boolean;
+        }>;
+        Relationships: [];
+      };
+      weekly_growth_runs: {
+        // Bet 5 (migration 047): one row per workspace per weekly window — the
+        // idempotency record for the weekly-growth-orchestrator cron (never
+        // double-send a window) plus an audit blob of what the cycle
+        // measured/recommended. See src/app/api/cron/weekly-growth/route.ts.
+        Row: {
+          id: string;
+          workspace_id: string;
+          // The Monday (UTC, ISO date "YYYY-MM-DD") of the cycle week.
+          window_start: string;
+          mode: "draft" | "auto";
+          status: "sent" | "skipped" | "failed";
+          summary: Json | null;
+          detail: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          window_start: string;
+          mode: "draft" | "auto";
+          status: "sent" | "skipped" | "failed";
+          summary?: Json | null;
+          detail?: string | null;
+        };
+        Update: Partial<{
+          status: "sent" | "skipped" | "failed";
+          summary: Json | null;
+          detail: string | null;
         }>;
         Relationships: [];
       };

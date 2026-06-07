@@ -328,7 +328,10 @@ function PostList({
               className="space-y-1 px-4 py-3 text-sm transition-colors duration-200 hover:bg-muted/30"
             >
               <p className="line-clamp-2 font-medium">{p.text}</p>
-              <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              {/* div, not p: MarkOutcome renders a <form> (block content), which
+                  is invalid inside a <p> and triggers a React hydration error
+                  that breaks the form's submit. */}
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <ChannelBadge channel={p.channel} />
                 {p.theme ? <span>#{p.theme}</span> : null}
                 <span aria-hidden>·</span>
@@ -337,7 +340,7 @@ function PostList({
                 <span className="font-medium tabular-nums">{((p.engagement_rate ?? 0) * 100).toFixed(2)}%</span>
                 <span aria-hidden>·</span>
                 <MarkOutcome postId={p.id} />
-              </p>
+              </div>
             </li>
           ))}
         </ul>

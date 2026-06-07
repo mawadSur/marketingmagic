@@ -3,30 +3,39 @@
 import { useTransition, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import type { EngagementMode } from "@/lib/db/types";
 import {
-  setAutoReplyEnabledAction,
+  setAutoReplyModeAction,
   setAutoReplyKillSwitchAction,
 } from "./actions";
 
-// Bet 4 — per-account auto-reply opt-in + the workspace kill-switch surface.
+// Bet 4 — per-account auto-reply MODE (tri-state) + the workspace kill switch.
 //
-// Auto-reply is the riskiest thing this product does autonomously: it sends
-// public replies at named people with no human in the loop. The UI reflects
-// that: it's only offered once trust mode is on, the copy is explicit about
-// what will happen, and the workspace-wide kill switch is always one click
-// away even when the per-account opt-in is on.
+// Auto-reply is the riskiest thing this product does autonomously: in 'live'
+// it sends public replies at named people with no human in the loop. SHADOW is
+// the safe middle state — it drafts exactly what it WOULD reply and logs it for
+// review, but never posts. The UI reflects that: it's only offered once trust
+// mode is on, each mode is explicit about what happens, and the workspace-wide
+// kill switch is always one click away.
+const MODE_COPY: Record<EngagementMode, string> = {
+  off: "Does nothing on this channel.",
+  shadow:
+    "Drafts what it WOULD reply and logs it for you to review — but never posts and never marks the item handled. Zero public blast radius. Start here.",
+  live: "Drafts AND sends on-brand replies automatically — no review step.",
+};
+
 export function AutoReplyToggle({
   accountId,
   channel,
   trustMode,
-  autoReplyEnabled,
+  mode,
   supported,
   killSwitchEngaged,
 }: {
   accountId: string;
   channel: string;
   trustMode: boolean;
-  autoReplyEnabled: boolean;
+  mode: EngagementMode;
   supported: boolean;
   killSwitchEngaged: boolean;
 }) {
@@ -34,9 +43,10 @@ export function AutoReplyToggle({
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
-  function flip(enable: boolean) {
+  function setMode(next: EngagementMode) {
+    if (next === mode) return;
     start(async () => {
-      const r = await setAutoReplyEnabledAction(accountId, enable);
+      const r = await setAutoReplyModeAction(accountId, next);
       if (r.error) setError(r.error);
       else {
         setError(null);
@@ -68,15 +78,15 @@ export function AutoReplyToggle({
     );
   }
 
+  const modes: EngagementMode[] = ["off", "shadow", "live"];
+
   return (
     <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
-      <p className="text-sm font-medium">
-        Autonomous auto-reply: {autoReplyEnabled ? "on" : "off"}
-      </p>
+      <p className="text-sm font-medium">Autonomous auto-reply: {mode}</p>
       <p className="text-xs text-muted-foreground">
-        When on, incoming mentions/comments on this channel get an on-brand
-        reply drafted <em>and sent automatically</em> — no review step. Off by
-        default. Rate-limited to avoid platform spam enforcement. Requires trust
+        Choose how this channel handles incoming mentions/comments. Off by
+        default; <em>shadow</em> is the safe way to preview before going live.
+        Rate-limited to avoid platform spam enforcement. Engaging requires trust
         mode. The kill switch below stops everything instantly.
       </p>
 
@@ -87,21 +97,28 @@ export function AutoReplyToggle({
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
-        {autoReplyEnabled ? (
-          <Button variant="destructive" disabled={pending} onClick={() => flip(false)}>
-            Turn off auto-reply
-          </Button>
-        ) : (
-          <Button disabled={!trustMode || pending} onClick={() => flip(true)}>
-            Turn on auto-reply
-          </Button>
-        )}
-        {!trustMode && !autoReplyEnabled ? (
-          <span className="text-xs text-muted-foreground">
-            Turn on trust mode first.
-          </span>
-        ) : null}
+        {modes.map((m) => {
+          // Engaging (shadow/live) needs trust mode; 'off' is always allowed.
+          const gated = m !== "off" && !trustMode;
+          const active = m === mode;
+          return (
+            <Button
+              key={m}
+              variant={active ? "default" : "outline"}
+              disabled={pending || gated || active}
+              onClick={() => setMode(m)}
+            >
+              {active ? `✓ ${m}` : m}
+            </Button>
+          );
+        })}
       </div>
+      <p className="text-xs text-muted-foreground">{MODE_COPY[mode]}</p>
+      {!trustMode && mode === "off" ? (
+        <span className="text-xs text-muted-foreground">
+          Turn on trust mode first to enable shadow or live.
+        </span>
+      ) : null}
 
       <div className="border-t pt-3">
         <p className="text-xs font-medium">Workspace kill switch</p>

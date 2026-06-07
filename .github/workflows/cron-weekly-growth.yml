@@ -1,0 +1,55 @@
+name: cron / weekly-growth
+
+# Weekly Autonomous Growth Orchestrator (Bet 5). Vercel Hobby only allows daily
+# crons, so (like the other cron jobs) we run it from GitHub Actions and hit the
+# public route, which is auth-gated by Bearer CRON_SECRET. For each active
+# workspace it emails the owner one "what I did and what I drove" weekly growth
+# recap — posts shipped, reach/engagement, $/outcomes by theme, community
+# autopilot activity, and a recommended focus for next week. DRAFT BY DEFAULT:
+# the cycle prepares + recommends, it does not act autonomously. Idempotent —
+# the route records a per-window run so a re-trigger never double-sends.
+
+on:
+  schedule:
+    - cron: "0 15 * * 1" # 15:00 UTC every Monday — start-of-week recap
+  workflow_dispatch: {}
+
+concurrency:
+  group: cron-weekly-growth
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run the weekly growth orchestrator
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$SITE_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::Missing SITE_URL or CRON_SECRET repo secret."
+            exit 1
+          fi
+          RESPONSE_FILE="$(mktemp)"
+          HTTP_CODE="$(curl --silent --show-error \
+               --max-time 300 \
+               -o "$RESPONSE_FILE" \
+               -w '%{http_code}' \
+               -H "Authorization: Bearer $CRON_SECRET" \
+               -X POST \
+               "$SITE_URL/api/cron/weekly-growth")"
+          echo "HTTP status: $HTTP_CODE"
+          echo "::group::Response body"
+          jq . "$RESPONSE_FILE" 2>/dev/null || cat "$RESPONSE_FILE"
+          echo
+          echo "::endgroup::"
+          SUMMARY="$(jq -c 'to_entries | map(select(.value | type == "number")) | from_entries' "$RESPONSE_FILE" 2>/dev/null)"
+          if [ -n "$SUMMARY" ] && [ "$SUMMARY" != "{}" ]; then
+            echo "::notice title=weekly growth::$SUMMARY"
+          fi
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "::error::cron route returned HTTP $HTTP_CODE"
+            exit 1
+          fi

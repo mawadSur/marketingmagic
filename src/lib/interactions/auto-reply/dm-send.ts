@@ -7,15 +7,21 @@
 //   1. Parse the account's keyword→DM rule (migration 046). No rule → hold.
 //   2. Match the inbound body against the rule's keywords. No match → hold.
 //   3. Evaluate the static DM trust gate (policy.evaluateDmGate): kill switch
-//      + channel + trust_mode + dm_capture_enabled + rule + match + status.
+//      + channel + trust_mode + dm_capture engaged + rule + match + status.
+//      The gate passes identically for 'shadow' and 'live'.
 //   4. Enforce the per-platform hourly DM rate cap against dm_capture_log
-//      (policy.checkDmRateCap) — stricter than the reply caps.
-//   5. Dispatch the DM via the per-channel helper, which FIRST runs a runtime
-//      CAPABILITY check (X dm.write / Bluesky chat / LinkedIn messaging). If
-//      the capability is absent the helper throws DmScopeMissingError, which
-//      we catch and record as a clean no-op (outcome='scope_missing').
-//   6. On a successful send: tag the lead into post_outcomes (defensive) and
-//      audit. On any guard/failure/scope-miss: audit with the reason.
+//      (policy.checkDmRateCap) — stricter than the reply caps. Counts ONLY
+//      outcome='sent' rows, so SHADOW rows never consume DM rate budget.
+//   5. Build the DM body, then BRANCH on the mode:
+//        * 'live'   — dispatch the DM via the per-channel helper, which FIRST
+//                     runs a runtime CAPABILITY check (X dm.write / Bluesky
+//                     chat / LinkedIn messaging). If the capability is absent
+//                     it throws DmScopeMissingError → clean no-op
+//                     (outcome='scope_missing'). On success: tag the lead +
+//                     audit + flip the interaction to status='read'.
+//        * 'shadow' — DO NOT SEND, DO NOT FLIP, DO NOT tag a lead. Audit
+//                     outcome='shadow' with the would-send DM text for operator
+//                     review. Zero blast radius — no DM helper is ever called.
 //
 // CRITICAL: this sends PRIVATE messages to strangers. Everything is OFF by
 // default; every send is capability-guarded; every attempt is logged; the
@@ -30,6 +36,9 @@ import {
   evaluateDmGate,
   checkDmRateCap,
   isAutoReplyChannel,
+  parseEngagementMode,
+  modeEngages,
+  modeSends,
   type AutoReplyChannel,
   type DmCaptureBlockReason,
 } from "./policy";
@@ -52,7 +61,13 @@ type ServiceClient = SupabaseClient<Database>;
 type SocialAccountRow = Database["public"]["Tables"]["social_accounts"]["Row"];
 type InteractionRow = Database["public"]["Tables"]["interactions"]["Row"];
 
-export type DmCaptureOutcome = "sent" | "blocked" | "failed" | "scope_missing";
+// 'shadow' — drafted + audited but DID NOT send a DM, tag a lead, or flip.
+export type DmCaptureOutcome =
+  | "sent"
+  | "shadow"
+  | "blocked"
+  | "failed"
+  | "scope_missing";
 
 export interface DmCaptureRunResult {
   interactionId: string;
@@ -76,15 +91,24 @@ export async function attemptLeadCaptureDm(
 ): Promise<DmCaptureRunResult> {
   const channel = interaction.channel;
 
+  // Tri-state mode (migration 048) is the source of truth. The legacy boolean
+  // is kept in sync (live ⇒ enabled=true); we resolve the MODE here so the
+  // shadow branch is decided from a single typed value. Fail-closed: an absent
+  // / unknown mode parses to 'off'.
+  const mode = parseEngagementMode(account.dm_capture_mode);
+  const engaged = modeEngages(mode); // shadow OR live
+
   // ── Rule + keyword match (computed up front; feeds the gate) ─────────
   const rule = parseLeadKeywordRule(account.lead_keyword_rule);
   const matchedKeyword = rule ? matchLeadKeyword(interaction.body, rule) : null;
 
   // ── Static trust gate ────────────────────────────────────────────────
+  // Shadow and live ENGAGE identically here — only AFTER building the DM body
+  // do we branch on send-vs-shadow.
   const gate = evaluateDmGate({
     channel,
     trustMode: account.trust_mode === true,
-    dmCaptureEnabled: account.dm_capture_enabled === true,
+    dmCaptureEnabled: engaged,
     killSwitch,
     hasRule: rule !== null,
     keywordMatched: matchedKeyword !== null,
@@ -98,7 +122,7 @@ export async function attemptLeadCaptureDm(
     // active-but-held state an operator would want to see.
     const worthLogging =
       account.trust_mode === true &&
-      account.dm_capture_enabled === true &&
+      engaged &&
       matchedKeyword !== null &&
       isAutoReplyChannel(channel);
     if (worthLogging) {
@@ -130,36 +154,71 @@ export async function attemptLeadCaptureDm(
   const usableRule = rule!;
   const keyword = matchedKeyword!;
 
-  // ── Rate cap (stricter than replies) ─────────────────────────────────
-  const sentTimestamps = await loadRecentSentTimestamps(svc, account.id, now);
-  const rate = checkDmRateCap(ch, sentTimestamps, now.valueOf());
-  if (!rate.allowed) {
+  // ── Rate cap (LIVE only; stricter than replies) ──────────────────────
+  // Bounds how many auto-DMs HIT THE PLATFORM per hour. Shadow never messages
+  // anyone, so it is intentionally UNLIMITED — skip the cap for non-live modes.
+  if (modeSends(mode)) {
+    const sentTimestamps = await loadRecentSentTimestamps(svc, account.id, now);
+    const rate = checkDmRateCap(ch, sentTimestamps, now.valueOf());
+    if (!rate.allowed) {
+      await recordLog(svc, {
+        workspaceId: interaction.workspace_id,
+        accountId: account.id,
+        interactionId: interaction.id,
+        channel: ch,
+        outcome: "blocked",
+        reason: "rate_capped",
+        matchedKeyword: keyword,
+        dmText: `(rate capped — ${rate.used}/${rate.cap} DMs this hour)`,
+        externalId: null,
+        leadTagged: false,
+      });
+      return {
+        interactionId: interaction.id,
+        outcome: "blocked",
+        reason: "rate_capped",
+        matchedKeyword: keyword,
+        externalId: null,
+        leadTagged: false,
+      };
+    }
+  }
+
+  // ── Build the DM body ────────────────────────────────────────────────
+  const dmText = buildDmBody(usableRule);
+
+  // ── SHADOW branch (zero blast radius) ────────────────────────────────
+  // SAFETY-CRITICAL: when the mode is not 'live' we MUST NOT message anyone,
+  // MUST NOT tag a lead, and MUST NOT flip the interaction. We audit
+  // outcome='shadow' with the would-send DM text and return. modeSends(mode)
+  // is the single predicate that authorises a real DM; shadow short-circuits
+  // BEFORE the dispatchDmViaChannel call below is ever reached.
+  if (!modeSends(mode)) {
     await recordLog(svc, {
       workspaceId: interaction.workspace_id,
       accountId: account.id,
       interactionId: interaction.id,
       channel: ch,
-      outcome: "blocked",
-      reason: "rate_capped",
+      outcome: "shadow",
+      reason: keyword,
       matchedKeyword: keyword,
-      dmText: `(rate capped — ${rate.used}/${rate.cap} DMs this hour)`,
+      dmText, // the exact DM we WOULD have sent — for operator review
       externalId: null,
       leadTagged: false,
     });
+    // Deliberately NO interactions update — the row stays 'unread' so the
+    // operator still sees the suggestion and a later flip to 'live' can act.
     return {
       interactionId: interaction.id,
-      outcome: "blocked",
-      reason: "rate_capped",
+      outcome: "shadow",
+      reason: keyword,
       matchedKeyword: keyword,
       externalId: null,
       leadTagged: false,
     };
   }
 
-  // ── Build the DM body ────────────────────────────────────────────────
-  const dmText = buildDmBody(usableRule);
-
-  // ── Send (runtime capability check inside the per-channel helper) ─────
+  // ── LIVE: Send (runtime capability check inside the per-channel helper) ─
   let externalId: string;
   try {
     externalId = await dispatchDmViaChannel(svc, account, interaction, dmText);
@@ -331,6 +390,12 @@ async function recordLog(svc: ServiceClient, input: DmLogInput): Promise<void> {
   // dm_text CHECK requires length 1..3000; never let a placeholder violate it.
   const text =
     input.dmText.trim().length > 0 ? input.dmText.slice(0, 3000) : "(none)";
+  // For SHADOW rows, also surface the draft in the dedicated, reviewable
+  // would_send_text column (migration 048) — non-shadow rows leave it null.
+  const wouldSend =
+    input.outcome === "shadow" && input.dmText.trim().length > 0
+      ? input.dmText.slice(0, 3000)
+      : null;
   const { error } = await svc.from("dm_capture_log").insert({
     workspace_id: input.workspaceId,
     social_account_id: input.accountId,
@@ -340,6 +405,7 @@ async function recordLog(svc: ServiceClient, input: DmLogInput): Promise<void> {
     outcome_reason: input.reason,
     matched_keyword: input.matchedKeyword,
     dm_text: text,
+    would_send_text: wouldSend,
     external_id: input.externalId,
     lead_tagged: input.leadTagged,
   });

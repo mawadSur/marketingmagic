@@ -247,6 +247,8 @@ const liAccount = {
   handle: "company",
   credentials: liCreds as unknown,
   trust_mode: true,
+  // Tri-state mode (migration 048) is now the source of truth; 'live' engages.
+  dm_capture_mode: "live",
   dm_capture_enabled: true,
   lead_keyword_rule: { keywords: ["pricing"], link: "https://book.me/x", valueCents: 1000 },
 } as unknown as Parameters<typeof attemptLeadCaptureDm>[1];
@@ -283,7 +285,11 @@ describe("attemptLeadCaptureDm — scope-missing path is a clean no-op", () => {
   });
 
   it("holds (blocked, no audit spam) when the account hasn't opted in", async () => {
-    const notOptedIn = { ...liAccount, dm_capture_enabled: false } as typeof liAccount;
+    const notOptedIn = {
+      ...liAccount,
+      dm_capture_mode: "off",
+      dm_capture_enabled: false,
+    } as typeof liAccount;
     const { svc, logInserts } = fakeSvc();
     const res = await attemptLeadCaptureDm(svc, notOptedIn, matchingInteraction, false);
     expect(res.outcome).toBe("blocked");

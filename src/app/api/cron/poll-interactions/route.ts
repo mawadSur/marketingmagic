@@ -43,12 +43,14 @@ import type { Database, InteractionChannel } from "@/lib/db/types";
 //      mark status=read.
 //   6. Bet 4 — AUTONOMOUS AUTO-REPLY (X/Bluesky/LinkedIn only). For each
 //      newly-inserted row that is still `unread` on an account that has
-//      BOTH the existing publishing trust model (trust_mode) AND the
-//      per-account auto_reply_enabled opt-in on, with the workspace
-//      kill switch OFF and the hourly rate cap not exceeded, we draft a
-//      reply in brand voice and SEND it, then log to auto_reply_log.
-//      Everything is OFF by default; the gate + cap live in the pure
-//      src/lib/interactions/auto-reply/policy module.
+//      BOTH the existing publishing trust model (trust_mode) AND its
+//      per-account auto_reply_mode ENGAGED ('shadow' or 'live', migration
+//      048), with the workspace kill switch OFF and the hourly rate cap not
+//      exceeded, we draft a reply in brand voice. In 'live' we SEND it, flip
+//      the row, and log outcome='sent'. In 'shadow' we log outcome='shadow'
+//      with the would-send text and do NOT post / flip — zero blast radius.
+//      Everything is OFF by default; the gate + cap + mode branch live in the
+//      pure src/lib/interactions/auto-reply/policy module.
 //
 // Errors are caught per-account so one failure doesn't kill the run.
 
