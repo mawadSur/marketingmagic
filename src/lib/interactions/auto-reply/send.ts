@@ -96,6 +96,7 @@ export async function attemptAutoReply(
     channel,
     trustMode: account.trust_mode === true,
     autoReplyEnabled: engaged,
+    isLive: modeSends(mode), // trust required only for live; shadow previews freely
     killSwitch,
     interactionStatus: interaction.status,
     hasDraft: true, // we haven't drafted yet; the drafter result is checked below

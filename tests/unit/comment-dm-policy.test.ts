@@ -25,6 +25,7 @@ const green: DmGateInput = {
   channel: "x",
   trustMode: true,
   dmCaptureEnabled: true,
+  isLive: true, // green = a live (sending) account; trust is required here
   killSwitch: false,
   hasRule: true,
   keywordMatched: true,
@@ -71,9 +72,22 @@ describe("evaluateDmGate — fail-closed, priority order", () => {
     }
   });
 
-  it("blocks when the existing trust model (trust_mode) is off", () => {
+  it("blocks LIVE when the existing trust model (trust_mode) is off", () => {
     const d = evaluateDmGate({ ...green, trustMode: false });
     expect(d.reason).toBe("not_trusted");
+  });
+
+  it("SHADOW bypasses trust: previews the DM without trust_mode (no send)", () => {
+    const d = evaluateDmGate({ ...green, trustMode: false, isLive: false });
+    expect(d.send).toBe(true);
+    expect(d.reason).toBeNull();
+  });
+
+  it("SHADOW still respects kill switch, opt-in, rule, keyword, freshness", () => {
+    expect(evaluateDmGate({ ...green, isLive: false, killSwitch: true }).reason).toBe("kill_switch");
+    expect(evaluateDmGate({ ...green, isLive: false, dmCaptureEnabled: false }).reason).toBe("not_opted_in");
+    expect(evaluateDmGate({ ...green, isLive: false, hasRule: false }).reason).toBe("no_rule");
+    expect(evaluateDmGate({ ...green, isLive: false, keywordMatched: false }).reason).toBe("no_keyword_match");
   });
 
   it("blocks when trust is on but the DM opt-in is off (default)", () => {
@@ -100,20 +114,21 @@ describe("evaluateDmGate — fail-closed, priority order", () => {
   });
 
   it("DEFAULTS ARE OFF: a never-configured account never DMs", () => {
-    // Mirrors the DB defaults: trust_mode=false, dm_capture_enabled=false,
-    // no rule, kill switch false (= not killed). The opt-ins + missing rule
-    // hold the line; trust_mode is checked first so we surface not_trusted.
+    // Mirrors the DB defaults: mode='off' (not engaged, not live),
+    // trust_mode=false, no rule, kill switch false. The opt-in being off
+    // holds the line regardless of trust.
     const d = evaluateDmGate({
       channel: "x",
       trustMode: false,
       dmCaptureEnabled: false,
+      isLive: false, // mode 'off' is neither shadow nor live
       killSwitch: false,
       hasRule: false,
       keywordMatched: false,
       interactionStatus: "unread",
     });
     expect(d.send).toBe(false);
-    expect(d.reason).toBe("not_trusted");
+    expect(d.reason).toBe("not_opted_in");
   });
 });
 
@@ -261,6 +276,7 @@ describe("keyword→DM decision (composed pure logic)", () => {
       channel: "x",
       trustMode: true,
       dmCaptureEnabled: optedIn,
+      isLive: true,
       killSwitch: false,
       hasRule: rule !== null,
       keywordMatched: matched !== null,

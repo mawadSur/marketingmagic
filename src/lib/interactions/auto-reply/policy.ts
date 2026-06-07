@@ -168,6 +168,12 @@ export interface AutoReplyGateInput {
   // identically; the orchestrator decides send-vs-shadow from the mode AFTER
   // the gate, so the safety gate is shared and tested once.
   autoReplyEnabled: boolean;
+  // Whether this mode actually SENDS to the network (live), vs only drafts +
+  // audits (shadow). Pass modeSends(mode). The trust-mode gate applies ONLY
+  // when sending: shadow has zero blast radius (it never posts), so it is
+  // deliberately reachable without the publishing trust bar — you must be able
+  // to PREVIEW what the AI would say before earning the right to send it live.
+  isLive: boolean;
   // Workspace-wide hard stop (migration 045). When true, nothing sends.
   killSwitch: boolean;
   // Current interaction status. We never auto-reply to something already
@@ -199,8 +205,12 @@ export function evaluateAutoReplyGate(
     return { send: false, reason: "channel_unsupported" };
   }
 
-  // 3. Existing trust model must be on. (Reused — not a new concept.)
-  if (input.trustMode !== true) return { send: false, reason: "not_trusted" };
+  // 3. Existing trust model must be on — but ONLY for live (sending) mode.
+  // Shadow drafts + audits and never posts, so it bypasses the trust bar:
+  // the whole point of shadow is to preview before you've earned trust.
+  if (input.isLive && input.trustMode !== true) {
+    return { send: false, reason: "not_trusted" };
+  }
 
   // 4. The riskier auto-reply behaviour must be explicitly opted into.
   if (input.autoReplyEnabled !== true) {
@@ -283,6 +293,10 @@ export interface DmGateInput {
   // shadow and live pass the gate identically; the orchestrator decides
   // send-vs-shadow from the mode AFTER the gate.
   dmCaptureEnabled: boolean;
+  // Whether this mode actually SENDS (live) vs only drafts + audits (shadow).
+  // Pass modeSends(mode). Trust-mode is required only for live — shadow sends
+  // no DM, so it is reachable without the trust bar (preview before trust).
+  isLive: boolean;
   // Workspace-wide hard stop (migration 045, REUSED). When true, nothing sends.
   killSwitch: boolean;
   // Is a keyword rule configured for this account? false → no_rule.
@@ -311,8 +325,12 @@ export function evaluateDmGate(input: DmGateInput): DmGateDecision {
     return { send: false, reason: "channel_unsupported" };
   }
 
-  // 3. Existing trust model must be on. (Reused — not a new concept.)
-  if (input.trustMode !== true) return { send: false, reason: "not_trusted" };
+  // 3. Existing trust model must be on — but ONLY for live (sending) mode.
+  // Shadow drafts the DM + audits it and never messages anyone, so it bypasses
+  // the trust bar to allow previewing before trust is earned.
+  if (input.isLive && input.trustMode !== true) {
+    return { send: false, reason: "not_trusted" };
+  }
 
   // 4. The riskier auto-DM behaviour must be explicitly opted into.
   if (input.dmCaptureEnabled !== true) {

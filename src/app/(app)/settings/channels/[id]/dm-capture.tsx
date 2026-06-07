@@ -122,7 +122,9 @@ export function DmCaptureToggle({
 
       <div className="flex flex-wrap items-center gap-2">
         {modes.map((m) => {
-          const gated = m !== "off" && !trustMode;
+          // shadow sends no DM → reachable without trust (preview). live messages
+          // a real stranger → still gated on the publishing trust bar.
+          const gated = m === "live" && !trustMode;
           const active = m === mode;
           return (
             <Button
@@ -137,9 +139,10 @@ export function DmCaptureToggle({
         })}
       </div>
       <p className="text-xs text-muted-foreground">{DM_MODE_COPY[mode]}</p>
-      {!trustMode && mode === "off" ? (
+      {!trustMode ? (
         <span className="text-xs text-muted-foreground">
-          Turn on trust mode first to enable shadow or live.
+          Shadow works now (it previews without sending). Going <em>live</em>{" "}
+          requires trust mode.
         </span>
       ) : null}
 

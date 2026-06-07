@@ -98,8 +98,10 @@ export function AutoReplyToggle({
 
       <div className="flex flex-wrap items-center gap-2">
         {modes.map((m) => {
-          // Engaging (shadow/live) needs trust mode; 'off' is always allowed.
-          const gated = m !== "off" && !trustMode;
+          // 'off' always allowed. 'shadow' sends nothing (zero blast radius), so
+          // it's reachable without trust — preview before you've earned it.
+          // 'live' actually posts, so it still requires the publishing trust bar.
+          const gated = m === "live" && !trustMode;
           const active = m === mode;
           return (
             <Button
@@ -114,9 +116,10 @@ export function AutoReplyToggle({
         })}
       </div>
       <p className="text-xs text-muted-foreground">{MODE_COPY[mode]}</p>
-      {!trustMode && mode === "off" ? (
+      {!trustMode ? (
         <span className="text-xs text-muted-foreground">
-          Turn on trust mode first to enable shadow or live.
+          Shadow works now (it previews without sending). Going <em>live</em>{" "}
+          requires trust mode.
         </span>
       ) : null}
 

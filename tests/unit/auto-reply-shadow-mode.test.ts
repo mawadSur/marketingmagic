@@ -206,9 +206,18 @@ describe("policy mode primitives", () => {
       interactionStatus: "unread",
       hasDraft: true,
     };
-    // The orchestrator passes modeEngages(mode) as autoReplyEnabled.
-    const shadow = evaluateAutoReplyGate({ ...base, autoReplyEnabled: modeEngages("shadow") });
-    const live = evaluateAutoReplyGate({ ...base, autoReplyEnabled: modeEngages("live") });
+    // The orchestrator passes modeEngages(mode) as autoReplyEnabled and
+    // modeSends(mode) as isLive. With trust ON, both shadow and live pass.
+    const shadow = evaluateAutoReplyGate({
+      ...base,
+      autoReplyEnabled: modeEngages("shadow"),
+      isLive: modeSends("shadow"),
+    });
+    const live = evaluateAutoReplyGate({
+      ...base,
+      autoReplyEnabled: modeEngages("live"),
+      isLive: modeSends("live"),
+    });
     expect(shadow.send).toBe(true);
     expect(live.send).toBe(true);
   });
