@@ -21,6 +21,12 @@
 // unauthenticated self-connect link without rebuilding their callbacks — out of
 // scope, and consistent with the agency design (locked decision #2: agency
 // social connection routes through Meta Business Manager).
+//
+// REVISIT (flagged 2026-06-06): extending self-connect to X / TikTok / LinkedIn
+// means refactoring those shared OAuth callbacks to accept EITHER an authed
+// session OR a self-connect token. Deferred to its own focused change with
+// dedicated test coverage — a regression there breaks the channel-connect flow
+// every user hits first. Tracked in the CEO plan's "Deferred" section.
 
 import crypto from "node:crypto";
 import { NextResponse } from "next/server";
