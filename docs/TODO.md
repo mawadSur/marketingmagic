@@ -4,6 +4,42 @@ Captured roadmap items not yet scheduled. Each is a future work item, not in fli
 
 ---
 
+## 0. Inbox: AI auto-reply / auto-ignore-spam + learn-from-sent-messages voice
+
+**What the user asked for:** From the inbox, auto-reply with AI to shown messages, or
+auto-ignore if spam. Also learn from the user's own sent messages so replies sound like them.
+
+**STATUS — mostly already built (Bet 4 + voice system). This is a GAP-FILL, not net-new:**
+- ✅ **AI auto-reply from inbox** — shipped (Bet 4, `src/lib/interactions/auto-reply/`):
+  trust-gated, tri-state off/shadow/live, drafts in brand voice, rate-capped, audited.
+- ✅ **Drafts in the user's voice** — `auto-reply/send.ts` already loads `VoiceProfile` +
+  `voice` and drafts in brand voice (`AutoReplyVoiceContext`).
+- ✅ **Priority scoring** — `src/lib/interactions/priority.ts` scores inbound 0-100
+  (verified author, follower count, age decay) for inbox sorting.
+- ✅ **Voice learning loop** — `cron/voice-evolution` already proposes voice-profile diffs,
+  but TODAY it learns from **rejection feedback**, not from the user's own sent/published posts.
+
+**The ACTUAL gaps to build:**
+1. **Spam auto-ignore.** `priority.ts` scores but does not *classify spam* or auto-archive.
+   Add a spam signal (heuristics + optional Claude classify) → auto-set interaction status to
+   `ignored`/`archived` below a threshold, so the inbox only surfaces worth-answering messages.
+   Wire into the poll-interactions pass alongside the existing auto-reply pass. Keep it
+   trust-gated + auditable like Bet 4; default conservative (false-positive spam-ignore is bad).
+2. **Learn voice from the user's OWN sent messages.** Today voice-evolution learns from
+   rejections only. Extend it (or `voice/extract.ts`) to also ingest the user's actually-sent
+   replies/posts (their genuine voice) and fold that into the `VoiceProfile` — so auto-reply
+   drafts converge on how the user really writes, not just away from what they rejected.
+   Source: posted `posts` + sent inbox replies (the `approvals`/sent-reply trail).
+3. (Minor) Surface an explicit "auto-ignored as spam" view in `/inbox` so nothing is silently
+   dropped — mirrors the Bet 4 audit-log discipline.
+
+**Reuses:** Bet 4 auto-reply pipeline, `priority.ts`, `voice/extract.ts`, `voice-evolution` cron,
+the shadow-mode safety pattern (spam-ignore should also have a shadow/review mode first).
+**Effort:** M (gaps are additive to shipped infra). **Priority:** P2. Best done after Bet 4 has
+real shadow-mode usage data to calibrate the spam threshold against.
+
+---
+
 ## 1. Brand-consistent image + video generation
 
 **What:** Image generation and video generation should match the workspace's brand styling
