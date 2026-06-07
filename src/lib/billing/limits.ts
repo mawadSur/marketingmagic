@@ -175,3 +175,104 @@ export async function assertWithinChannelQuota(
     });
   }
 }
+
+// ─── Retroactive (SOFT) channel-cap enforcement ──────────────────────────────
+//
+// assertWithinChannelQuota above blocks NEW connects, but it does NOT cover a
+// workspace that already has more connected channels than its plan allows — e.g.
+// after a plan DOWNGRADE (Solo→Hobby, or a Stripe past_due→unpaid lapse that
+// resolveEntitlement maps to 'hobby'), or accounts connected before the cap was
+// enforced. Those over-limit channels must stay connected (non-destructive — we
+// never wipe credentials) but be BLOCKED from publishing / auto-actions until the
+// user upgrades or disconnects. This helper is the single source of truth for
+// "which accounts are over the limit," reused by every enforcement point (the
+// post dispatcher, the auto-reply gate, the DM-capture gate, and the channels UI).
+//
+// COMPUTED ON READ — no cached `over_limit` column, no migration. Rationale:
+//   * The over-limit set is a pure function of (a) the workspace's EFFECTIVE plan
+//     limit and (b) the created_at ordering of its live accounts. Nothing else.
+//   * The effective limit can change WITHOUT any social_accounts write — most
+//     importantly a Stripe subscription lapse (past_due → unpaid) flips the
+//     effective plan to hobby via resolveEntitlement's subscription_status gate,
+//     and NO social_accounts row is touched. A cached flag would silently drift
+//     out of date in exactly the revenue-leak case we're closing here, unless we
+//     also recomputed it from a dunning webhook — extra moving parts to keep in
+//     sync. Computing on read makes the flag impossible to desync, and makes
+//     upgrade re-activation FREE (the next read just sees the higher limit and
+//     returns an empty over-limit set — no recompute step to remember to run).
+//
+// STABLE SELECTION — we keep the OLDEST N accounts (N = plan channel limit) ACTIVE
+// and mark the rest over-limit, ordering by created_at ASC (ties broken by id ASC
+// for determinism). Anchoring on age means the active set doesn't thrash between
+// checks: connecting/disconnecting a channel, or a flapping subscription, never
+// reshuffles which existing accounts are live. Unlimited plans (limit === -1)
+// keep ALL accounts active → empty set.
+
+type ServiceClient = ReturnType<typeof supabaseService>;
+
+// One live account, reduced to the only fields the over-limit computation needs.
+interface OverLimitCandidate {
+  id: string;
+  created_at: string;
+}
+
+// Pure core: given the live accounts (any order) and the effective channel
+// limit, return the ids that fall BEYOND the limit. Exported for unit tests so
+// the oldest-N-kept selection can be exercised without a DB. `limit === -1`
+// (unlimited) → empty set; `live.length <= limit` (at or under) → empty set.
+export function selectOverLimitIds(
+  live: ReadonlyArray<OverLimitCandidate>,
+  limit: number,
+): Set<string> {
+  if (limit === -1) return new Set();
+  // Stable order: oldest first; id as a deterministic tiebreaker so two rows
+  // sharing a created_at always sort the same way across calls.
+  const ordered = [...live].sort((a, b) => {
+    if (a.created_at !== b.created_at) return a.created_at < b.created_at ? -1 : 1;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+  // Keep the first `limit` (oldest) active; everything after is over-limit.
+  // A non-positive limit (shouldn't happen for a real tier, but be defensive)
+  // marks every account over-limit.
+  const keep = Math.max(limit, 0);
+  return new Set(ordered.slice(keep).map((a) => a.id));
+}
+
+// The set of social_account ids in this workspace that are OVER the plan's
+// connected-channel limit (and therefore blocked from publishing / auto-actions).
+// Empty set for unlimited plans, for workspaces at or under the limit, and on any
+// read error (fail-OPEN: a transient DB hiccup must never silently freeze a
+// paying customer's whole publishing pipeline — the connect-time cap already
+// bounds how many channels exist, so the blast radius of failing open is small).
+export async function overLimitAccountIds(
+  workspaceId: string,
+  client?: ServiceClient,
+): Promise<Set<string>> {
+  const plan = await getPlanForWorkspace(workspaceId);
+  const limit = tierFor(plan).limits.channels;
+  if (limit === -1) return new Set();
+
+  const svc = client ?? supabaseService();
+  const { data, error } = await svc
+    .from("social_accounts")
+    .select("id, created_at")
+    .eq("workspace_id", workspaceId)
+    .neq("status", "disconnected")
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
+
+  if (error || !data) return new Set();
+  return selectOverLimitIds(data, limit);
+}
+
+// Convenience single-account check used by the publish / auto-action gates,
+// which already hold one account id. Thin wrapper over overLimitAccountIds so
+// the oldest-N-kept logic lives in exactly one place.
+export async function isAccountOverLimit(
+  workspaceId: string,
+  socialAccountId: string,
+  client?: ServiceClient,
+): Promise<boolean> {
+  const overLimit = await overLimitAccountIds(workspaceId, client);
+  return overLimit.has(socialAccountId);
+}

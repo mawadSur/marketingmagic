@@ -8,6 +8,7 @@ import { isRetryableError } from "@/lib/social/errors";
 import { readThreadMeta } from "@/lib/threads/schema";
 import { postThread } from "@/lib/threads/post";
 import { loadFreshXCredentials, type XCredentials } from "@/lib/social/x";
+import { overLimitAccountIds } from "@/lib/billing/limits";
 
 // Vercel Cron — POST to this every 5 minutes. Auth via Bearer CRON_SECRET.
 // Picks scheduled posts whose time has arrived, ships them via the per-channel
@@ -26,6 +27,12 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const BATCH = 25;
+
+// Surfaced on posts held by SOFT channel-cap enforcement (see overLimitFor).
+// User-facing: it shows up in the queue's failure_reason and tells them exactly
+// how to unblock — upgrade, or disconnect another channel to free a slot.
+const OVER_LIMIT_REASON =
+  "This channel is over your plan's connected-channel limit. Upgrade in Settings → Billing, or disconnect another channel, to publish from it.";
 
 export async function GET(req: NextRequest) {
   return handle(req);
@@ -70,6 +77,21 @@ async function handle(req: NextRequest) {
   // since `postThread` already handled them.
   const handledThreads = new Set<string>();
 
+  // SOFT channel-cap enforcement: a workspace over its plan's channel limit
+  // (e.g. after a downgrade) keeps its accounts connected but its OVER-LIMIT
+  // channels must not publish. overLimitAccountIds computes the set from the
+  // effective plan + oldest-N-kept ordering (see lib/billing/limits.ts). Cache
+  // it per workspace so a 25-post batch spanning several workspaces resolves
+  // each workspace's set just once.
+  const overLimitByWs = new Map<string, Set<string>>();
+  async function overLimitFor(workspaceId: string): Promise<Set<string>> {
+    const cached = overLimitByWs.get(workspaceId);
+    if (cached) return cached;
+    const set = await overLimitAccountIds(workspaceId, svc);
+    overLimitByWs.set(workspaceId, set);
+    return set;
+  }
+
   for (const post of posts ?? []) {
     // Detect thread membership before doing anything else.
     const threadMeta = readThreadMeta(post.generation_metadata);
@@ -99,6 +121,15 @@ async function handle(req: NextRequest) {
       if (account.status === "disconnected") {
         await markFailed(post.id, "Channel disconnected — reconnect it to publish this post.");
         results.push({ id: post.id, status: "failed", reason: "channel disconnected" });
+        continue;
+      }
+      // SOFT channel-cap: this account is over the plan's connected-channel
+      // limit, so it stays connected but can't publish. Hold (don't drop) the
+      // post with a clear, surfaced reason — re-activating it on upgrade is a
+      // matter of re-scheduling, and the user can see exactly why it held.
+      if ((await overLimitFor(post.workspace_id)).has(post.social_account_id)) {
+        await markFailed(post.id, OVER_LIMIT_REASON);
+        results.push({ id: post.id, status: "failed", reason: "channel over plan limit" });
         continue;
       }
 
@@ -197,6 +228,14 @@ async function handle(req: NextRequest) {
     if (account.status === "disconnected") {
       await markFailed(post.id, "Channel disconnected — reconnect it to publish this post.");
       results.push({ id: post.id, status: "failed", reason: "channel disconnected" });
+      continue;
+    }
+    // SOFT channel-cap: account is over the plan's connected-channel limit —
+    // stays connected, but blocked from publishing. Hold the post with a clear
+    // reason (not a silent drop) until the user upgrades or disconnects.
+    if ((await overLimitFor(post.workspace_id)).has(post.social_account_id)) {
+      await markFailed(post.id, OVER_LIMIT_REASON);
+      results.push({ id: post.id, status: "failed", reason: "channel over plan limit" });
       continue;
     }
 
