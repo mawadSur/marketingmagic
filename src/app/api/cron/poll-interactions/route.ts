@@ -14,6 +14,7 @@ import {
 } from "@/lib/interactions/auto-reply/send";
 import { attemptLeadCaptureDm } from "@/lib/interactions/auto-reply/dm-send";
 import { isAutoReplyChannel } from "@/lib/interactions/auto-reply/policy";
+import { overLimitAccountIds } from "@/lib/billing/limits";
 import { loadFreshXCredentials, type XCredentials } from "@/lib/social/x";
 import type { LinkedInCredentials } from "@/lib/social/linkedin";
 import type { BlueskyCredentials } from "@/lib/social/bluesky";
@@ -148,6 +149,23 @@ async function handle(req: NextRequest) {
   //                        do-not-say + product description).
   const briefByWs = new Map<string, WorkspaceContextCache>();
 
+  // SOFT channel-cap enforcement (mirrors the post-scheduled cron): a workspace
+  // over its plan's connected-channel limit (e.g. after a downgrade) keeps its
+  // accounts CONNECTED — we still poll them so the inbox stays current — but its
+  // OVER-LIMIT channels must not take autonomous actions (auto-reply or
+  // comment→DM), in either shadow or live mode. overLimitAccountIds is the single
+  // source of truth for the set (effective plan + oldest-N-kept ordering; see
+  // lib/billing/limits.ts). Cache it per workspace so a run spanning many accounts
+  // resolves each workspace's set just once. Empty set for unlimited plans → no-op.
+  const overLimitByWs = new Map<string, Set<string>>();
+  async function overLimitFor(workspaceId: string): Promise<Set<string>> {
+    const cached = overLimitByWs.get(workspaceId);
+    if (cached) return cached;
+    const set = await overLimitAccountIds(workspaceId, svc);
+    overLimitByWs.set(workspaceId, set);
+    return set;
+  }
+
   for (const acct of rows) {
     const channel = acct.channel as InteractionChannel;
     if (!CHANNEL_CADENCE_MIN[channel]) {
@@ -218,9 +236,16 @@ async function handle(req: NextRequest) {
       // rows to status='read'. The auto-reply pass that follows reloads only
       // still-`unread` rows, so a comment captured as a lead is never ALSO
       // auto-replied to — we never both DM and publicly reply to one person.
+      //
+      // SOFT channel-cap gate: skip BOTH autonomous passes (shadow and live)
+      // when this account is over the workspace's connected-channel limit. We
+      // still poll + persist above so the inbox stays populated and the operator
+      // can act manually; only the autonomous actions are withheld until the user
+      // upgrades or disconnects. Same over-limit set the publish cron uses.
       let dmCaptured = 0;
       let autoReplied = 0;
-      if (insertedIds.length > 0 && isAutoReplyChannel(acct.channel)) {
+      const overLimit = (await overLimitFor(acct.workspace_id)).has(acct.id);
+      if (insertedIds.length > 0 && isAutoReplyChannel(acct.channel) && !overLimit) {
         dmCaptured = await runLeadCaptureDms(acct, insertedIds, briefCtx, now);
         autoReplied = await runAutoReplies(acct, insertedIds, briefCtx, now);
       }
@@ -234,6 +259,8 @@ async function handle(req: NextRequest) {
         inserted: insertedIds.length,
         autoReplied,
         dmCaptured,
+        // Polling still ran; only the autonomous actions were withheld.
+        reason: overLimit ? "auto_actions_held_over_channel_limit" : undefined,
       });
     } catch (err) {
       // Special-case the Meta-App-Review-pending error so the response
