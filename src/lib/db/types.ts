@@ -85,6 +85,13 @@ export type FacebookGroupPromoPolicy = "open" | "limited" | "value_only";
 export type FacebookGroupDraftSource = "ai" | "manual";
 export type FacebookGroupDraftStatus = "draft" | "posted" | "dismissed";
 
+// Outcome Loop MVP (migration 042). The kind of self-reported BUSINESS outcome
+// a user attributes to a live post. Closed vocabulary so the per-theme roll-up
+// (src/lib/analytics/outcomes.ts) stays comparable; 'other' is the catch-all.
+// Mirrors the CHECK constraint on post_outcomes.outcome_type and the Zod enum
+// in src/lib/analytics/outcome-schema.ts.
+export type PostOutcomeType = "lead" | "sale" | "signup" | "booking" | "other";
+
 // PLG share (migration 032): the content persisted under a preview_shares.slug
 // so an anonymous /start preview can be re-rendered read-only and unfurled on
 // social. Mirrors the signed preview-token payload but is the SHAREABLE subset
@@ -206,6 +213,9 @@ export interface Database {
           // the "Made with marketingmagic" toggle (only ever applied on hobby).
           referral_bonus_posts: number;
           attribution_enabled: boolean;
+          // Bet 4 (migration 045): workspace-wide hard stop for autonomous
+          // auto-replies. TRUE = no account auto-sends, period. Defaults false.
+          auto_reply_kill_switch: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -222,6 +232,7 @@ export interface Database {
           subscription_status?: string | null;
           referral_bonus_posts?: number;
           attribution_enabled?: boolean;
+          auto_reply_kill_switch?: boolean;
         };
         Update: Partial<{
           slug: string;
@@ -234,6 +245,7 @@ export interface Database {
           subscription_status: string | null;
           referral_bonus_posts: number;
           attribution_enabled: boolean;
+          auto_reply_kill_switch: boolean;
         }>;
         Relationships: [];
       };
@@ -354,6 +366,39 @@ export interface Database {
         Update: Partial<{
           token_id: string | null;
           recipient_email: string;
+        }>;
+        Relationships: [];
+      };
+      // Client self-connect tokens (migration 044, Agency Proof Engine bet ③).
+      // A tokenized link the agency sends a client so the CLIENT connects their
+      // own social channels — the /connect/[token] surface resolves the hash to
+      // exactly one workspace_id and drives the existing per-channel OAuth
+      // initiate, attributing the account to that client workspace. Mirrors
+      // client_portal_tokens: SHA-256(raw) stored, short expiry, revocation.
+      client_self_connect_tokens: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          token_hash: string;
+          label: string | null;
+          expires_at: string | null;
+          revoked_at: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          token_hash: string;
+          label?: string | null;
+          expires_at?: string | null;
+          revoked_at?: string | null;
+          created_by?: string | null;
+        };
+        Update: Partial<{
+          label: string | null;
+          expires_at: string | null;
+          revoked_at: string | null;
         }>;
         Relationships: [];
       };
@@ -543,6 +588,17 @@ export interface Database {
           trust_mode: boolean;
           trust_threshold: number;
           successful_post_count: number;
+          // Bet 4 (migration 045): per-account opt-in for auto-SENDING drafted
+          // replies. Auto-send requires (trust_mode AND auto_reply_enabled).
+          // Defaults false — auto-publish trust does NOT imply auto-reply.
+          auto_reply_enabled: boolean;
+          // Bet 4 (migration 046): per-account opt-in for the comment→DM lead-
+          // capture path. Auto-DM requires (trust_mode AND dm_capture_enabled).
+          // Independent of auto_reply_enabled. Defaults false.
+          dm_capture_enabled: boolean;
+          // Bet 4 (migration 046): { keywords[], link, valueCents?, message? }
+          // keyword→DM rule, or null when no rule is configured (path no-ops).
+          lead_keyword_rule: Json | null;
           status: AccountStatus;
           created_at: string;
           updated_at: string;
@@ -556,6 +612,9 @@ export interface Database {
           trust_mode?: boolean;
           trust_threshold?: number;
           successful_post_count?: number;
+          auto_reply_enabled?: boolean;
+          dm_capture_enabled?: boolean;
+          lead_keyword_rule?: Json | null;
           status?: AccountStatus;
         };
         Update: Partial<{
@@ -564,6 +623,9 @@ export interface Database {
           trust_mode: boolean;
           trust_threshold: number;
           successful_post_count: number;
+          auto_reply_enabled: boolean;
+          dm_capture_enabled: boolean;
+          lead_keyword_rule: Json | null;
           status: AccountStatus;
         }>;
         Relationships: [];
@@ -1260,6 +1322,85 @@ export interface Database {
         }>;
         Relationships: [];
       };
+      auto_reply_log: {
+        // Bet 4 (migration 045): audit trail of every autonomous reply
+        // auto-sent / blocked / failed on X, Bluesky, LinkedIn. Also the
+        // source the per-account hourly rate cap counts against. See
+        // src/lib/interactions/auto-reply/*.
+        Row: {
+          id: string;
+          workspace_id: string;
+          social_account_id: string;
+          interaction_id: string | null;
+          channel: "x" | "bluesky" | "linkedin";
+          outcome: "sent" | "blocked" | "failed";
+          outcome_reason: string | null;
+          reply_text: string;
+          external_id: string | null;
+          reply_post_id: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          social_account_id: string;
+          interaction_id?: string | null;
+          channel: "x" | "bluesky" | "linkedin";
+          outcome: "sent" | "blocked" | "failed";
+          outcome_reason?: string | null;
+          reply_text: string;
+          external_id?: string | null;
+          reply_post_id?: string | null;
+        };
+        Update: Partial<{
+          outcome: "sent" | "blocked" | "failed";
+          outcome_reason: string | null;
+          external_id: string | null;
+          reply_post_id: string | null;
+        }>;
+        Relationships: [];
+      };
+      dm_capture_log: {
+        // Bet 4 (migration 046): audit trail of every comment→DM auto-send
+        // (sent / blocked / failed / scope_missing) on X, Bluesky, LinkedIn.
+        // Also the source the per-account hourly DM rate cap counts against.
+        // See src/lib/interactions/auto-reply/dm-send.ts + lead-capture.ts.
+        Row: {
+          id: string;
+          workspace_id: string;
+          social_account_id: string;
+          interaction_id: string | null;
+          channel: "x" | "bluesky" | "linkedin";
+          outcome: "sent" | "blocked" | "failed" | "scope_missing";
+          outcome_reason: string | null;
+          matched_keyword: string | null;
+          dm_text: string;
+          external_id: string | null;
+          lead_tagged: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          social_account_id: string;
+          interaction_id?: string | null;
+          channel: "x" | "bluesky" | "linkedin";
+          outcome: "sent" | "blocked" | "failed" | "scope_missing";
+          outcome_reason?: string | null;
+          matched_keyword?: string | null;
+          dm_text: string;
+          external_id?: string | null;
+          lead_tagged?: boolean;
+        };
+        Update: Partial<{
+          outcome: "sent" | "blocked" | "failed" | "scope_missing";
+          outcome_reason: string | null;
+          matched_keyword: string | null;
+          external_id: string | null;
+          lead_tagged: boolean;
+        }>;
+        Relationships: [];
+      };
       competitor_posts: {
         // Phase 6.6: per-watch-handle post cache. Outlier-detection sets
         // is_winner; pattern extraction populates pattern_tags / reason.
@@ -1490,6 +1631,42 @@ export interface Database {
           text: string;
           status: FacebookGroupDraftStatus;
           posted_at: string | null;
+        }>;
+        Relationships: [];
+      };
+      // Outcome Loop MVP (migration 042). One self-reported BUSINESS outcome
+      // (lead / sale / signup / booking / other) attributed to a live post,
+      // optionally with a dollar amount (value_cents). A post can have MANY
+      // outcomes. Members read/write their own workspace's rows (RLS via
+      // is_workspace_member); analytics rolls these up per theme in
+      // src/lib/analytics/outcomes.ts. SCOPE: self-report only — no UTM /
+      // pixel ingestion (deferred phase 2).
+      post_outcomes: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          post_id: string;
+          outcome_type: PostOutcomeType;
+          // Revenue in CENTS when known; null for value-less outcomes (a 'lead'
+          // or 'signup' with no dollar figure attached).
+          value_cents: number | null;
+          note: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          post_id: string;
+          outcome_type: PostOutcomeType;
+          value_cents?: number | null;
+          note?: string | null;
+          created_by?: string | null;
+        };
+        Update: Partial<{
+          outcome_type: PostOutcomeType;
+          value_cents: number | null;
+          note: string | null;
         }>;
         Relationships: [];
       };

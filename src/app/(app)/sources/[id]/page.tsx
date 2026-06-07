@@ -6,6 +6,7 @@ import { Badge, ChannelBadge, statusBadgeLabel, statusBadgeVariant } from "@/com
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { ExtractedQuote, ExtractedFact } from "@/lib/db/types";
 import { GenerateClusterButton } from "./generate-cluster-button";
+import { AtomizeButton } from "./atomize-button";
 
 export const dynamic = "force-dynamic";
 
@@ -155,18 +156,35 @@ export default async function SourceDetailPage({ params }: PageProps) {
         </Card>
       </div>
 
-      <section className="space-y-3">
-        <div className="flex items-end justify-between">
-          <div>
+      <section className="grid gap-4 sm:grid-cols-2">
+        <Card>
+          <CardHeader className="space-y-1">
             <p className="label-eyebrow">Generate</p>
-            <h2 className="text-base font-medium">Turn this into a content cluster</h2>
+            <CardTitle className="text-base">Content cluster</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
             <p className="text-sm text-muted-foreground">
-              Claude will produce a one-week cluster across your connected channels, anchored to
-              the themes and quotes above. Drafts land in the queue.
+              A one-week posting calendar across your connected channels, anchored to the themes
+              and quotes above. Posts are scheduled into optimal slots. Drafts land in the queue.
             </p>
-          </div>
-          <GenerateClusterButton sourceId={source.id} />
-        </div>
+            <GenerateClusterButton sourceId={source.id} />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="space-y-1">
+            <p className="label-eyebrow">Atomize</p>
+            <CardTitle className="text-base">Break into native posts</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <p className="text-sm text-muted-foreground">
+              Decompose this one source into many standalone posts — each distinct point rewritten
+              natively for every connected channel. Drafts land unscheduled in the queue for you to
+              review and schedule.
+            </p>
+            <AtomizeButton sourceId={source.id} />
+          </CardContent>
+        </Card>
       </section>
 
       {generatedPosts && generatedPosts.length > 0 ? (

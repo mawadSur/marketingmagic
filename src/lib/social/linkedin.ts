@@ -19,6 +19,7 @@
 
 import { serverEnv } from "@/lib/env";
 import { RetryableError } from "./errors";
+import { DmScopeMissingError } from "@/lib/interactions/errors";
 
 export interface LinkedInCredentials {
   accessToken: string;
@@ -605,6 +606,72 @@ export async function linkedinReply(
   const id = json.$URN ?? res.headers.get("x-restli-id") ?? null;
   if (!id) throw new Error("LinkedIn reply returned no id.");
   return { id };
+}
+
+// ─── Bet 4 (comment→DM lead capture) — Direct Messages ───────────────────
+//
+// LinkedIn member-to-member messaging has NO public send API for a standard
+// app. The messaging endpoints live behind the gated Marketing Developer
+// Platform / Messages API partnership and require scopes a `w_member_social`
+// app is never granted (there is no public `w_messaging` self-serve scope).
+//
+// So the capability check is effectively a HARD no-op: unless the credentials
+// blob's recorded `grantedScopes` includes a messaging scope (which today it
+// cannot), linkedinDmCapability reports absent and linkedinSendDm throws
+// DmScopeMissingError without a network call. This mirrors how IG/Threads
+// reply paths are gated by MetaAppReviewPendingError — the call site is wired
+// and type-checks, but the action is blocked until a partnership lands. We
+// keep the function so the comment→DM core can treat all three channels
+// uniformly and audit the scope_missing outcome consistently.
+
+// Messaging scopes that, IF present in grantedScopes, would unlock DM send.
+// None are self-serve today; this is the forward-looking allowlist.
+const LINKEDIN_MESSAGING_SCOPES = ["w_messaging", "r_messaging", "messaging"];
+
+export interface LinkedInDmCapability {
+  granted: boolean;
+  reason: "messaging_partnership_required" | null;
+}
+
+// Does this credentials blob carry a messaging scope? Defensive: missing
+// grantedScopes → no (legacy rows + the steady-state for every account today).
+export function linkedinDmCapability(creds: LinkedInCredentials): LinkedInDmCapability {
+  const granted = (creds.grantedScopes ?? "")
+    .split(/\s+/)
+    .some((s) => LINKEDIN_MESSAGING_SCOPES.includes(s));
+  return granted
+    ? { granted: true, reason: null }
+    : { granted: false, reason: "messaging_partnership_required" };
+}
+
+export interface LinkedInDmResult {
+  id: string;
+}
+
+// Send a LinkedIn DM. Throws DmScopeMissingError unless the (currently
+// unobtainable) messaging partnership scope is present, so the caller no-ops
+// cleanly. If a partnership IS ever granted, the actual Messages API call would
+// slot in below the guard.
+export async function linkedinSendDm(
+  creds: LinkedInCredentials,
+  _recipientUrn: string,
+  _text: string,
+): Promise<LinkedInDmResult> {
+  const cap = linkedinDmCapability(creds);
+  if (!cap.granted) {
+    throw new DmScopeMissingError(
+      "linkedin",
+      "linkedin_messaging",
+      cap.reason ?? undefined,
+    );
+  }
+  // Unreachable today (no self-serve messaging scope). Left intentionally
+  // unimplemented rather than shipping a speculative partnership-API call.
+  throw new DmScopeMissingError(
+    "linkedin",
+    "linkedin_messaging",
+    "messaging send not implemented (partnership API)",
+  );
 }
 
 // ─── Metrics ────────────────────────────────────────────────────────────────

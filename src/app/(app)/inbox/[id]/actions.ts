@@ -13,18 +13,11 @@ import {
   type ReplyInteractionInput,
   type ReplyWorkspaceContext,
 } from "@/lib/interactions/draft-reply";
-import { xReply, loadFreshXCredentials, type XCredentials } from "@/lib/social/x";
-import {
-  linkedinReply,
-  type LinkedInCredentials,
-} from "@/lib/social/linkedin";
-import {
-  blueskyReply,
-  type BlueskyCredentials,
-} from "@/lib/social/bluesky";
 import { instagramReply } from "@/lib/social/instagram";
 import { threadsReply } from "@/lib/social/threads";
 import { MetaAppReviewPendingError } from "@/lib/interactions/errors";
+import { sendReplyViaChannel } from "@/lib/interactions/send-core";
+import { isAutoReplyChannel } from "@/lib/interactions/auto-reply/policy";
 import { interactionToSource } from "@/lib/sources/from-interaction";
 
 const uuid = z.string().uuid();
@@ -36,16 +29,26 @@ export interface DraftActionResult {
 }
 
 // =======================================================================
-// HARD RULE — sendReplyAction is the ONLY entry point that calls a
-// platform reply helper. It requires:
+// MANUAL reply send — the human-in-the-loop path.
+//
+// This is the DEFAULT path: a human reviews a draft and clicks "Send".
+// It requires:
 //   - an authed user session (getAuthedUserOrRedirect throws otherwise)
 //   - a server action invocation (Next.js gates these via formData / use
 //     server boundary; can't be triggered from a cron or webhook)
 //   - explicit reply text in the payload (no "send the first draft" path)
 //
-// Even with trust_mode=true on the social_accounts row (which lets
-// posts skip the approval step), this action does NOT consult
-// trust_mode. Replies always require a manual click.
+// As of Bet 4 there is a SECOND, separate send entry point — the
+// autonomous auto-reply path in src/lib/interactions/auto-reply/* invoked
+// by the poll-interactions cron. That path is OFF by default and only
+// fires on channels the workspace has explicitly trusted AND opted into,
+// under a workspace kill switch and a per-platform rate cap. Both paths
+// share the per-channel send code in src/lib/interactions/send-core.ts so
+// there is exactly one place we hit a platform reply endpoint.
+//
+// This MANUAL action still never consults trust_mode: a human clicking
+// "Send" always sends regardless of trust state. The trust gate only
+// governs the autonomous path.
 // =======================================================================
 export interface SendReplyResult {
   error: string | null;
@@ -101,88 +104,26 @@ export async function sendReplyAction(
     };
   }
 
-  // Send via the channel-appropriate helper. The IG / Threads helpers
-  // throw MetaAppReviewPendingError; we catch and surface a friendly
-  // error so the UI shows a "coming soon" banner instead of a generic
-  // 500.
+  // Send. X / Bluesky / LinkedIn go through the shared send core (which
+  // also creates the synthetic audit posts row). IG / Threads remain
+  // stubbed inline: their helpers throw MetaAppReviewPendingError, which
+  // we catch and surface as a "coming soon" banner. Keeping them out of
+  // the send core is deliberate — the core only knows the shippable set.
   let externalId: string;
+  let postId: string | null;
   try {
-    switch (interaction.channel) {
-      case "x": {
-        const rawCreds = account.credentials as unknown as XCredentials;
-        // Refresh-if-needed before posting — X OAuth 2.0 tokens expire in ~2h.
-        const creds = await loadFreshXCredentials(svc, account.id, rawCreds);
-        const r = await xReply(creds, replyParsed.data, interaction.external_id);
-        externalId = r.id;
-        break;
-      }
-      case "linkedin": {
-        const creds = account.credentials as unknown as LinkedInCredentials;
-        // For LinkedIn we need the parent UGC post URN. The poller
-        // stores the parent post's external_id (URN) as the in-reply
-        // target, but we don't have a separate column — fall back to
-        // either the parent_post_id's external_id (preferred) or the
-        // interaction's own external_id (which is the comment URN's
-        // parent in the URN structure).
-        let parentUrn: string | null = null;
-        if (interaction.parent_post_id) {
-          const { data: parentPost } = await supabase
-            .from("posts")
-            .select("external_id")
-            .eq("id", interaction.parent_post_id)
-            .maybeSingle();
-          parentUrn = parentPost?.external_id ?? null;
-        }
-        if (!parentUrn) {
-          return {
-            error: "Can't reply on LinkedIn: parent post URN unknown.",
-            externalId: null,
-          };
-        }
-        const r = await linkedinReply(creds, replyParsed.data, parentUrn);
-        externalId = r.id;
-        break;
-      }
-      case "bluesky": {
-        const creds = account.credentials as unknown as BlueskyCredentials;
-        // The Bluesky reply needs parent URI + CID. external_id is the
-        // notification URI, which IS the parent post AT-URI for
-        // replies; CID is included in the notification body but not
-        // persisted on our row. For a clean V1 we pass URI as both
-        // and CID-from-URI extraction is left for the day we add a
-        // dedicated column. As a defensive fallback, we synthesise a
-        // CID from the URI tail — Bluesky rejects mismatched CIDs
-        // hard, so failure surfaces clearly.
-        const cidFallback = interaction.external_id.split("/").pop() ?? "unknown";
-        const r = await blueskyReply(
-          creds,
-          replyParsed.data,
-          { uri: interaction.external_id, cid: cidFallback },
-        );
-        externalId = r.uri;
-        break;
-      }
-      case "instagram": {
-        await instagramReply(
-          account.credentials as never,
-          replyParsed.data,
-          interaction.external_id,
-        );
-        return { error: "Unreachable", externalId: null };
-      }
-      case "threads": {
-        await threadsReply(
-          account.credentials as never,
-          replyParsed.data,
-          interaction.external_id,
-        );
-        return { error: "Unreachable", externalId: null };
-      }
-      default:
-        return {
-          error: `Unsupported channel: ${interaction.channel}`,
-          externalId: null,
-        };
+    if (isAutoReplyChannel(interaction.channel)) {
+      const result = await sendReplyViaChannel(svc, account, interaction, replyParsed.data);
+      externalId = result.externalId;
+      postId = result.postId;
+    } else if (interaction.channel === "instagram") {
+      await instagramReply(account.credentials as never, replyParsed.data, interaction.external_id);
+      return { error: "Unreachable", externalId: null };
+    } else if (interaction.channel === "threads") {
+      await threadsReply(account.credentials as never, replyParsed.data, interaction.external_id);
+      return { error: "Unreachable", externalId: null };
+    } else {
+      return { error: `Unsupported channel: ${interaction.channel}`, externalId: null };
     }
   } catch (err) {
     if (err instanceof MetaAppReviewPendingError) {
@@ -198,44 +139,14 @@ export async function sendReplyAction(
     };
   }
 
-  // Audit parity: create a posts row for the reply so the approvals
-  // table can reference it (approvals.post_id is NOT NULL). This is
-  // the same shape the social pipeline uses for outbound posts; the
-  // queue UI filters by status='pending_approval' | 'scheduled' so a
-  // 'posted' reply row won't pollute that view.
+  // Manual-path audit attribution: record the human approval against the
+  // synthetic posts row the send core created. (The autonomous path
+  // attributes to auto_reply_log instead — an auto-send has no user_id and
+  // would violate the approvals_actor_exactly_one CHECK.)
   const now = new Date().toISOString();
-  const { data: postRow, error: postErr } = await svc
-    .from("posts")
-    .insert({
-      workspace_id: ws.id,
-      social_account_id: account.id,
-      channel: account.channel,
-      text: replyParsed.data,
-      status: "posted",
-      generation_metadata: {
-        kind: "reply",
-        interaction_id: interaction.id,
-        replied_to_external_id: interaction.external_id,
-      },
-    })
-    .select("id")
-    .single();
-  if (postErr || !postRow) {
-    // Don't fail the whole action — the reply DID send. Log audit
-    // gap and continue.
-    console.warn(
-      "[inbox] reply sent but audit post row insert failed:",
-      postErr?.message,
-    );
-  } else {
-    // Stamp the external_id + posted_at on the audit row via Update
-    // (the Insert type omits external_id; Update accepts it).
-    await svc
-      .from("posts")
-      .update({ external_id: externalId, posted_at: now })
-      .eq("id", postRow.id);
+  if (postId) {
     await svc.from("approvals").insert({
-      post_id: postRow.id,
+      post_id: postId,
       user_id: user.id,
       action: "approved",
       diff: null,
@@ -248,7 +159,7 @@ export async function sendReplyAction(
     .update({
       status: "replied",
       replied_at: now,
-      replied_to_post_id: postRow?.id ?? null,
+      replied_to_post_id: postId,
     })
     .eq("id", interaction.id);
 

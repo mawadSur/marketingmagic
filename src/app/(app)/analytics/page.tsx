@@ -5,10 +5,18 @@ import {
   getTopAndBottomPosts,
 } from "@/lib/dashboard/analytics";
 import { getOrGenerateAiReview } from "@/lib/dashboard/ai-review";
+import {
+  computeThemeOutcomes,
+  formatCents,
+  type ThemeOutcomeReport,
+  type ThemeOutcomeStat,
+} from "@/lib/analytics/outcomes";
+import { OUTCOME_TYPES, OUTCOME_TYPE_LABELS } from "@/lib/analytics/outcome-schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChannelBadge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { EngagementChart } from "./engagement-chart";
+import { MarkOutcome } from "./mark-outcome";
 import { SectionLinks } from "@/components/ui/section-links";
 import { hasCompetitorWatch } from "@/lib/billing/tiers";
 
@@ -17,11 +25,19 @@ export const dynamic = "force-dynamic";
 export default async function AnalyticsPage() {
   const ws = await getActiveWorkspaceOrRedirect();
 
-  const [byDay, byChannel, ranked, review] = await Promise.all([
+  const [byDay, byChannel, ranked, review, outcomes] = await Promise.all([
     getEngagementByDay(ws.id, 30),
     getStatsByChannel(ws.id, 30),
     getTopAndBottomPosts(ws.id, 30, 5),
     getOrGenerateAiReview(ws.id, 30).catch(() => null),
+    computeThemeOutcomes(ws.id).catch(
+      (): ThemeOutcomeReport => ({
+        hasOutcomes: false,
+        themes: [],
+        totalOutcomes: 0,
+        totalRevenueCents: 0,
+      }),
+    ),
   ]);
 
   const totals = byChannel.reduce(
@@ -161,7 +177,77 @@ export default async function AnalyticsPage() {
           posts={ranked.bottom}
         />
       </section>
+
+      <ThemeOutcomes report={outcomes} />
     </div>
+  );
+}
+
+// Outcome Loop MVP (Bet 1) — revenue-ranked themes. Ranks themes by the
+// business outcomes users self-report on posts, not just engagement. Cold
+// start (no outcomes tagged) renders an explicit prompt, never an empty table.
+function ThemeOutcomes({ report }: { report: ThemeOutcomeReport }) {
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <p className="label-eyebrow">Outcome loop</p>
+          <h2 className="text-base font-medium">Themes by outcome · $ per theme</h2>
+          <p className="text-sm text-muted-foreground">
+            Ranked by the leads, sales, signups, and bookings you tag on posts —
+            not just engagement.
+          </p>
+        </div>
+        {report.hasOutcomes ? (
+          <div className="flex items-center gap-4 text-sm">
+            <span className="tabular-nums">
+              <span className="font-semibold">{formatCents(report.totalRevenueCents)}</span>{" "}
+              <span className="text-muted-foreground">tagged revenue</span>
+            </span>
+            <span className="tabular-nums">
+              <span className="font-semibold">{report.totalOutcomes.toLocaleString()}</span>{" "}
+              <span className="text-muted-foreground">outcomes</span>
+            </span>
+          </div>
+        ) : null}
+      </div>
+
+      {!report.hasOutcomes ? (
+        <EmptyState
+          icon="spark"
+          title="No outcomes tagged yet."
+          description="Tag a few posts with the lead, sale, signup, or booking they drove — then this ranks your themes by results, not just engagement. Use “Mark outcome” on the posts above."
+        />
+      ) : (
+        <ul className="divide-y rounded-lg border bg-card">
+          {report.themes.map((t) => (
+            <ThemeOutcomeRow key={t.tag} stat={t} />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function ThemeOutcomeRow({ stat }: { stat: ThemeOutcomeStat }) {
+  // Compact per-type breakdown ("2 sale · 1 lead"), skipping zero buckets.
+  const breakdown = OUTCOME_TYPES.filter((t) => stat.by_type[t] > 0)
+    .map((t) => `${stat.by_type[t]} ${OUTCOME_TYPE_LABELS[t].toLowerCase()}`)
+    .join(" · ");
+  return (
+    <li className="flex items-center justify-between gap-3 px-4 py-3 text-sm transition-colors duration-200 hover:bg-muted/30">
+      <div className="min-w-0">
+        <p className="truncate font-medium">#{stat.tag}</p>
+        <p className="text-xs text-muted-foreground">{breakdown}</p>
+      </div>
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 tabular-nums sm:gap-3">
+        <span className="text-muted-foreground">
+          {stat.outcomes.toLocaleString()}{" "}
+          <span className="hidden sm:inline">outcome{stat.outcomes === 1 ? "" : "s"}</span>
+        </span>
+        <span className="font-semibold">{formatCents(stat.revenue_cents)}</span>
+      </div>
+    </li>
   );
 }
 
@@ -249,6 +335,8 @@ function PostList({
                 <span>{p.impressions.toLocaleString()} impressions</span>
                 <span aria-hidden>·</span>
                 <span className="font-medium tabular-nums">{((p.engagement_rate ?? 0) * 100).toFixed(2)}%</span>
+                <span aria-hidden>·</span>
+                <MarkOutcome postId={p.id} />
               </p>
             </li>
           ))}

@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { getAuthedUserOrRedirect, listOrganizations, listClientWorkspaces } from "@/lib/workspace";
 import { listPortalTokens } from "@/lib/portal/manage";
+import { listSelfConnectTokens } from "@/lib/client-connect/token";
 import { EmptyState } from "@/components/ui/empty-state";
 import { BrandingForm, PortalLinksManager } from "./branding-forms";
+import { SelfConnectLinksManager } from "./self-connect-forms";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +61,13 @@ export default async function OrganizationBrandingPage() {
   // in this org via RLS).
   const tokensByWorkspace = await Promise.all(
     clients.map(async (c) => ({ workspace: c, tokens: await listPortalTokens(c.id) })),
+  );
+
+  // Self-connect tokens per client workspace, for the self-connect management
+  // list. Same RLS-scoped read as the portal tokens above — listSelfConnectTokens
+  // is scoped to each client workspace id (all in this org via RLS).
+  const selfConnectByWorkspace = await Promise.all(
+    clients.map(async (c) => ({ workspace: c, tokens: await listSelfConnectTokens(c.id) })),
   );
 
   return (
@@ -118,6 +127,37 @@ export default async function OrganizationBrandingPage() {
                 id: t.id,
                 label: t.label,
                 scopes: t.scopes,
+                expiresAt: t.expires_at,
+                revokedAt: t.revoked_at,
+                createdAt: t.created_at,
+              })),
+            }))}
+          />
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-base font-medium">Client self-connect links</h2>
+        <p className="text-sm text-muted-foreground">
+          Send a client a link they use to connect their own social accounts — no
+          password handoff. They sign in with each network directly.
+        </p>
+        {clients.length === 0 ? (
+          <EmptyState
+            icon="inbox"
+            title="No client workspaces yet."
+            description="Add a client on the organization page, then generate a self-connect link for them here."
+          />
+        ) : (
+          <SelfConnectLinksManager
+            organizationId={org.id}
+            disabled={!isOwner}
+            clients={selfConnectByWorkspace.map(({ workspace, tokens }) => ({
+              workspaceId: workspace.id,
+              workspaceName: workspace.name,
+              tokens: tokens.map((t) => ({
+                id: t.id,
+                label: t.label,
                 expiresAt: t.expires_at,
                 revokedAt: t.revoked_at,
                 createdAt: t.created_at,
