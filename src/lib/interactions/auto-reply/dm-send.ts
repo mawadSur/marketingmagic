@@ -109,6 +109,7 @@ export async function attemptLeadCaptureDm(
     channel,
     trustMode: account.trust_mode === true,
     dmCaptureEnabled: engaged,
+    isLive: modeSends(mode), // trust required only for live; shadow previews freely
     killSwitch,
     hasRule: rule !== null,
     keywordMatched: matchedKeyword !== null,

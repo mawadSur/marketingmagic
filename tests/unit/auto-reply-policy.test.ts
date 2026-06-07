@@ -22,6 +22,7 @@ const green: AutoReplyGateInput = {
   channel: "x",
   trustMode: true,
   autoReplyEnabled: true,
+  isLive: true, // green = a live (sending) account; trust is required here
   killSwitch: false,
   interactionStatus: "unread",
   hasDraft: true,
@@ -66,10 +67,25 @@ describe("evaluateAutoReplyGate — fail-closed, priority order", () => {
     }
   });
 
-  it("blocks when the existing trust model (trust_mode) is off", () => {
+  it("blocks LIVE when the existing trust model (trust_mode) is off", () => {
+    // isLive stays true (green) — trust is required for live sending.
     const d = evaluateAutoReplyGate({ ...green, trustMode: false });
     expect(d.send).toBe(false);
     expect(d.reason).toBe("not_trusted");
+  });
+
+  it("SHADOW bypasses trust: previews without trust_mode (zero blast radius)", () => {
+    // shadow sends nothing, so it must be reachable without the trust bar.
+    const d = evaluateAutoReplyGate({ ...green, trustMode: false, isLive: false });
+    expect(d.send).toBe(true);
+    expect(d.reason).toBeNull();
+  });
+
+  it("SHADOW still respects the kill switch, opt-in, channel, and freshness", () => {
+    expect(evaluateAutoReplyGate({ ...green, isLive: false, killSwitch: true }).reason).toBe("kill_switch");
+    expect(evaluateAutoReplyGate({ ...green, isLive: false, autoReplyEnabled: false }).reason).toBe("not_opted_in");
+    expect(evaluateAutoReplyGate({ ...green, isLive: false, channel: "instagram" }).reason).toBe("channel_unsupported");
+    expect(evaluateAutoReplyGate({ ...green, isLive: false, interactionStatus: "read" }).reason).toBe("already_replied");
   });
 
   it("blocks when trust is on but the auto-reply opt-in is off (default)", () => {
@@ -93,20 +109,21 @@ describe("evaluateAutoReplyGate — fail-closed, priority order", () => {
   });
 
   it("DEFAULTS ARE OFF: a never-configured account never sends", () => {
-    // Mirrors the DB defaults: trust_mode=false, auto_reply_enabled=false,
-    // kill switch defaults false (= not killed). The opt-ins being off is
-    // what holds the line.
+    // Mirrors the DB defaults: mode='off' (→ not engaged, not live),
+    // trust_mode=false, kill switch false. The opt-in being off holds the line.
     const d = evaluateAutoReplyGate({
       channel: "x",
       trustMode: false,
       autoReplyEnabled: false,
+      isLive: false, // mode 'off' is neither shadow nor live
       killSwitch: false,
       interactionStatus: "unread",
       hasDraft: true,
     });
     expect(d.send).toBe(false);
-    // trust_mode is checked before the opt-in, so this surfaces not_trusted.
-    expect(d.reason).toBe("not_trusted");
+    // Not live, so the trust gate is skipped; the opt-in being off is what
+    // holds the line. Either way the account never sends.
+    expect(d.reason).toBe("not_opted_in");
   });
 });
 
