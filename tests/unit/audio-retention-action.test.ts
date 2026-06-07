@@ -39,10 +39,10 @@ vi.mock("@/lib/workspace", () => ({
 vi.mock("next/cache", () => ({ revalidatePath }));
 
 import {
-  parseOptInCheckbox,
   updateAudioRetentionAction,
   type AudioRetentionState,
 } from "@/app/(app)/settings/brief/audio-retention-actions";
+import { parseOptInCheckbox } from "@/app/(app)/settings/brief/audio-retention-parse";
 
 const prev: AudioRetentionState = { error: null, message: null };
 

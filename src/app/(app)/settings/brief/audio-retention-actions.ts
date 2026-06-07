@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabase/server";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
+import { parseOptInCheckbox, type AudioRetentionState } from "./audio-retention-parse";
 
 // Phase 2.6 — audio_retention_opt_in toggle.
 //
@@ -13,17 +14,11 @@ import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 // lives in ./audio-retention-section.tsx.
 //
 // Kept in its own file (not brief/actions.ts) so the brief action file stays
-// under the 500-line ceiling — mirrors theme-snooze-actions.ts.
+// under the 500-line ceiling — mirrors theme-snooze-actions.ts. The pure
+// helpers live in ./audio-retention-parse.ts because a "use server" module may
+// only export async Server Actions (a sync export fails the production build).
 
-export type AudioRetentionState = { error: string | null; message: string | null };
-
-// Pure parse of the checkbox field. HTML checkboxes submit their `value`
-// (default "on") when checked and omit the field entirely when unchecked —
-// so a present, truthy value means opt-in, anything else (incl. null) means
-// opt-out. Exported for unit testing.
-export function parseOptInCheckbox(raw: FormDataEntryValue | null): boolean {
-  return raw === "on" || raw === "true" || raw === "1";
-}
+export type { AudioRetentionState };
 
 export async function updateAudioRetentionAction(
   _prev: AudioRetentionState,
