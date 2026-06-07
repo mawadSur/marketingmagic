@@ -546,9 +546,10 @@ export interface Database {
           theme_snooze: ThemeSnoozeEntry[];
           theme_gaps_enabled: boolean;
           // Phase 2.6 Founder Mode: opt-in to retain raw voice-memo audio
-          // in the `founder-audio` Storage bucket after transcription.
-          // Default false (audio discarded post-transcription).
-          keep_raw_audio: boolean;
+          // in the `founder-audio` Storage bucket for 30 days after
+          // transcription. Default false (audio deleted immediately post-
+          // transcription). Renamed from keep_raw_audio in migration 050.
+          audio_retention_opt_in: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -568,7 +569,7 @@ export interface Database {
           audience_timezone?: string;
           theme_snooze?: ThemeSnoozeEntry[];
           theme_gaps_enabled?: boolean;
-          keep_raw_audio?: boolean;
+          audio_retention_opt_in?: boolean;
         };
         Update: Partial<{
           product_description: string;
@@ -584,7 +585,7 @@ export interface Database {
           audience_timezone: string;
           theme_snooze: ThemeSnoozeEntry[];
           theme_gaps_enabled: boolean;
-          keep_raw_audio: boolean;
+          audio_retention_opt_in: boolean;
         }>;
         Relationships: [];
       };
