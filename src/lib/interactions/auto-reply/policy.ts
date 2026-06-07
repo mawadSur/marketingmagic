@@ -378,8 +378,13 @@ export interface DmCaptureEnableGateInput {
   channel: string;
   // Account connection status — must be 'connected' to opt in.
   status: string;
-  // EXISTING publishing trust model: social_accounts.trust_mode. Required true.
+  // EXISTING publishing trust model: social_accounts.trust_mode.
   trustMode: boolean;
+  // Whether trust is required for the mode being set. Trust is needed only to
+  // go LIVE (actually DM strangers); SHADOW previews without sending, so it's
+  // reachable without trust. Defaults true (the conservative legacy behaviour
+  // for callers that gate the boolean opt-in). Pass `mode === "live"`.
+  requireTrust?: boolean;
 }
 
 export interface DmCaptureEnableGateDecision {
@@ -399,9 +404,10 @@ export function evaluateDmCaptureEnableGate(
   if (!isAutoReplyChannel(input.channel)) {
     return { ok: false, reason: "channel_unsupported" };
   }
-  // 3. Existing trust model must be on. (Reused — not a new concept.) Mirrors
-  //    auto-reply: the riskier auto-DM behaviour builds on publishing trust.
-  if (input.trustMode !== true) {
+  // 3. Existing trust model must be on — but only when required (going live).
+  //    Shadow previews without sending, so it bypasses the trust bar. Defaults
+  //    to requiring trust for the legacy boolean-opt-in callers.
+  if (input.requireTrust !== false && input.trustMode !== true) {
     return { ok: false, reason: "not_trusted" };
   }
   return { ok: true, reason: null };

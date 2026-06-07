@@ -106,7 +106,11 @@ export async function setAutoReplyModeAction(
   const ws = await getActiveWorkspaceOrRedirect();
   const supabase = await supabaseServer();
 
-  // Engaging (shadow OR live) is gated; going 'off' is always allowed.
+  // Engaging (shadow OR live) requires a connected, supported channel; going
+  // 'off' is always allowed. Trust mode is required ONLY for 'live' — shadow
+  // sends nothing (zero blast radius), so it's reachable without the trust bar
+  // to let the user preview the AI's output before earning trust. Mirrors the
+  // gate in policy.evaluateAutoReplyGate (isLive branch).
   if (mode !== "off") {
     const { data: acct } = await supabase
       .from("social_accounts")
@@ -123,9 +127,9 @@ export async function setAutoReplyModeAction(
         error: "Auto-reply is only available on X, Bluesky, and LinkedIn.",
       };
     }
-    if (acct.trust_mode !== true) {
+    if (mode === "live" && acct.trust_mode !== true) {
       return {
-        error: "Turn on trust mode first — auto-reply builds on it.",
+        error: "Turn on trust mode first — going live builds on it. (Shadow works now.)",
       };
     }
   }
@@ -175,6 +179,8 @@ export async function setDmCaptureModeAction(
       channel: acct.channel,
       status: acct.status,
       trustMode: acct.trust_mode === true,
+      // Trust required only to go live; shadow previews without sending.
+      requireTrust: mode === "live",
     });
     if (!gate.ok && gate.reason) {
       return { error: DM_CAPTURE_BLOCK_COPY[gate.reason] };
