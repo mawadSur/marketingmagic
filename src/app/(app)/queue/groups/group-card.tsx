@@ -269,7 +269,11 @@ export function GroupCard({
   }
 
   return (
-    <li id={`group-${group.id}`} className="scroll-mt-20 space-y-4 rounded-lg border bg-card p-4">
+    <li
+      id={`group-${group.id}`}
+      aria-label={`Group: ${group.name}`}
+      className="scroll-mt-20 space-y-4 rounded-lg border bg-card p-4"
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
