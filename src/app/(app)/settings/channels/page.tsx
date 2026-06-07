@@ -3,6 +3,7 @@ import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseService } from "@/lib/supabase/service";
 import { tierFor, type PlanId } from "@/lib/billing/tiers";
+import { overLimitAccountIds } from "@/lib/billing/limits";
 import { ChannelBadge, statusBadgeVariant, Badge, statusBadgeLabel } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 
@@ -72,6 +73,18 @@ export default async function ChannelsPage({
   const tier = tierFor(plan);
   const channelLimit = tier.limits.channels;
   const atChannelLimit = channelLimit !== -1 && connectedCount >= channelLimit;
+
+  // SOFT channel-cap enforcement (retroactive). assertWithinChannelQuota blocks
+  // NEW connects, but a workspace can already be OVER the cap — e.g. after a plan
+  // downgrade or a Stripe lapse that maps the effective plan to hobby. Those
+  // over-limit accounts stay connected but are BLOCKED from publishing + auto-
+  // actions by the crons (see the publish + poll-interactions routes). Mark them
+  // here so the UI matches reality. overLimitAccountIds is the SAME helper those
+  // crons use — single source of truth, computed-on-read from the EFFECTIVE plan
+  // (resolvePlanForWorkspace) + oldest-N-kept ordering — so the set the UI shows
+  // is exactly the set the crons enforce. Empty for unlimited plans / at-or-under
+  // the cap, so within-limit accounts render unchanged.
+  const overLimitIds = await overLimitAccountIds(ws.id, svc);
 
   // Post-connect guidance. OAuth callbacks all land here, but connecting a
   // channel is only step one — users were getting stranded with no nudge
@@ -159,27 +172,51 @@ export default async function ChannelsPage({
         </div>
         {hasAny ? (
           <ul className="divide-y rounded-lg border bg-card">
-            {accounts!.map((a) => (
-              <li key={a.id} className="transition-colors duration-200 hover:bg-muted/30">
-                <Link
-                  href={`/settings/channels/${a.id}`}
-                  className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm"
+            {accounts!.map((a) => {
+              const isOverLimit = overLimitIds.has(a.id);
+              return (
+                <li
+                  key={a.id}
+                  className={`transition-colors duration-200 hover:bg-muted/30${
+                    isOverLimit ? " bg-amber-500/5" : ""
+                  }`}
                 >
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    <ChannelBadge channel={a.channel} />
-                    <span className="font-medium">@{a.handle}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {a.trust_mode
-                        ? `auto-post (${a.successful_post_count}/${a.trust_threshold})`
-                        : "manual approval"}
-                    </span>
-                  </div>
-                  <Badge variant={statusBadgeVariant(a.status)}>
-                    {statusBadgeLabel(a.status)}
-                  </Badge>
-                </Link>
-              </li>
-            ))}
+                  <Link
+                    href={`/settings/channels/${a.id}`}
+                    className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm"
+                  >
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <ChannelBadge channel={a.channel} />
+                      <span
+                        className={`font-medium${isOverLimit ? " text-muted-foreground" : ""}`}
+                      >
+                        @{a.handle}
+                      </span>
+                      {isOverLimit ? (
+                        // Over the plan's connected-channel cap: stays connected but
+                        // blocked from publishing + auto-actions until upgrade/disconnect.
+                        <span className="text-xs text-muted-foreground">
+                          Inactive — upgrade or disconnect
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          {a.trust_mode
+                            ? `auto-post (${a.successful_post_count}/${a.trust_threshold})`
+                            : "manual approval"}
+                        </span>
+                      )}
+                    </div>
+                    {isOverLimit ? (
+                      <Badge variant="warning">Inactive</Badge>
+                    ) : (
+                      <Badge variant={statusBadgeVariant(a.status)}>
+                        {statusBadgeLabel(a.status)}
+                      </Badge>
+                    )}
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         ) : (
           <EmptyState
@@ -194,13 +231,37 @@ export default async function ChannelsPage({
         <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="space-y-1">
-              <p className="font-medium">
-                Channel limit reached on the {tier.name} plan.
-              </p>
-              <p className="text-muted-foreground">
-                You&apos;re using {connectedCount} of {channelLimit} connected{" "}
-                {channelLimit === 1 ? "channel" : "channels"}. Upgrade to connect more.
-              </p>
+              {overLimitIds.size > 0 ? (
+                // Over-limit (not just at-limit): some connected accounts are
+                // beyond the cap and have been made inactive. Explain the soft
+                // enforcement — they stay connected, but won't publish or take
+                // auto-actions until the user upgrades or disconnects one.
+                <>
+                  <p className="font-medium">
+                    {overLimitIds.size} {overLimitIds.size === 1 ? "channel is" : "channels are"}{" "}
+                    over your {tier.name} plan limit.
+                  </p>
+                  <p className="text-muted-foreground">
+                    Your {tier.name} plan includes {channelLimit}{" "}
+                    {channelLimit === 1 ? "channel" : "channels"}, but {connectedCount} are
+                    connected. The newest {overLimitIds.size}{" "}
+                    {overLimitIds.size === 1 ? "is" : "are"} marked{" "}
+                    <span className="font-medium">Inactive</span> — still connected, but
+                    they won&apos;t publish or auto-engage. Upgrade to reactivate them, or
+                    disconnect a channel to free a slot.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-medium">
+                    Channel limit reached on the {tier.name} plan.
+                  </p>
+                  <p className="text-muted-foreground">
+                    You&apos;re using {connectedCount} of {channelLimit} connected{" "}
+                    {channelLimit === 1 ? "channel" : "channels"}. Upgrade to connect more.
+                  </p>
+                </>
+              )}
             </div>
             <Link
               href="/settings/billing"
