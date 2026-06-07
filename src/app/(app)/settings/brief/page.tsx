@@ -5,6 +5,7 @@ import { BriefForm } from "./brief-form";
 import { PendingVoiceDiffCard } from "./pending-voice-diff-card";
 import { TimezoneSection } from "./timezone-section";
 import { ThemeSnoozeControls } from "./theme-snooze-controls";
+import { AudioRetentionSection } from "./audio-retention-section";
 import { getThemePreferences } from "@/lib/themes/preferences";
 
 export const dynamic = "force-dynamic";
@@ -38,6 +39,9 @@ export default async function BriefPage() {
         />
       ) : null}
       {brief ? <TimezoneSection initial={brief.audience_timezone ?? null} /> : null}
+      {brief ? (
+        <AudioRetentionSection initialOptIn={brief.audio_retention_opt_in ?? false} />
+      ) : null}
       {brief ? (
         <ThemeSnoozeControls
           gapsEnabled={prefs.gapsEnabled}

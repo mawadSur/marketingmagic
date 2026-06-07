@@ -439,7 +439,7 @@ function RetentionFootnote({ keepRawAudio }: { keepRawAudio: boolean }) {
       {keepRawAudio ? (
         <>
           Audio retention is <span className="font-medium">on</span> — your
-          recording is saved to your private vault for 90 days.{" "}
+          recording is saved to your private vault for 30 days.{" "}
           <Link href="/settings/brief" className="underline">
             Change
           </Link>

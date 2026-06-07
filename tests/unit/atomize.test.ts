@@ -37,7 +37,7 @@ function makeBrief(overrides: Partial<Brief> = {}): Brief {
     audience_timezone: "UTC",
     theme_snooze: [],
     theme_gaps_enabled: true,
-    keep_raw_audio: false,
+    audio_retention_opt_in: false,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     ...overrides,

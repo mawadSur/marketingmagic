@@ -69,13 +69,13 @@ export default async function RecordPage() {
   // transcription" label.
   const { data: brief } = await svc
     .from("brand_briefs")
-    .select("keep_raw_audio")
+    .select("audio_retention_opt_in")
     .eq("workspace_id", ws.id)
     .maybeSingle();
 
   return (
     <RecordClient
-      keepRawAudio={Boolean(brief?.keep_raw_audio)}
+      keepRawAudio={Boolean(brief?.audio_retention_opt_in)}
       transcriptionConfigured={transcriptionConfigured()}
     />
   );

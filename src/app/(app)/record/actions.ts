@@ -19,10 +19,10 @@ import {
 const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
 
 // Storage bucket for voice memos retained on user opt-in (brand_briefs
-// .keep_raw_audio = true). Bucket is dashboard-created with a 90-day
-// lifecycle and workspace-scoped path-prefix RLS — see migration 015
-// header comment. When keep_raw_audio = false, we never touch Storage and
-// the audio bytes are discarded after the Groq round-trip.
+// .audio_retention_opt_in = true). Bucket is dashboard-created with a
+// 30-day lifecycle and workspace-scoped path-prefix RLS — see migrations
+// 015 + 050. When audio_retention_opt_in = false, we never touch Storage
+// and the audio bytes are discarded after the Groq round-trip.
 const AUDIO_BUCKET = "founder-audio";
 
 export interface TranscribeRecordingResult {
@@ -49,7 +49,7 @@ export interface TranscribeRecordingResult {
 // recorded Blob. We:
 //   1. Re-verify the workspace is on the Founder tier (defense-in-depth
 //      vs anyone hitting the action directly).
-//   2. Read brand_briefs.keep_raw_audio.
+//   2. Read brand_briefs.audio_retention_opt_in.
 //   3. If retention is on, upload to Storage before transcribing so the
 //      blob is persisted before we touch Groq (so a Groq failure doesn't
 //      cost the user the recording).
@@ -92,10 +92,10 @@ export async function transcribeRecordingAction(
   // privacy-preserving default).
   const { data: brief } = await svc
     .from("brand_briefs")
-    .select("keep_raw_audio")
+    .select("audio_retention_opt_in")
     .eq("workspace_id", ws.id)
     .maybeSingle();
-  const keepAudio = Boolean(brief?.keep_raw_audio);
+  const keepAudio = Boolean(brief?.audio_retention_opt_in);
 
   // Best-effort filename + content-type. MediaRecorder on Chromium emits
   // webm/opus by default; Safari emits mp4 (m4a). Groq sniffs the MIME so
