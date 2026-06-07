@@ -32,7 +32,7 @@ export function TodayPanel({ groups }: { groups: GroupView[] }) {
   if (groups.length === 0) return null;
 
   return (
-    <section className="space-y-3">
+    <section className="space-y-3" aria-label="Good to post today">
       <div className="flex items-center gap-2">
         <h2 className="text-base font-medium">Good to post today</h2>
         <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-md border bg-muted/40 px-1.5 text-[10px] font-medium tabular-nums text-muted-foreground">
