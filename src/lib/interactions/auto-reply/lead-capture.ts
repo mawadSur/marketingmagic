@@ -1,38 +1,30 @@
-// Bet 4 — comment→DM lead capture.
+// Bet 4 — comment→DM lead capture (X / Bluesky / LinkedIn).
 //
 // =======================================================================
-// STUBBED — NOT WIRED INTO THE CRON YET.
+// PURE RULE LOGIC + DEFENSIVE post_outcomes WRITER.
 // =======================================================================
-// The intended flow (X / Bluesky / LinkedIn only):
+// The flow this module powers (orchestrated in dm-send.ts, run from the
+// poll-interactions cron):
 //   1. An inbound comment/mention matches a workspace keyword rule
-//      (e.g. "pricing", "demo", "how much").
-//   2. We send a DIRECT MESSAGE to the author with a link (lead magnet /
-//      booking page), and tag the interaction as a captured lead.
-//   3. The lead is recorded in the `post_outcomes` table
-//      (workspace_id, post_id, outcome_type='lead', value_cents, note),
-//      which ANOTHER agent is currently building. We do NOT create that
-//      table; we write to it defensively (no-op if it doesn't exist yet).
+//      (e.g. "pricing", "demo", "how much"), parsed from
+//      social_accounts.lead_keyword_rule (migration 046).
+//   2. We send a DIRECT MESSAGE to the author containing a configured link
+//      (lead magnet / booking page), guarded by a per-channel runtime
+//      capability check (see src/lib/social/*: xSendDm / blueskySendDm /
+//      linkedinSendDm). If the account lacks DM capability, the send is a
+//      clean, audited no-op.
+//   3. On a successful send, the interaction is tagged as a captured lead
+//      in `post_outcomes` (outcome_type='lead') via tagLeadOutcome. That
+//      table EXISTS on this branch (migration 042) but we keep the
+//      defensive guard so a future schema drift never breaks the path.
 //
-// WHY IT'S STUBBED, NOT BUILT, IN THIS SLICE:
-//   * There is NO DM send helper for X / Bluesky / LinkedIn anywhere in
-//     src/lib/social/*. Adding real DM dispatch is a separate, sizeable
-//     piece of work (new scopes for X DMs, AT-proto convo APIs for
-//     Bluesky, the LinkedIn messaging API + its much stricter approval)
-//     and each carries its own anti-spam/abuse surface that deserves its
-//     own review — exactly the kind of "auto-DM a stranger" action that
-//     warrants more care than the auto-REPLY we shipped here.
-//   * `post_outcomes` doesn't exist in this branch yet, so the lead-tag
-//     write has nowhere to land. The guard below is the contract for when
-//     it does.
-//
-// The auto-REPLY path (items #1 and #2 of the slice) is fully shipped and
-// independent of this. This module exists so the keyword-rule + lead-tag
-// shape is pinned down and the post_outcomes dependency is handled
-// defensively the day DM dispatch lands.
+// This file stays PURE + side-effect-isolated: the matcher and rule parser
+// are exhaustively unit-testable, and the only DB touch (tagLeadOutcome) is
+// hard-guarded. The networked orchestration lives in dm-send.ts.
 // =======================================================================
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/lib/db/types";
+import type { Database, Json } from "@/lib/db/types";
 
 type ServiceClient = SupabaseClient<Database>;
 
@@ -44,6 +36,59 @@ export interface LeadKeywordRule {
   link: string;
   // Optional cents value to attribute to a captured lead in post_outcomes.
   valueCents?: number;
+  // Optional DM body template. `{{link}}` is substituted with `link`. When
+  // absent, buildDmBody falls back to a neutral default. Capped to the DM
+  // length ceiling at build time.
+  message?: string;
+}
+
+// Parse + validate a raw social_accounts.lead_keyword_rule JSON blob into a
+// LeadKeywordRule, or null when it's absent/malformed/unusable. A usable rule
+// needs at least one non-trivial keyword AND a non-empty link — anything less
+// means the comment→DM path must no-op (no_rule), never guess. Fail-closed:
+// any parse ambiguity returns null rather than a half-built rule.
+export function parseLeadKeywordRule(raw: Json | null | undefined): LeadKeywordRule | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+
+  const rawKeywords = obj.keywords;
+  if (!Array.isArray(rawKeywords)) return null;
+  const keywords = rawKeywords
+    .filter((k): k is string => typeof k === "string")
+    .map((k) => k.trim())
+    .filter((k) => k.length >= 2);
+  if (keywords.length === 0) return null;
+
+  const link = typeof obj.link === "string" ? obj.link.trim() : "";
+  if (link.length === 0) return null;
+
+  const valueCents =
+    typeof obj.valueCents === "number" && Number.isFinite(obj.valueCents) && obj.valueCents >= 0
+      ? Math.floor(obj.valueCents)
+      : undefined;
+  const message =
+    typeof obj.message === "string" && obj.message.trim().length > 0
+      ? obj.message
+      : undefined;
+
+  return { keywords, link, ...(valueCents !== undefined ? { valueCents } : {}), ...(message ? { message } : {}) };
+}
+
+// DM body ceiling — matches the manual composer + the dm_capture_log CHECK.
+export const DM_BODY_MAX = 3000;
+
+// Build the DM body from the rule. Substitutes `{{link}}` in the template (or
+// appends the link to a neutral default), then clamps to DM_BODY_MAX. Always
+// returns a non-empty string when the rule has a link.
+export function buildDmBody(rule: LeadKeywordRule): string {
+  const template =
+    rule.message && rule.message.includes("{{link}}")
+      ? rule.message
+      : rule.message
+        ? `${rule.message}\n\n${rule.link}`
+        : `Thanks for reaching out! Here's the link you asked about: {{link}}`;
+  const body = template.replace(/\{\{link\}\}/g, rule.link).trim();
+  return body.length > DM_BODY_MAX ? body.slice(0, DM_BODY_MAX) : body;
 }
 
 // Pure keyword matcher — the one piece of this flow that's testable today.
@@ -71,23 +116,21 @@ export interface LeadCaptureInput {
   note: string;
 }
 
-// Defensive write to `post_outcomes`. The table is owned by another agent
-// and may not exist yet on this branch. We swallow the "relation does not
-// exist" / "schema cache" errors so a missing dependency NEVER breaks the
-// auto-reply path. Returns true iff the row was actually written.
-//
-// NOTE: this is currently only reachable from tests / a future DM wiring —
-// the cron does not call it yet (no DM dispatch exists). See the file
-// header. // TODO(bet4-dm): wire after a DM send helper + post_outcomes land.
+// Defensive write to `post_outcomes`. The table EXISTS on this branch now
+// (migration 042), and the comment→DM orchestrator (dm-send.ts) calls this on
+// every successful auto-DM. We KEEP the hard guard regardless: a schema drift,
+// an RLS surprise, or a future column rename must NEVER break the DM path —
+// a lead-tag miss is logged (lead_tagged=false) but the DM still counts.
+// Returns true iff the row was actually written.
 export async function tagLeadOutcome(
   svc: ServiceClient,
   input: LeadCaptureInput,
 ): Promise<boolean> {
   if (!input.postId) return false;
   try {
-    // `post_outcomes` is not in our generated Database types yet (the other
-    // agent owns it), so we reach it via an untyped escape hatch and guard
-    // hard. This is the ONLY place we touch that table.
+    // Reached via an untyped escape hatch + hard guard. Even though the table
+    // is now in our generated Database types, the defensive path is cheap and
+    // keeps this the ONLY place we touch that table, with one failure mode.
     const table = (svc as unknown as {
       from: (t: string) => {
         insert: (row: Record<string, unknown>) => Promise<{ error: { message: string; code?: string } | null }>;

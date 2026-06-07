@@ -173,3 +173,117 @@ export function evaluateAutoReplyGate(
 
   return { send: true, reason: null };
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// Bet 4 — comment→DM lead capture: the DM GATE + DM RATE CAP.
+//
+// Auto-DMing a STRANGER is higher blast-radius than the public reply auto-send
+// above (an unsolicited private message reads as spam and can get the account
+// flagged). So the DM path reuses the SAME safety primitives — same channel
+// set, same kill switch, same windowed counter — but with:
+//   * its OWN per-account opt-in (dm_capture_enabled, migration 046),
+//   * STRICTER, LOWER per-platform rate caps,
+//   * extra gate steps for "a rule is configured" and "a keyword matched".
+// It is fail-closed in the identical priority order.
+// ════════════════════════════════════════════════════════════════════════
+
+// Per-platform max auto-DMs per account per rolling hour. Deliberately LOWER
+// than the reply caps (AUTO_REPLY_RATE_CAP_PER_HOUR) — a stray auto-reply is
+// recoverable; a burst of unsolicited DMs is an account-suspension risk. These
+// are *auto* caps only; a human can DM by hand without limit.
+export const DM_CAPTURE_RATE_CAP_PER_HOUR: Record<AutoReplyChannel, number> = {
+  // X DMs to non-followers are heavily abuse-policed. Keep it tiny.
+  x: 2,
+  // Bluesky chat is young; stay extremely polite.
+  bluesky: 3,
+  // LinkedIn is the most enforcement-happy; and messaging is partnership-gated
+  // anyway, so this is mostly academic — keep it the lowest regardless.
+  linkedin: 1,
+};
+
+// DM rate-cap guard. Mirrors checkRateCap but against the DM cap table and the
+// dm_capture_log 'sent' history. Reuses the same pure windowed counter.
+export function checkDmRateCap(
+  channel: AutoReplyChannel,
+  sentTimestampsMs: number[],
+  now: number,
+  windowMs: number = RATE_CAP_WINDOW_MS,
+): RateCapDecision {
+  const cap = DM_CAPTURE_RATE_CAP_PER_HOUR[channel];
+  const used = countWithinWindow(sentTimestampsMs, now, windowMs);
+  const remaining = Math.max(0, cap - used);
+  return { allowed: used < cap, channel, cap, used, remaining };
+}
+
+// Machine-readable reason a comment→DM auto-send was held. Superset of the
+// reply reasons (it adds no_rule / no_keyword_match) and maps onto the
+// dm_capture_log.outcome_reason CHECK in migration 046.
+export type DmCaptureBlockReason =
+  | "kill_switch"
+  | "channel_unsupported"
+  | "not_trusted"
+  | "not_opted_in"
+  | "no_rule"
+  | "no_keyword_match"
+  | "already_actioned"
+  | "rate_capped";
+
+export interface DmGateInput {
+  // Channel the interaction arrived on (raw string off the row).
+  channel: string;
+  // EXISTING publishing trust model: social_accounts.trust_mode. Required true.
+  trustMode: boolean;
+  // Per-account DM opt-in (migration 046). Required true — defaults false, and
+  // is INDEPENDENT of auto_reply_enabled.
+  dmCaptureEnabled: boolean;
+  // Workspace-wide hard stop (migration 045, REUSED). When true, nothing sends.
+  killSwitch: boolean;
+  // Is a keyword rule configured for this account? false → no_rule.
+  hasRule: boolean;
+  // Did the inbound body match a keyword in the rule? false → no_keyword_match.
+  keywordMatched: boolean;
+  // Current interaction status. Only fresh `unread` rows are DM-eligible.
+  interactionStatus: string;
+}
+
+export interface DmGateDecision {
+  send: boolean;
+  reason: DmCaptureBlockReason | null;
+}
+
+// The DM trust-gating decision. Fail-closed priority order; the most decisive
+// "stop" wins. The rate cap + the per-channel capability check are enforced
+// SEPARATELY by the caller (they need DB / network) — this is the pure static
+// gate, exhaustively unit-testable for a feature that messages strangers.
+export function evaluateDmGate(input: DmGateInput): DmGateDecision {
+  // 1. Hard stop first — the shared kill switch overrides everything.
+  if (input.killSwitch) return { send: false, reason: "kill_switch" };
+
+  // 2. Channel must be in the shippable set (X/Bluesky/LinkedIn).
+  if (!isAutoReplyChannel(input.channel)) {
+    return { send: false, reason: "channel_unsupported" };
+  }
+
+  // 3. Existing trust model must be on. (Reused — not a new concept.)
+  if (input.trustMode !== true) return { send: false, reason: "not_trusted" };
+
+  // 4. The riskier auto-DM behaviour must be explicitly opted into.
+  if (input.dmCaptureEnabled !== true) {
+    return { send: false, reason: "not_opted_in" };
+  }
+
+  // 5. A keyword rule must be configured for this account.
+  if (input.hasRule !== true) return { send: false, reason: "no_rule" };
+
+  // 6. The inbound body must actually match a configured keyword.
+  if (input.keywordMatched !== true) {
+    return { send: false, reason: "no_keyword_match" };
+  }
+
+  // 7. Only fresh, un-actioned inbound items are DM-eligible.
+  if (input.interactionStatus !== "unread") {
+    return { send: false, reason: "already_actioned" };
+  }
+
+  return { send: true, reason: null };
+}

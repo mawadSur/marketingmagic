@@ -12,6 +12,7 @@ import {
   attemptAutoReply,
   type AutoReplyVoiceContext,
 } from "@/lib/interactions/auto-reply/send";
+import { attemptLeadCaptureDm } from "@/lib/interactions/auto-reply/dm-send";
 import { isAutoReplyChannel } from "@/lib/interactions/auto-reply/policy";
 import { loadFreshXCredentials, type XCredentials } from "@/lib/social/x";
 import type { LinkedInCredentials } from "@/lib/social/linkedin";
@@ -104,6 +105,8 @@ interface PerAccountResult {
   fetched?: number;
   // Bet 4 — count of rows we auto-replied to on this account this run.
   autoReplied?: number;
+  // Bet 4 — count of comment→DM lead-capture DMs sent on this account this run.
+  dmCaptured?: number;
   reason?: string;
 }
 
@@ -205,18 +208,19 @@ async function handle(req: NextRequest) {
         now,
       );
 
-      // Bet 4 — autonomous auto-reply pass. Only on shippable channels.
-      // The per-interaction gate (trust_mode + opt-in + kill switch +
-      // rate cap) lives in attemptAutoReply; this just feeds it the
-      // newly-inserted, still-unread rows.
+      // Bet 4 — comment→DM lead-capture pass, then auto-reply. Both only on
+      // shippable channels (X/Bluesky/LinkedIn).
+      //
+      // ORDER MATTERS: the DM pass runs FIRST. It fires only on keyword
+      // matches (the more specific, higher-value action) and flips matched
+      // rows to status='read'. The auto-reply pass that follows reloads only
+      // still-`unread` rows, so a comment captured as a lead is never ALSO
+      // auto-replied to — we never both DM and publicly reply to one person.
+      let dmCaptured = 0;
       let autoReplied = 0;
       if (insertedIds.length > 0 && isAutoReplyChannel(acct.channel)) {
-        autoReplied = await runAutoReplies(
-          acct,
-          insertedIds,
-          briefCtx,
-          now,
-        );
+        dmCaptured = await runLeadCaptureDms(acct, insertedIds, briefCtx, now);
+        autoReplied = await runAutoReplies(acct, insertedIds, briefCtx, now);
       }
 
       results.push({
@@ -227,6 +231,7 @@ async function handle(req: NextRequest) {
         fetched: result.interactions.length,
         inserted: insertedIds.length,
         autoReplied,
+        dmCaptured,
       });
     } catch (err) {
       // Special-case the Meta-App-Review-pending error so the response
@@ -260,6 +265,7 @@ async function handle(req: NextRequest) {
     skipped: results.filter((r) => r.status === "skipped").length,
     tierPending: results.filter((r) => r.status === "tier_pending").length,
     autoReplied: results.reduce((sum, r) => sum + (r.autoReplied ?? 0), 0),
+    dmCaptured: results.reduce((sum, r) => sum + (r.dmCaptured ?? 0), 0),
     results,
     at: now.toISOString(),
   });
@@ -324,6 +330,40 @@ async function runAutoReplies(
       row,
       ctx.killSwitch,
       ctx.voice,
+      now,
+    );
+    if (result.outcome === "sent") sent += 1;
+  }
+  return sent;
+}
+
+// Bet 4 — run the comment→DM lead-capture pass for one account over the
+// newly-inserted, still-unread rows. Returns the count of DMs SENT. Each
+// attempt is independently gated (rule + keyword + trust + opt-in + kill
+// switch + rate cap), capability-guarded, and audited inside
+// attemptLeadCaptureDm; a single failure / scope-miss never poisons the rest.
+// Runs BEFORE runAutoReplies so a captured lead (flipped to status='read')
+// is never also auto-replied to.
+async function runLeadCaptureDms(
+  acct: SocialAccountRow,
+  insertedIds: string[],
+  ctx: WorkspaceContextCache,
+  now: Date,
+): Promise<number> {
+  const svc = supabaseService();
+  const { data: freshRows } = await svc
+    .from("interactions")
+    .select("*")
+    .in("id", insertedIds)
+    .eq("status", "unread");
+  const rows = (freshRows ?? []) as InteractionRow[];
+  let sent = 0;
+  for (const row of rows) {
+    const result = await attemptLeadCaptureDm(
+      svc,
+      acct,
+      row,
+      ctx.killSwitch,
       now,
     );
     if (result.outcome === "sent") sent += 1;

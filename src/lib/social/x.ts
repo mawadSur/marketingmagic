@@ -18,6 +18,7 @@ import crypto from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { serverEnv } from "@/lib/env";
 import { RetryableError } from "./errors";
+import { DmScopeMissingError } from "@/lib/interactions/errors";
 
 // Primary credential shape: OAuth 2.0 PKCE-issued tokens.
 export interface XCredentials {
@@ -732,6 +733,113 @@ export async function xResolveUsername(
     throw new Error(`X resolve username returned no data for @${cleaned}`);
   }
   return { id: body.data.id, username: body.data.username, name: body.data.name ?? null };
+}
+
+// ─── Bet 4 (comment→DM lead capture) — Direct Messages ───────────────────
+//
+// Sending a DM via X requires the `dm.write` scope, which X grants only on a
+// PAID API tier (Basic+). Free-tier apps cannot DM at all. There is no cheap
+// pre-flight that reliably reports "this token can DM" without attempting it,
+// so the capability guard is two-layered:
+//
+//   1. STATIC: if the OAuth 2.0 token's granted scopes are known (persisted on
+//      the credentials blob as `scope`) and do NOT include dm.write, we report
+//      the capability as absent WITHOUT a network call. OAuth 1.0a legacy creds
+//      have no scope concept and DM via the v1.1 endpoints requires elevated
+//      access we never request → treated as absent.
+//   2. DYNAMIC: when scopes are unknown (legacy rows predating scope capture),
+//      xSendDm attempts the send and maps the platform's "you don't have access"
+//      responses (403 forbidden / 453 access-level / 401 unsupported scope) to
+//      DmScopeMissingError so the caller no-ops cleanly instead of failing.
+//
+// We deliberately do NOT add dm.write to X_OAUTH_SCOPES: requesting it on Free
+// tier can break the consent screen, and it would force every connected account
+// to re-auth. comment→DM stays a no-op until an operator connects a paid-tier
+// app whose token carries dm.write.
+
+// Optional scope string captured at token-issue time. Present on credentials
+// blobs written after this lands; absent on older rows.
+interface XCredentialsWithScope {
+  scope?: string;
+}
+
+export interface XDmCapability {
+  granted: boolean;
+  // Machine-readable reason when not granted (for the audit log).
+  reason:
+    | "no_scope_recorded_assume_absent"
+    | "scope_missing_dm_write"
+    | "legacy_oauth1_no_dm"
+    | null;
+}
+
+// Static capability check. Conservative: only reports `granted: true` when we
+// can SEE dm.write in the recorded scopes. Unknown scopes → not granted; the
+// dynamic path in xSendDm still attempts + maps a 403, but the cron uses this
+// to skip the attempt and stay quiet by default.
+export function xDmCapability(creds: XCredentialsAny): XDmCapability {
+  if (isLegacyXCreds(creds)) {
+    return { granted: false, reason: "legacy_oauth1_no_dm" };
+  }
+  const scope = (creds as XCredentials & XCredentialsWithScope).scope;
+  if (typeof scope !== "string" || scope.trim().length === 0) {
+    return { granted: false, reason: "no_scope_recorded_assume_absent" };
+  }
+  if (!scope.split(/\s+/).includes("dm.write")) {
+    return { granted: false, reason: "scope_missing_dm_write" };
+  }
+  return { granted: true, reason: null };
+}
+
+export interface XDmResult {
+  // dm_conversation_id of the conversation the event was sent to.
+  id: string;
+  event_id: string;
+}
+
+// Send a one-to-one DM to a recipient X user id via
+// POST /2/dm_conversations/with/:participant_id/messages. Throws
+// DmScopeMissingError when the account lacks dm.write / the right tier (mapped
+// from the platform's access-denied responses) so the caller no-ops cleanly.
+export async function xSendDm(
+  creds: XCredentialsAny,
+  recipientUserId: string,
+  text: string,
+): Promise<XDmResult> {
+  if (!recipientUserId) throw new Error("xSendDm requires a recipient user id.");
+  // Static guard first — if we KNOW dm.write isn't granted, never hit the API.
+  const cap = xDmCapability(creds);
+  if (!cap.granted && cap.reason !== "no_scope_recorded_assume_absent") {
+    throw new DmScopeMissingError("x", "dm.write", cap.reason ?? undefined);
+  }
+  const url = `${BASE_URL}/2/dm_conversations/with/${encodeURIComponent(
+    recipientUserId,
+  )}/messages`;
+  const res = await xFetch(url, {
+    method: "POST",
+    headers: { ...xAuth(creds, url, "POST"), "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  if (res.status === 401 || res.status === 403 || res.status === 453) {
+    // X's access-level / scope errors. Treat as a missing capability (no-op),
+    // not a transient failure.
+    const detail = (await res.text()).slice(0, 200);
+    throw new DmScopeMissingError("x", "dm.write", `${res.status}: ${detail}`);
+  }
+  const json = (await res.json().catch(() => ({}))) as {
+    dm_conversation_id?: string;
+    dm_event_id?: string;
+    data?: { dm_conversation_id?: string; dm_event_id?: string };
+    errors?: unknown;
+  };
+  const id = json.dm_conversation_id ?? json.data?.dm_conversation_id ?? null;
+  const eventId = json.dm_event_id ?? json.data?.dm_event_id ?? null;
+  if (!res.ok || !id) {
+    throw new Error(
+      `X DM send failed (${res.status}): ${JSON.stringify(json).slice(0, 300)}`,
+    );
+  }
+  return { id, event_id: eventId ?? id };
 }
 
 export async function xGetUserPosts(

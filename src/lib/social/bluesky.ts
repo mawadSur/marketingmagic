@@ -5,6 +5,7 @@
 // Service: https://bsky.social (default PDS — could be parameterized later).
 
 import { RetryableError } from "./errors";
+import { DmScopeMissingError } from "@/lib/interactions/errors";
 
 export interface BlueskyCredentials {
   handle: string; // e.g. "marketingmagic.bsky.social"
@@ -582,4 +583,174 @@ export function blueskyWebUrl(handle: string, atUri: string): string | null {
   const match = atUri.match(/\/app\.bsky\.feed\.post\/([^/]+)$/);
   if (!match) return null;
   return `https://bsky.app/profile/${handle}/post/${match[1]}`;
+}
+
+// ─── Bet 4 (comment→DM lead capture) — Direct Messages ───────────────────
+//
+// Bluesky DMs use the AT-proto chat lexicon (chat.bsky.convo.*), which is NOT
+// served by the user's PDS — it's hosted on a separate service reached via the
+// `atproto-proxy: did:web:api.bsky.chat#bsky_chat` header on bsky.social. Two
+// capability requirements gate it:
+//   1. The APP PASSWORD must have been created WITH "Allow access to your direct
+//      messages" — a normal app password is rejected by the chat service. There
+//      is no token-introspection endpoint, so we DETECT this by attempting a
+//      cheap chat call (getConvoForMembers) and treating its access-denied
+//      responses as "capability absent".
+//   2. The RECIPIENT must allow DMs from the sender (their chat declaration).
+//      getConvoForMembers surfaces this too; we map it to scope_missing as well
+//      (we can't DM them, period — no point retrying).
+//
+// On a missing capability we throw DmScopeMissingError so the caller no-ops
+// cleanly. We never spam-retry a DM the platform refused.
+
+// The chat service the proxy header routes to. All chat.bsky.convo.* calls go
+// to the PDS host but carry this proxy header so it forwards to the chat svc.
+const BSKY_CHAT_PROXY = "did:web:api.bsky.chat#bsky_chat";
+
+function chatHeaders(accessJwt: string): Record<string, string> {
+  return {
+    Authorization: `Bearer ${accessJwt}`,
+    "Content-Type": "application/json",
+    "atproto-proxy": BSKY_CHAT_PROXY,
+  };
+}
+
+export interface BlueskyDmCapability {
+  granted: boolean;
+  reason:
+    | "chat_access_denied_app_password"
+    | "recipient_not_messageable"
+    | "chat_service_unreachable"
+    | null;
+}
+
+export interface BlueskyDmResult {
+  // The conversation id the message was delivered to.
+  id: string;
+  // The message record id.
+  messageId: string;
+}
+
+// Resolve a handle (or pass-through a did) to a repo DID via the PDS identity
+// resolver. Returns null on failure so callers can no-op rather than throw.
+async function resolveActorDid(
+  accessJwt: string,
+  actor: string,
+): Promise<string | null> {
+  if (actor.startsWith("did:")) return actor;
+  const url = `${SERVICE}/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(
+    actor.replace(/^@/, ""),
+  )}`;
+  const res = await bskyFetch(url, {
+    headers: { Authorization: `Bearer ${accessJwt}` },
+  });
+  if (!res.ok) return null;
+  const json = (await res.json().catch(() => ({}))) as { did?: string };
+  return typeof json.did === "string" ? json.did : null;
+}
+
+// Probe whether THIS account can open a chat convo with `recipient`. Maps every
+// access-denied / unreachable response to a not-granted result (no throw) so
+// the caller can record a clean scope_missing. Returns the convoId when the
+// convo is reachable so xSendDm-style callers can reuse it.
+async function getConvoForMembers(
+  accessJwt: string,
+  senderDid: string,
+  recipientDid: string,
+): Promise<{ ok: true; convoId: string } | { ok: false; cap: BlueskyDmCapability }> {
+  const url = `${SERVICE}/xrpc/chat.bsky.convo.getConvoForMembers?members=${encodeURIComponent(
+    senderDid,
+  )}&members=${encodeURIComponent(recipientDid)}`;
+  let res: Response;
+  try {
+    res = await bskyFetch(url, { headers: chatHeaders(accessJwt) });
+  } catch {
+    return { ok: false, cap: { granted: false, reason: "chat_service_unreachable" } };
+  }
+  if (res.ok) {
+    const json = (await res.json().catch(() => ({}))) as {
+      convo?: { id?: string };
+    };
+    const convoId = json.convo?.id;
+    if (convoId) return { ok: true, convoId };
+    // 200 but no convo id — treat as unreachable.
+    return { ok: false, cap: { granted: false, reason: "chat_service_unreachable" } };
+  }
+  // Classify the failure. An app password without DM access yields an auth/
+  // forbidden error; a recipient who blocks DMs yields a different one. We
+  // can't always tell them apart from the status alone, so inspect the body.
+  const body = (await res.text().catch(() => "")).toLowerCase();
+  if (
+    res.status === 401 ||
+    res.status === 403 ||
+    body.includes("invalidtoken") ||
+    body.includes("auth")
+  ) {
+    return {
+      ok: false,
+      cap: { granted: false, reason: "chat_access_denied_app_password" },
+    };
+  }
+  return {
+    ok: false,
+    cap: { granted: false, reason: "recipient_not_messageable" },
+  };
+}
+
+// Public capability probe used by the cron's static guard. Resolves the
+// recipient and checks the chat service can open a convo. Never throws.
+export async function blueskyDmCapability(
+  creds: BlueskyCredentials,
+  recipient: string,
+): Promise<BlueskyDmCapability> {
+  let session: Session;
+  try {
+    session = await createSession(creds);
+  } catch {
+    return { granted: false, reason: "chat_service_unreachable" };
+  }
+  const recipientDid = await resolveActorDid(session.accessJwt, recipient);
+  if (!recipientDid) {
+    return { granted: false, reason: "recipient_not_messageable" };
+  }
+  const probe = await getConvoForMembers(session.accessJwt, session.did, recipientDid);
+  return probe.ok ? { granted: true, reason: null } : probe.cap;
+}
+
+// Send a DM to `recipient` (handle or did). Opens/loads the convo, then posts
+// the message. Throws DmScopeMissingError when the app password lacks chat
+// access or the recipient can't be messaged, so the caller no-ops cleanly.
+export async function blueskySendDm(
+  creds: BlueskyCredentials,
+  recipient: string,
+  text: string,
+): Promise<BlueskyDmResult> {
+  if (!recipient) throw new Error("blueskySendDm requires a recipient handle/did.");
+  const session = await createSession(creds);
+  const recipientDid = await resolveActorDid(session.accessJwt, recipient);
+  if (!recipientDid) {
+    throw new DmScopeMissingError("bluesky", "chat.bsky", "recipient could not be resolved");
+  }
+  const convo = await getConvoForMembers(session.accessJwt, session.did, recipientDid);
+  if (!convo.ok) {
+    throw new DmScopeMissingError(
+      "bluesky",
+      "chat.bsky",
+      convo.cap.reason ?? "chat unavailable",
+    );
+  }
+  const res = await bskyFetch(`${SERVICE}/xrpc/chat.bsky.convo.sendMessage`, {
+    method: "POST",
+    headers: chatHeaders(session.accessJwt),
+    body: JSON.stringify({ convoId: convo.convoId, message: { text } }),
+  });
+  if (res.status === 401 || res.status === 403) {
+    const detail = (await res.text().catch(() => "")).slice(0, 200);
+    throw new DmScopeMissingError("bluesky", "chat.bsky", `${res.status}: ${detail}`);
+  }
+  if (!res.ok) {
+    throw new Error(`Bluesky DM send failed (${res.status}): ${await res.text()}`);
+  }
+  const json = (await res.json().catch(() => ({}))) as { id?: string };
+  return { id: convo.convoId, messageId: json.id ?? convo.convoId };
 }

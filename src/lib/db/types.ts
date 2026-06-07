@@ -592,6 +592,13 @@ export interface Database {
           // replies. Auto-send requires (trust_mode AND auto_reply_enabled).
           // Defaults false — auto-publish trust does NOT imply auto-reply.
           auto_reply_enabled: boolean;
+          // Bet 4 (migration 046): per-account opt-in for the comment→DM lead-
+          // capture path. Auto-DM requires (trust_mode AND dm_capture_enabled).
+          // Independent of auto_reply_enabled. Defaults false.
+          dm_capture_enabled: boolean;
+          // Bet 4 (migration 046): { keywords[], link, valueCents?, message? }
+          // keyword→DM rule, or null when no rule is configured (path no-ops).
+          lead_keyword_rule: Json | null;
           status: AccountStatus;
           created_at: string;
           updated_at: string;
@@ -606,6 +613,8 @@ export interface Database {
           trust_threshold?: number;
           successful_post_count?: number;
           auto_reply_enabled?: boolean;
+          dm_capture_enabled?: boolean;
+          lead_keyword_rule?: Json | null;
           status?: AccountStatus;
         };
         Update: Partial<{
@@ -615,6 +624,8 @@ export interface Database {
           trust_threshold: number;
           successful_post_count: number;
           auto_reply_enabled: boolean;
+          dm_capture_enabled: boolean;
+          lead_keyword_rule: Json | null;
           status: AccountStatus;
         }>;
         Relationships: [];
@@ -1346,6 +1357,47 @@ export interface Database {
           outcome_reason: string | null;
           external_id: string | null;
           reply_post_id: string | null;
+        }>;
+        Relationships: [];
+      };
+      dm_capture_log: {
+        // Bet 4 (migration 046): audit trail of every comment→DM auto-send
+        // (sent / blocked / failed / scope_missing) on X, Bluesky, LinkedIn.
+        // Also the source the per-account hourly DM rate cap counts against.
+        // See src/lib/interactions/auto-reply/dm-send.ts + lead-capture.ts.
+        Row: {
+          id: string;
+          workspace_id: string;
+          social_account_id: string;
+          interaction_id: string | null;
+          channel: "x" | "bluesky" | "linkedin";
+          outcome: "sent" | "blocked" | "failed" | "scope_missing";
+          outcome_reason: string | null;
+          matched_keyword: string | null;
+          dm_text: string;
+          external_id: string | null;
+          lead_tagged: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          social_account_id: string;
+          interaction_id?: string | null;
+          channel: "x" | "bluesky" | "linkedin";
+          outcome: "sent" | "blocked" | "failed" | "scope_missing";
+          outcome_reason?: string | null;
+          matched_keyword?: string | null;
+          dm_text: string;
+          external_id?: string | null;
+          lead_tagged?: boolean;
+        };
+        Update: Partial<{
+          outcome: "sent" | "blocked" | "failed" | "scope_missing";
+          outcome_reason: string | null;
+          matched_keyword: string | null;
+          external_id: string | null;
+          lead_tagged: boolean;
         }>;
         Relationships: [];
       };
