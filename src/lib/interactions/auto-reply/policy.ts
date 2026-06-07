@@ -36,6 +36,47 @@ export function isAutoReplyChannel(
   return (AUTO_REPLY_CHANNELS as readonly string[]).includes(channel);
 }
 
+// ── Tri-state engagement mode (migration 048) ───────────────────────────
+//
+// Auto-reply and comment→DM each have a per-account MODE — the safe middle
+// state SHADOW sits between OFF and LIVE:
+//
+//   * 'off'    — the feature does nothing for this account (steady state).
+//   * 'shadow' — the gate passes EXACTLY as for 'live' (trust, opt-in, kill
+//                switch, rate cap all still apply) and the reply/DM is fully
+//                generated, but instead of hitting the channel we ONLY write
+//                an audit row (outcome='shadow') with the would-send text. We
+//                do NOT post and do NOT flip the interaction. Operators review
+//                what the AI WOULD send before trusting it live.
+//   * 'live'   — the original behaviour: generate AND send AND flip.
+//
+// SAFETY: shadow is a zero-blast-radius mode. The mode is resolved here, in
+// the pure gate, so the orchestrators branch on a single typed value and can
+// NEVER confuse "passed the gate" with "may hit the network".
+export const ENGAGEMENT_MODES = ["off", "shadow", "live"] as const;
+export type EngagementMode = (typeof ENGAGEMENT_MODES)[number];
+
+// Parse a raw mode value off a social_accounts row into a known mode.
+// Fail-closed: anything unrecognised (null, typo, legacy) resolves to 'off'.
+export function parseEngagementMode(raw: unknown): EngagementMode {
+  return raw === "live" || raw === "shadow" ? raw : "off";
+}
+
+// Does this mode DRAFT + run the gate (shadow OR live)? 'off' never engages.
+// The two engaging modes share the entire gate + rate cap; they diverge only
+// at the send step, which the orchestrator decides from the mode.
+export function modeEngages(mode: EngagementMode): boolean {
+  return mode === "shadow" || mode === "live";
+}
+
+// Does this mode actually HIT THE CHANNEL? Only 'live'. This is the single
+// predicate the orchestrators consult before any network send — shadow is
+// false, off is false. The send call sites assert on this so a shadow-mode
+// row can never reach a platform helper.
+export function modeSends(mode: EngagementMode): boolean {
+  return mode === "live";
+}
+
 // ── Rate cap ──────────────────────────────────────────────────────────
 //
 // Per-platform max auto-replies per account per rolling hour. Platforms
@@ -121,8 +162,11 @@ export interface AutoReplyGateInput {
   // EXISTING publishing trust model: social_accounts.trust_mode. Same
   // boolean that gates auto-publish of posts. Required to be true.
   trustMode: boolean;
-  // Per-account opt-in (migration 045). Required to be true — defaults
-  // false so auto-publish trust never silently enables auto-reply.
+  // Is auto-reply ENGAGED for this account — i.e. mode is 'shadow' OR 'live'
+  // (migration 048; pass modeEngages(auto_reply_mode)). Required true —
+  // 'off' (the default) never engages. Both shadow and live pass the gate
+  // identically; the orchestrator decides send-vs-shadow from the mode AFTER
+  // the gate, so the safety gate is shared and tested once.
   autoReplyEnabled: boolean;
   // Workspace-wide hard stop (migration 045). When true, nothing sends.
   killSwitch: boolean;
@@ -233,8 +277,11 @@ export interface DmGateInput {
   channel: string;
   // EXISTING publishing trust model: social_accounts.trust_mode. Required true.
   trustMode: boolean;
-  // Per-account DM opt-in (migration 046). Required true — defaults false, and
-  // is INDEPENDENT of auto_reply_enabled.
+  // Is comment→DM ENGAGED for this account — i.e. mode is 'shadow' OR 'live'
+  // (migration 048; pass modeEngages(dm_capture_mode)). Required true —
+  // 'off' (the default) never engages. INDEPENDENT of auto_reply_mode. Both
+  // shadow and live pass the gate identically; the orchestrator decides
+  // send-vs-shadow from the mode AFTER the gate.
   dmCaptureEnabled: boolean;
   // Workspace-wide hard stop (migration 045, REUSED). When true, nothing sends.
   killSwitch: boolean;
@@ -286,4 +333,112 @@ export function evaluateDmGate(input: DmGateInput): DmGateDecision {
   }
 
   return { send: true, reason: null };
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Bet 4 — SETTINGS-SURFACE helpers (pure, UI-facing).
+//
+// The two helpers below back the channel-settings UI that exposes the runtime
+// gates above. They are intentionally PURE (no DB, no network, no clock) so the
+// settings page can render synchronously and the enable-gate is exhaustively
+// unit-testable — same posture as the runtime gates it mirrors.
+// ════════════════════════════════════════════════════════════════════════
+
+// The opt-IN gate for flipping social_accounts.dm_capture_enabled ON from the
+// settings UI. This is the settings-time mirror of evaluateDmGate's first three
+// structural conditions (channel + trust): you can only OPT IN to auto-DM on a
+// connected, shippable channel whose existing publishing trust model is on.
+// Turning the toggle OFF is ALWAYS allowed (it's a safety reduction) and is not
+// gated here. Fail-closed: the most decisive "stop" wins, in priority order.
+export type DmCaptureEnableBlockReason =
+  | "not_connected"
+  | "channel_unsupported"
+  | "not_trusted";
+
+export interface DmCaptureEnableGateInput {
+  // Channel the account posts on (raw string off the row).
+  channel: string;
+  // Account connection status — must be 'connected' to opt in.
+  status: string;
+  // EXISTING publishing trust model: social_accounts.trust_mode. Required true.
+  trustMode: boolean;
+}
+
+export interface DmCaptureEnableGateDecision {
+  ok: boolean;
+  // Set iff ok=false — the first failing condition, fail-closed order.
+  reason: DmCaptureEnableBlockReason | null;
+}
+
+export function evaluateDmCaptureEnableGate(
+  input: DmCaptureEnableGateInput,
+): DmCaptureEnableGateDecision {
+  // 1. Account must be live before we enable any autonomous behaviour on it.
+  if (input.status !== "connected") {
+    return { ok: false, reason: "not_connected" };
+  }
+  // 2. Channel must be in the shippable set (X/Bluesky/LinkedIn).
+  if (!isAutoReplyChannel(input.channel)) {
+    return { ok: false, reason: "channel_unsupported" };
+  }
+  // 3. Existing trust model must be on. (Reused — not a new concept.) Mirrors
+  //    auto-reply: the riskier auto-DM behaviour builds on publishing trust.
+  if (input.trustMode !== true) {
+    return { ok: false, reason: "not_trusted" };
+  }
+  return { ok: true, reason: null };
+}
+
+// Static, no-network DM capability HINT for the settings UI. The real send path
+// runs a runtime capability probe per channel (xDmCapability / blueskyDmCapability
+// / linkedinDmCapability) and no-ops cleanly when it's absent. We do NOT read
+// credentials into the settings page just to render a hint — instead we surface
+// the *known structural status* of each channel's DM API so the operator
+// understands, honestly, that turning the toggle on may no-op until a scope /
+// tier / partnership lands. `available: false` means "this will no-op until the
+// noted requirement is met"; we never claim a DM will definitely go out.
+export interface DmCapabilityHint {
+  // Whether DM-send is structurally reachable on this channel today.
+  available: boolean;
+  // The scope / tier / partnership the channel needs (operator-facing copy).
+  requirement: string;
+  // One honest sentence for the UI.
+  note: string;
+}
+
+export function dmCapabilityHint(channel: string): DmCapabilityHint {
+  switch (channel) {
+    case "x":
+      return {
+        available: false,
+        requirement: "X API paid tier with the dm.write scope",
+        note:
+          "X only grants dm.write on a paid API tier. Until this account's " +
+          "token carries dm.write, auto-DM will no-op (recorded as scope_missing) " +
+          "— nothing is sent.",
+      };
+    case "bluesky":
+      return {
+        available: true,
+        requirement: "Bluesky chat (chat.bsky.*) + recipient opt-in",
+        note:
+          "Bluesky chat works when the recipient accepts DMs. If they don't, " +
+          "the send is a clean no-op (scope_missing) — never an error.",
+      };
+    case "linkedin":
+      return {
+        available: false,
+        requirement: "LinkedIn Messaging partnership",
+        note:
+          "LinkedIn messaging is partnership-gated — there is no self-serve " +
+          "DM-send scope today. This will no-op (scope_missing) until a " +
+          "messaging partnership is granted; configure it now so it's ready.",
+      };
+    default:
+      return {
+        available: false,
+        requirement: "an X/Bluesky/LinkedIn account",
+        note: "Comment→DM lead capture ships on X, Bluesky, and LinkedIn only.",
+      };
+  }
 }

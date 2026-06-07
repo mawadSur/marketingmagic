@@ -4,14 +4,21 @@
 // Wires the pieces together for ONE freshly-polled interaction:
 //
 //   1. Load gate state (workspace kill switch + account trust_mode +
-//      auto_reply_enabled).
-//   2. Evaluate the static trust gate (policy.evaluateAutoReplyGate).
+//      auto_reply_mode).
+//   2. Evaluate the static trust gate (policy.evaluateAutoReplyGate). The gate
+//      passes identically for 'shadow' and 'live' — both ENGAGE.
 //   3. Enforce the per-platform hourly rate cap against auto_reply_log
-//      (policy.checkRateCap).
+//      (policy.checkRateCap). Counts ONLY outcome='sent' rows, so SHADOW rows
+//      never consume rate budget (shadow is unlimited — it never hits the
+//      platform).
 //   4. Draft a reply in brand voice (reuse interactions/draft-reply).
-//   5. Send via the shared per-channel core (interactions/send-core).
-//   6. Record EVERY decision in auto_reply_log — sent / blocked / failed.
-//   7. On a successful send, flip the interaction to status='replied'.
+//   5. THEN branch on the mode:
+//        * 'live'   — send via the shared per-channel core (send-core), audit
+//                     outcome='sent', flip the interaction to status='replied'.
+//        * 'shadow' — DO NOT SEND, DO NOT FLIP. Audit outcome='shadow' with the
+//                     would-send text so an operator can review it. Zero blast
+//                     radius — the channel send call is NEVER reached.
+//   6. Record EVERY decision in auto_reply_log — sent / shadow / blocked / failed.
 //
 // Called from the poll-interactions cron AFTER new rows are persisted, so
 // it never invents a new surface. It runs with the service-role client
@@ -34,6 +41,9 @@ import {
   evaluateAutoReplyGate,
   checkRateCap,
   isAutoReplyChannel,
+  parseEngagementMode,
+  modeEngages,
+  modeSends,
   type AutoReplyChannel,
   type AutoReplyBlockReason,
 } from "./policy";
@@ -52,8 +62,9 @@ export interface AutoReplyVoiceContext {
 }
 
 export interface AutoReplyRunResult {
+  // 'shadow' — we drafted + audited but DID NOT send and DID NOT flip the row.
+  outcome: "sent" | "shadow" | "blocked" | "failed";
   interactionId: string;
-  outcome: "sent" | "blocked" | "failed";
   reason: AutoReplyBlockReason | string | null;
   externalId: string | null;
 }
@@ -71,11 +82,20 @@ export async function attemptAutoReply(
 ): Promise<AutoReplyRunResult> {
   const channel = interaction.channel;
 
+  // Tri-state mode (migration 048) is the source of truth. The legacy boolean
+  // is kept in sync (live ⇒ enabled=true), but we resolve the MODE here so the
+  // shadow branch is decided from a single typed value. Fail-closed: an absent
+  // / unknown mode parses to 'off'.
+  const mode = parseEngagementMode(account.auto_reply_mode);
+  const engaged = modeEngages(mode); // shadow OR live
+
   // ── Static trust gate ───────────────────────────────────────────────
+  // Shadow and live ENGAGE identically here — the gate is the shared safety
+  // core. Only AFTER drafting do we branch on send-vs-shadow.
   const gate = evaluateAutoReplyGate({
     channel,
     trustMode: account.trust_mode === true,
-    autoReplyEnabled: account.auto_reply_enabled === true,
+    autoReplyEnabled: engaged,
     killSwitch,
     interactionStatus: interaction.status,
     hasDraft: true, // we haven't drafted yet; the drafter result is checked below
@@ -87,8 +107,7 @@ export async function attemptAutoReply(
     // an active-but-held state (kill switch / rate cap are logged at the
     // call sites below; here we record the rest only when the account is
     // actually opted in, so a configured operator can see why we held).
-    const worthLogging =
-      account.trust_mode === true && account.auto_reply_enabled === true;
+    const worthLogging = account.trust_mode === true && engaged;
     if (worthLogging && isAutoReplyChannel(channel)) {
       await recordLog(svc, {
         workspaceId: interaction.workspace_id,
@@ -113,27 +132,33 @@ export async function attemptAutoReply(
   // Past the gate, channel is guaranteed to be an AutoReplyChannel.
   const ch = channel as AutoReplyChannel;
 
-  // ── Rate cap ─────────────────────────────────────────────────────────
-  const sentTimestamps = await loadRecentSentTimestamps(svc, account.id, now);
-  const rate = checkRateCap(ch, sentTimestamps, now.valueOf());
-  if (!rate.allowed) {
-    await recordLog(svc, {
-      workspaceId: interaction.workspace_id,
-      accountId: account.id,
-      interactionId: interaction.id,
-      channel: ch,
-      outcome: "blocked",
-      reason: "rate_capped",
-      replyText: `(rate capped — ${rate.used}/${rate.cap} this hour)`,
-      externalId: null,
-      replyPostId: null,
-    });
-    return {
-      interactionId: interaction.id,
-      outcome: "blocked",
-      reason: "rate_capped",
-      externalId: null,
-    };
+  // ── Rate cap (LIVE only) ─────────────────────────────────────────────
+  // The cap bounds how many auto-replies HIT THE PLATFORM per hour. Shadow
+  // never posts, so it is intentionally UNLIMITED — we skip the cap entirely
+  // for non-live modes. (The cap also only counts outcome='sent' rows, so a
+  // shadow row could never consume budget even if we did check.)
+  if (modeSends(mode)) {
+    const sentTimestamps = await loadRecentSentTimestamps(svc, account.id, now);
+    const rate = checkRateCap(ch, sentTimestamps, now.valueOf());
+    if (!rate.allowed) {
+      await recordLog(svc, {
+        workspaceId: interaction.workspace_id,
+        accountId: account.id,
+        interactionId: interaction.id,
+        channel: ch,
+        outcome: "blocked",
+        reason: "rate_capped",
+        replyText: `(rate capped — ${rate.used}/${rate.cap} this hour)`,
+        externalId: null,
+        replyPostId: null,
+      });
+      return {
+        interactionId: interaction.id,
+        outcome: "blocked",
+        reason: "rate_capped",
+        externalId: null,
+      };
+    }
   }
 
   // ── Draft ────────────────────────────────────────────────────────────
@@ -180,7 +205,36 @@ export async function attemptAutoReply(
   // 3000-char limit and the auto_reply_log CHECK).
   if (replyText.length > 3000) replyText = replyText.slice(0, 3000);
 
-  // ── Send ─────────────────────────────────────────────────────────────
+  // ── SHADOW branch (zero blast radius) ────────────────────────────────
+  // SAFETY-CRITICAL: when the mode is not 'live' we MUST NOT touch the
+  // channel and MUST NOT flip the interaction. We audit outcome='shadow'
+  // with the would-send text and return. modeSends(mode) is the single
+  // predicate that authorises a real send; shadow short-circuits BEFORE the
+  // sendReplyViaChannel call below ever appears in the control flow.
+  if (!modeSends(mode)) {
+    await recordLog(svc, {
+      workspaceId: interaction.workspace_id,
+      accountId: account.id,
+      interactionId: interaction.id,
+      channel: ch,
+      outcome: "shadow",
+      reason: null,
+      replyText, // the exact text we WOULD have sent — for operator review
+      externalId: null,
+      replyPostId: null,
+    });
+    // Deliberately NO interactions update — the row stays 'unread' so the
+    // operator still sees it as a live suggestion and a later flip to 'live'
+    // can act on it for real.
+    return {
+      interactionId: interaction.id,
+      outcome: "shadow",
+      reason: null,
+      externalId: null,
+    };
+  }
+
+  // ── LIVE: Send ───────────────────────────────────────────────────────
   let externalId: string;
   let replyPostId: string | null;
   try {
@@ -202,7 +256,7 @@ export async function attemptAutoReply(
     return recordFailure(svc, account, interaction, ch, "send_failed", err, replyText);
   }
 
-  // ── Audit + flip interaction ─────────────────────────────────────────
+  // ── LIVE: Audit + flip interaction ───────────────────────────────────
   await recordLog(svc, {
     workspaceId: interaction.workspace_id,
     accountId: account.id,
@@ -270,7 +324,7 @@ interface LogInput {
   accountId: string;
   interactionId: string;
   channel: AutoReplyChannel;
-  outcome: "sent" | "blocked" | "failed";
+  outcome: "sent" | "shadow" | "blocked" | "failed";
   reason: string | null;
   replyText: string;
   externalId: string | null;
@@ -284,6 +338,12 @@ async function recordLog(svc: ServiceClient, input: LogInput): Promise<void> {
     input.replyText.trim().length > 0
       ? input.replyText.slice(0, 3000)
       : "(none)";
+  // For SHADOW rows, also surface the draft in the dedicated, reviewable
+  // would_send_text column (migration 048) — non-shadow rows leave it null.
+  const wouldSend =
+    input.outcome === "shadow" && input.replyText.trim().length > 0
+      ? input.replyText.slice(0, 3000)
+      : null;
   const { error } = await svc.from("auto_reply_log").insert({
     workspace_id: input.workspaceId,
     social_account_id: input.accountId,
@@ -292,6 +352,7 @@ async function recordLog(svc: ServiceClient, input: LogInput): Promise<void> {
     outcome: input.outcome,
     outcome_reason: input.reason,
     reply_text: text,
+    would_send_text: wouldSend,
     external_id: input.externalId,
     reply_post_id: input.replyPostId,
   });
