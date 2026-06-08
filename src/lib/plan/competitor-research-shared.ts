@@ -207,6 +207,9 @@ const HANDLE_PATTERNS: Record<ChannelId, RegExp> = {
   facebook: /^[a-z0-9.]{1,80}$/,
   // TikTok usernames: letters, digits, underscores and periods, 1–24 chars.
   tiktok: /^[a-z0-9._]{1,24}$/,
+  // YouTube @handles: letters, digits, underscores, periods and hyphens,
+  // 3–30 chars (the modern @handle format, leading @ already stripped).
+  youtube: /^[a-z0-9._-]{3,30}$/,
 };
 
 export function normaliseHandle(raw: string): string {

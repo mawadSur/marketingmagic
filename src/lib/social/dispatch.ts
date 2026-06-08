@@ -50,6 +50,12 @@ import {
   loadFreshTikTokCredentials,
   type TikTokCredentials,
 } from "./tiktok";
+import {
+  youtubeUploadVideo,
+  youtubeMetrics,
+  loadFreshYouTubeCredentials,
+  type YouTubeCredentials,
+} from "./youtube";
 
 // Media attached to a post. Images come from fal (with a generation prompt
 // used as alt text); videos come from the P2 MPT pipeline and live in a
@@ -274,6 +280,24 @@ export async function dispatchPost(
       const sent = await tiktokPostVideo(creds, text, v.bytes);
       return { externalId: sent.id };
     }
+    case "youtube": {
+      // Google access tokens expire in ~1h; refresh proactively before any API
+      // call so a post scheduled a day after connect doesn't 401.
+      const creds = await loadFreshYouTubeCredentials(
+        svc,
+        socialAccountId,
+        credentials as YouTubeCredentials,
+      );
+      // YouTube is video-only via the Data API v3 videos.insert path — there is
+      // no text/image post. Require a video and run the resumable upload (the
+      // post text becomes title + description).
+      if (!hasVideo) {
+        throw new Error("YouTube posts require a video.");
+      }
+      const v = videos[0]!;
+      const sent = await youtubeUploadVideo(creds, v.bytes, text, v.contentType);
+      return { externalId: sent.id };
+    }
     default:
       throw new Error(`Unsupported channel: ${channel}`);
   }
@@ -363,6 +387,23 @@ export async function dispatchMetrics(
         credentials as TikTokCredentials,
       );
       const m = await tiktokMetrics(creds, externalId);
+      return {
+        impressions: m.impressions,
+        likes: m.likes,
+        comments: m.comments,
+        shares: m.shares,
+        clicks: 0,
+      };
+    }
+    case "youtube": {
+      // Refresh first so a ~1h-stale token doesn't 401, then read view/like/
+      // comment counts via videos.list?part=statistics.
+      const creds = await loadFreshYouTubeCredentials(
+        svc,
+        socialAccountId,
+        credentials as YouTubeCredentials,
+      );
+      const m = await youtubeMetrics(creds, externalId);
       return {
         impressions: m.impressions,
         likes: m.likes,

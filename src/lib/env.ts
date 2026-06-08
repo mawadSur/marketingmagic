@@ -55,6 +55,19 @@ const serverSchema = z.object({
   // routes redirect with a "tiktok_not_configured" error instead of throwing.
   TIKTOK_CLIENT_KEY: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
   TIKTOK_CLIENT_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
+  // YouTube Data API v3 (Google OAuth 2.0 + resumable video upload). Live use
+  // REQUIRES a Google Cloud project with the "YouTube Data API v3" enabled and
+  // an OAuth 2.0 Web client whose consent screen lists the `youtube.upload`
+  // scope (same enablement shape as the TikTok app-audit notes). We standardise
+  // on the YOUTUBE_ prefix (not GOOGLE_) so the credentials read as channel-
+  // specific. Both optional with the same graceful-degrade pattern as the other
+  // providers: when unset, the YouTube connect UI is hidden and the OAuth routes
+  // redirect with a "youtube_not_configured" error instead of throwing. While
+  // the Google OAuth app is unverified ("Testing"), uploads are force-PRIVATE
+  // and only allowlisted test users can connect — public uploads work without a
+  // code change once Google verifies the app.
+  YOUTUBE_CLIENT_ID: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
+  YOUTUBE_CLIENT_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
   // Resend transactional email — used by the daily approval digest cron.
   // Optional: when unset the digest route logs and skips instead of throwing,
   // so the rest of the app keeps booting without an email provider configured.

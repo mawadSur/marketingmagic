@@ -57,6 +57,7 @@ const PALETTE: Record<string, { bg: string; fg: string }> = {
   threads: { bg: "#000000", fg: "#ffffff" },
   facebook: { bg: "#1877f2", fg: "#ffffff" },
   tiktok: { bg: "#010101", fg: "#ffffff" },
+  youtube: { bg: "#ff0000", fg: "#ffffff" },
 };
 
 function channelBadge(channel: string): string {

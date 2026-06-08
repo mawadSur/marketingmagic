@@ -75,6 +75,7 @@ const CHANNEL_LABEL: Record<string, string> = {
   facebook: "Facebook",
   bluesky: "Bluesky",
   tiktok: "TikTok",
+  youtube: "YouTube",
 };
 
 // Per-channel tint. Picked so each brand reads at a glance without
@@ -88,6 +89,7 @@ const CHANNEL_STYLE: Record<string, string> = {
   facebook: "border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-400",
   bluesky: "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-400",
   tiktok: "border-teal-500/30 bg-teal-500/10 text-teal-700 dark:text-teal-300",
+  youtube: "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-400",
 };
 
 export function channelLabel(channel: string): string {

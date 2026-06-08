@@ -72,6 +72,15 @@ const POLICIES: Record<ChannelId, HashtagChannelRules> = {
       "TikTok: 3–6 hashtags. Blend 1–2 broad discovery tags with niche, on-topic ones. Tags carry real reach here.",
     showChips: true,
   },
+  youtube: {
+    channel: "youtube",
+    // [2, 5] — hashtags ride in the YouTube description; the first one surfaces
+    // above the title. Keyword-forward, sparing — a tag stack adds little.
+    recommendedCount: [2, 5],
+    notes:
+      "YouTube: 2–5 hashtags in the description. Put the most important keyword first — it surfaces above the title.",
+    showChips: true,
+  },
 };
 
 export function getChannelHashtagPolicy(channel: ChannelId): HashtagChannelRules {
@@ -90,6 +99,7 @@ export const COLD_START_SEEDS: Record<ChannelId, string[]> = {
   bluesky: [], // never recommend tags on Bluesky
   facebook: ["smallbusiness", "startup", "entrepreneur"],
   tiktok: ["smallbusiness", "startup", "buildinpublic", "founder", "marketing"],
+  youtube: ["startup", "buildinpublic", "founder"],
 };
 
 // Tag-mix tier annotation for IG chips. Pure UI hint — derived from a
