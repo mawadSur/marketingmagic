@@ -53,12 +53,28 @@
 alter table public.posts
   add column if not exists tags text[] not null default '{}';
 
--- Guard the contract at the DB boundary. We can't easily express "every
--- element matches a regex" as a column CHECK across all Postgres versions
--- without a helper, so we assert the two cheap, universal invariants the app
--- normalizer already guarantees: no element is uppercase, and no element
--- carries a leading '#'. (The full ASCII-only rule stays in the app layer,
--- same split as migration 014.)
+-- Guard the contract at the DB boundary. A CHECK constraint cannot contain a
+-- subquery (Postgres rejects "cannot use subquery in check constraint",
+-- SQLSTATE 0A000), so we can't inline an unnest() over the array. Instead we
+-- assert the per-element invariants the app normalizer guarantees via an
+-- IMMUTABLE helper function — a plain function call IS allowed inside a CHECK.
+-- Same belt-and-suspenders split as migration 014 (full ASCII-only rule stays
+-- in the app layer, src/lib/hashtags/extract.ts); here we enforce: every
+-- element is lowercase, has no leading '#', and is 1-100 chars.
+create or replace function public.tags_are_normalized(tags text[])
+returns boolean
+language sql
+immutable
+as $$
+  -- TRUE when the array is null/empty OR every element satisfies the contract.
+  -- bool_and over an empty set is TRUE, so '{}' passes cleanly.
+  select coalesce(
+    bool_and(t = lower(t) and t !~ '^#' and length(t) between 1 and 100),
+    true
+  )
+  from unnest(coalesce(tags, '{}')) as t;
+$$;
+
 do $$
 begin
   if not exists (
@@ -70,13 +86,7 @@ begin
   ) then
     alter table public.posts
       add constraint posts_tags_normalized_chk
-      check (
-        tags = (
-          select coalesce(array_agg(t), '{}')
-          from unnest(tags) as t
-          where t = lower(t) and t !~ '^#' and length(t) between 1 and 100
-        )
-      );
+      check (public.tags_are_normalized(tags));
   end if;
 end $$;
 
