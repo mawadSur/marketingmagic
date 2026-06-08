@@ -33,7 +33,7 @@ export default async function CompetitorsPage({
         </header>
         <EmptyState
           icon="spark"
-          title="Available on the Founder tier."
+          title="Available on the Creator tier."
           description="Upgrade to track competitor handles, surface winners, and draft constructive responses."
           action={
             <Link
@@ -219,7 +219,7 @@ function errorMessage(code: string): string {
     case "seed_failed":
       return "Couldn't seed the source. Try again or open an issue.";
     case "tier_gated":
-      return "Counter-content is available on the Founder tier.";
+      return "Counter-content is available on the Creator tier.";
     case "missing_id":
       return "Missing winner id.";
     default:

@@ -263,6 +263,10 @@ export interface Database {
           // TODO #0 (migration 056): escalate borderline-band inbound to a
           // Claude spam classify (fail-open toward ham). Defaults false.
           spam_ignore_use_claude: boolean;
+          // Blotato pricing migration (057): when set + in the future, this
+          // workspace is still on its OLD Stripe price and the billing UI shows
+          // a "your plan moves to $X on <date>" notice. NULL = not grandfathered.
+          grandfathered_until: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -283,6 +287,7 @@ export interface Database {
           autopilot_mode?: "draft" | "auto";
           spam_ignore_mode?: EngagementMode;
           spam_ignore_use_claude?: boolean;
+          grandfathered_until?: string | null;
         };
         Update: Partial<{
           slug: string;
@@ -299,6 +304,7 @@ export interface Database {
           autopilot_mode: "draft" | "auto";
           spam_ignore_mode: EngagementMode;
           spam_ignore_use_claude: boolean;
+          grandfathered_until: string | null;
         }>;
         Relationships: [];
       };
@@ -319,6 +325,11 @@ export interface Database {
           stripe_subscription_id: string | null;
           subscription_status: string | null;
           plan: OrgPlan;
+          // Blotato pricing migration (057): when set + in the future, this org
+          // is still on its OLD Stripe (per-seat) price and the org billing UI
+          // shows a "your plan moves to $X on <date>" notice. NULL = not
+          // grandfathered.
+          grandfathered_until: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -334,6 +345,7 @@ export interface Database {
           stripe_subscription_id?: string | null;
           subscription_status?: string | null;
           plan?: OrgPlan;
+          grandfathered_until?: string | null;
         };
         Update: Partial<{
           slug: string;
@@ -345,6 +357,7 @@ export interface Database {
           stripe_subscription_id: string | null;
           subscription_status: string | null;
           plan: OrgPlan;
+          grandfathered_until: string | null;
         }>;
         Relationships: [];
       };

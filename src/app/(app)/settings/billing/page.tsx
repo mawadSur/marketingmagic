@@ -1,7 +1,14 @@
 import Link from "next/link";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseService } from "@/lib/supabase/service";
-import { TIERS, tierFor, currentMonthBucket, priceIdForPlan, type PlanId } from "@/lib/billing/tiers";
+import {
+  TIERS,
+  tierFor,
+  currentMonthBucket,
+  priceIdForPlan,
+  aiCreditsLabel,
+  type PlanId,
+} from "@/lib/billing/tiers";
 import { billingConfigured } from "@/lib/billing/stripe";
 import { BillingActions } from "./billing-actions";
 
@@ -29,7 +36,9 @@ export default async function BillingPage({
   const svc = supabaseService();
   const { data: wsRow } = await svc
     .from("workspaces")
-    .select("id, plan, stripe_customer_id, stripe_subscription_id, subscription_status")
+    .select(
+      "id, plan, stripe_customer_id, stripe_subscription_id, subscription_status, grandfathered_until",
+    )
     .eq("id", ws.id)
     .maybeSingle();
 
@@ -51,6 +60,26 @@ export default async function BillingPage({
   const hasActiveSub = Boolean(wsRow?.stripe_subscription_id);
   const configured = billingConfigured();
 
+  // Blotato pricing migration (057): if this workspace is grandfathered onto its
+  // OLD Stripe price and the cutover is still in the future, show a heads-up
+  // ("your plan moves to $X on <date>") instead of pretending the new price is
+  // already live. A null or past timestamp means there's nothing to announce —
+  // the operator hasn't flagged them, or the migration window has elapsed.
+  const grandfatheredUntil = wsRow?.grandfathered_until
+    ? new Date(wsRow.grandfathered_until)
+    : null;
+  const grandfatherNotice =
+    grandfatheredUntil && grandfatheredUntil.getTime() > Date.now()
+      ? {
+          newPrice: currentTier.priceMonthly,
+          on: grandfatheredUntil.toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          }),
+        }
+      : null;
+
   return (
     <div className="mx-auto max-w-4xl space-y-8">
       <header className="space-y-1">
@@ -71,13 +100,26 @@ export default async function BillingPage({
         </div>
       )}
 
+      {grandfatherNotice && (
+        <div className="rounded-md border border-sky-500/40 bg-sky-500/5 p-4 text-sm">
+          <p className="font-medium">
+            Your {currentTier.name} plan moves to ${grandfatherNotice.newPrice}/mo on{" "}
+            {grandfatherNotice.on}.
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            You&rsquo;re currently on your original price — nothing changes until that
+            date, and your limits stay exactly as they are today.
+          </p>
+        </div>
+      )}
+
       {!configured && (
         <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
           <p className="font-medium">Stripe is not configured on this deployment.</p>
           <p className="mt-1 text-muted-foreground">
             Set <code>STRIPE_SECRET_KEY</code>, <code>STRIPE_WEBHOOK_SECRET</code>,{" "}
-            <code>STRIPE_PRICE_PRO</code>, <code>STRIPE_PRICE_AGENCY</code>, and (optionally){" "}
-            <code>STRIPE_PRICE_FOUNDER</code> in env.
+            <code>STRIPE_PRICE_PRO</code> (Solo $29), <code>STRIPE_PRICE_FOUNDER</code>{" "}
+            (Creator $97), and <code>STRIPE_PRICE_AGENCY</code> (Agency $499) in env.
           </p>
         </div>
       )}
@@ -122,11 +164,13 @@ export default async function BillingPage({
         )}
       </section>
 
-      {/* Phase 2.6 pricing redesign — three paid tiers as the centerpiece
-          (Solo / Agency / Founder) with Hobby as a quieter "or stay free"
-          card at the bottom. Founder gets a "Most premium" pill + amber
-          border so it reads as the anchor tier, not just "the priciest"
-          option. */}
+      {/* Blotato-competitive pricing — three paid tiers in ascending order
+          (Solo $29 / Creator $97 / Agency $499) with Free as a quieter "or
+          stay free" card at the bottom. Each tier headlines ONE "AI credits
+          (images + video)" number + "Unlimited AI writing", matching Blotato's
+          presentation while the backend keeps metering the two counters
+          separately. Creator (enum id 'founder') keeps the amber "Voice-only
+          workflow" pill as its differentiator. */}
       <section className="space-y-4">
         <div className="space-y-1">
           <h2 className="text-base font-semibold">Plans</h2>
@@ -135,7 +179,7 @@ export default async function BillingPage({
           </p>
         </div>
         <div className="grid gap-4 lg:grid-cols-3">
-          {(["pro", "agency", "founder"] as PlanId[]).map((id) => {
+          {(["pro", "founder", "agency"] as PlanId[]).map((id) => {
             const tier = TIERS[id];
             const isCurrent = id === currentPlan;
             const tierPriceConfigured = priceIdForPlan(id) !== null;
@@ -164,6 +208,22 @@ export default async function BillingPage({
                   </p>
                 </div>
                 <p className="mt-2 text-sm text-muted-foreground">{tier.blurb}</p>
+                {/* Blotato-style unified presentation: one "AI credits
+                    (images + video)" number per tier + "Unlimited AI writing".
+                    The credits number is DERIVED via aiCreditsLabel (=
+                    imageGensPerMonth + videosPerMonth); the backend still meters
+                    images and video as two separate counters. */}
+                <div className="mt-4 rounded-md border bg-muted/30 p-3 text-sm">
+                  <p className="font-medium">
+                    {tier.limits.postsPerMonth === -1
+                      ? "Unlimited AI writing"
+                      : `${tier.limits.postsPerMonth} AI posts / month`}
+                  </p>
+                  <p className="mt-0.5 text-muted-foreground">
+                    {aiCreditsLabel(tier.id)} AI credits / month
+                    <span className="text-xs"> (images + video)</span>
+                  </p>
+                </div>
                 <ul className="mt-4 flex-1 space-y-2 text-sm">
                   {tier.features.map((f) => (
                     <li key={f} className="flex gap-2">

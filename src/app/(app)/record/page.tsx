@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseService } from "@/lib/supabase/service";
-import { tierFor, hasFounderMode } from "@/lib/billing/tiers";
+import { TIERS, tierFor, hasFounderMode } from "@/lib/billing/tiers";
 import { transcriptionConfigured } from "@/lib/sources/transcribe";
 import { RecordClient } from "./record-client";
 
@@ -38,14 +38,14 @@ export default async function RecordPage() {
             Record a voice memo. Get a week of posts.
           </h1>
           <p className="text-sm text-muted-foreground">
-            Voice-first capture is a Founder-tier feature. You're on the{" "}
+            Voice-first capture is a {TIERS.founder.name}-tier feature. You're on the{" "}
             <span className="font-medium">{tier.name}</span> plan.
           </p>
         </header>
 
         <section className="rounded-lg border bg-card p-4 text-sm">
           <p className="mb-3">
-            Founder tier unlocks:
+            {TIERS.founder.name} tier unlocks:
           </p>
           <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
             <li>Record a voice memo from your phone, anywhere.</li>
@@ -58,7 +58,7 @@ export default async function RecordPage() {
           href="/settings/billing"
           className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
         >
-          Upgrade to Founder
+          Upgrade to {TIERS.founder.name}
         </Link>
       </div>
     );

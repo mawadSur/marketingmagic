@@ -70,7 +70,7 @@ export async function transcribeRecordingAction(
     .eq("id", ws.id)
     .maybeSingle();
   if (tierFor(wsRow?.plan).id !== "founder") {
-    return { ok: false, error: "Founder tier required to use voice capture." };
+    return { ok: false, error: "Creator tier required to use voice capture." };
   }
 
   const file = formData.get("audio");

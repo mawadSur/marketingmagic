@@ -5,6 +5,27 @@
 // Stripe price IDs live in env (STRIPE_PRICE_PRO / STRIPE_PRICE_AGENCY /
 // STRIPE_PRICE_FOUNDER) and are resolved at request time via priceIdForPlan();
 // never in the hot path so missing keys don't crash unrelated pages.
+//
+// ─── OPERATOR ACTION (Blotato-competitive pricing) ──────────────────────────
+// The customer-facing ladder is now Free $0 / Solo $29 / Creator $97 /
+// Agency $499. The ENUM IDS DID NOT CHANGE — they are still
+// hobby / pro / founder / agency — so the webhook, every DB plan row, and the
+// STRIPE_PRICE_* env vars keep working without a data migration. Only the
+// display name + price + limits changed.
+//
+// To put the new prices LIVE the operator must, in the Stripe Dashboard:
+//   1. Create three new monthly recurring prices:
+//        • Solo $29   → set STRIPE_PRICE_PRO     to its price id
+//        • Creator $97 → set STRIPE_PRICE_FOUNDER to its price id (reuse this var)
+//        • Agency $499 → set STRIPE_PRICE_AGENCY  to its price id (reuse this var)
+//      (STRIPE_PRICE_ORG_SEAT — the per-seat org price — is separate; only
+//       update it if the org seat price itself is changing.)
+//   2. EXISTING SUBSCRIPTIONS STAY ON THEIR OLD STRIPE PRICE until the operator
+//      migrates them (Stripe proration, at renewal). See
+//      docs/pricing-migration-runbook.md for the exact enum→price steps + the
+//      grandfathered_until notice. Until env is updated these helpers degrade
+//      gracefully (planForPriceId returns null / billingConfigured() guards the
+//      checkout UI) — no fake price ids are ever invented here.
 
 export type PlanId = "hobby" | "pro" | "agency" | "founder";
 
@@ -35,10 +56,38 @@ export interface Tier {
   features: string[];
 }
 
+// ─── "AI credits" presentation model (Blotato-competitive pricing) ──────────
+//
+// Blotato bundles image + video generation into a single "AI credits" number
+// per tier ("Unlimited AI writing" sits alongside it). We adopt that PRESENTATION
+// without changing how we METER. The backend still enforces THREE separate
+// counters (posts_generated / images_generated / videos_generated) exactly as
+// before — see usage.ts + limits.ts, which are untouched by this redesign. The
+// only thing that changed is that the pricing UI shows ONE combined credits
+// number derived from the image + video ceilings.
+//
+// CREDIT MAPPING (be honest about this — it's a presentation aggregate, not a
+// new currency):
+//
+//   aiCredits(tier) = imageGensPerMonth + videosPerMonth   (a -1 in either → "unlimited")
+//
+// The image:video split per tier is sized so the COMBINED total lands on a
+// round, Blotato-comparable headline credit number:
+//   • Solo    → 1000 images + 250 videos  = 1,250 credits  (≈ Blotato Starter)
+//   • Creator → 4000 images + 1000 videos = 5,000 credits
+//   • Agency  → 22000 images + 6000 videos = 28,000 credits
+// The split favours images (cheaper to produce) over videos; tune the per-type
+// ceilings freely as long as the sum stays on the headline number.
+//
+// AI WRITING is now UNLIMITED on every paid tier (postsPerMonth: -1), matching
+// Blotato's "Unlimited AI writing". Only Hobby keeps a finite post cap.
+
 export const TIERS: Record<PlanId, Tier> = {
   hobby: {
+    // UNCHANGED. Free forever entry tier: 1 channel, 10 posts, no image/video,
+    // no voice memo. The only tier with a finite post cap.
     id: "hobby",
-    name: "Hobby",
+    name: "Free",
     priceMonthly: 0,
     limits: { channels: 1, postsPerMonth: 10, imageGensPerMonth: 0, videosPerMonth: 0, voiceMemoRecorder: false },
     blurb: "Free forever for solo creators trying it out.",
@@ -46,55 +95,72 @@ export const TIERS: Record<PlanId, Tier> = {
       "1 connected channel",
       "10 generated posts / month",
       "Manual approval queue",
-      "No AI image generation",
+      "No AI image or video generation",
     ],
   },
   pro: {
-    // Phase 2.6: renamed "Pro" → "Solo" in customer-facing copy so the
-    // three paid tiers read as Solo / Agency / Founder. The enum id stays
-    // 'pro' so the Stripe webhook + DB rows + price-id env var keep
-    // working without a data migration; only the display name changed.
+    // "Solo" $29 (display name unchanged from the prior Phase 2.6 rename). The
+    // enum id stays 'pro' so the Stripe webhook + every DB plan row + the
+    // STRIPE_PRICE_PRO env var keep working WITHOUT a data migration; only the
+    // price + limits changed for the Blotato-competitive ladder.
+    //
+    // Blotato-Starter-equivalent: UNLIMITED AI writing (postsPerMonth: -1) +
+    // ~1,250 AI credits/mo (1000 images + 250 videos). Channels unlimited.
     id: "pro",
     name: "Solo",
     priceMonthly: 29,
-    limits: { channels: -1, postsPerMonth: 200, imageGensPerMonth: 100, videosPerMonth: 20, voiceMemoRecorder: false },
-    blurb: "One brand, every channel, real volume. The default for solo creators.",
+    limits: { channels: -1, postsPerMonth: -1, imageGensPerMonth: 1000, videosPerMonth: 250, voiceMemoRecorder: false },
+    blurb: "One brand, every channel, unlimited writing. The default for solo creators.",
+    // NOTE: "Unlimited AI writing" + the AI-credits number are rendered by the
+    // billing UI from the limits via aiCreditsLabel() (not duplicated here). The
+    // `features` list is for the DIFFERENTIATING perks beyond the credit headline.
     features: [
       "Unlimited connected channels",
-      "200 generated posts / month",
-      "100 AI image generations / month",
       "Trust-mode auto-posting",
+      "AI images + short-form video",
     ],
   },
   agency: {
+    // "Agency" $499. The enum id stays 'agency' — this is ALSO the org /
+    // multi-workspace tier: org subscriptions resolve to 'agency' in
+    // entitlements.ts + planForOrgPriceId, and client workspaces inherit it.
+    // That semantics is unchanged. Only the price + limits moved.
+    //
+    // Highest-volume tier: UNLIMITED AI writing + ~28,000 AI credits/mo
+    // (22000 images + 6000 videos). Multi-workspace / white-label perks stay.
     id: "agency",
     name: "Agency",
-    priceMonthly: 99,
-    limits: { channels: -1, postsPerMonth: 500, imageGensPerMonth: 500, videosPerMonth: 60, voiceMemoRecorder: false },
-    blurb: "Multi-client workspaces, higher ceilings, priority support.",
+    priceMonthly: 499,
+    limits: { channels: -1, postsPerMonth: -1, imageGensPerMonth: 22000, videosPerMonth: 6000, voiceMemoRecorder: false },
+    blurb: "Multi-client workspaces, the highest ceilings, white-label, priority support.",
+    // "Unlimited AI writing" + the AI-credits number are rendered by the billing
+    // UI from the limits via aiCreditsLabel(). Keep only differentiating perks here.
     features: [
-      "Everything in Pro",
-      "Multi-workspace (clients)",
-      "500 generated posts / month",
-      "500 AI image generations / month",
+      "Everything in Creator",
+      "Multi-workspace (clients) + white-label",
+      "Priority support",
     ],
   },
-  // Phase 2.6 — premium voice-memo tier. Positioned above Agency on price
-  // because the value prop ("no typing, voice-only workflow") targets
-  // founders/operators who'd otherwise dictate to a human social manager.
-  // Quotas are intentionally higher than Pro but lower than the implicit
-  // Enterprise ceiling — we want the tier to feel generous but not bottomless.
+  // "Creator" $97 — RENAMED display from "Founder" (the enum id stays 'founder'
+  // so hasFounderMode/hasCompetitorWatch, the STRIPE_PRICE_FOUNDER env var, the
+  // webhook, and every DB plan row keep working without a migration). This is
+  // the voice-memo tier: founder ALREADY owns voiceMemoRecorder:true → Creator
+  // keeps it. hasCompetitorWatch/hasFounderMode still key off id==='founder'.
+  //
+  // Mid tier: UNLIMITED AI writing + ~5,000 AI credits/mo (4000 images +
+  // 1000 videos) + the voice-memo workflow + Competitor Watch.
   founder: {
     id: "founder",
-    name: "Founder",
-    priceMonthly: 149,
-    limits: { channels: -1, postsPerMonth: 1000, imageGensPerMonth: 300, videosPerMonth: 100, voiceMemoRecorder: true },
-    blurb: "Voice-memo to a week of posts. For solo operators who'd rather talk than type.",
+    name: "Creator",
+    priceMonthly: 97,
+    limits: { channels: -1, postsPerMonth: -1, imageGensPerMonth: 4000, videosPerMonth: 1000, voiceMemoRecorder: true },
+    blurb: "Voice-memo to a week of posts. For creators who'd rather talk than type.",
+    // "Unlimited AI writing" + the AI-credits number are rendered by the billing
+    // UI from the limits via aiCreditsLabel(). Keep only differentiating perks here.
     features: [
-      "Everything in Pro",
+      "Everything in Solo",
       "Voice-memo recorder (/record) — talk for 2 minutes, get a week of posts",
-      "1,000 generated posts / month",
-      "300 AI image generations / month",
+      "Competitor Watch",
       "Priority support",
     ],
   },
@@ -107,6 +173,34 @@ export function tierFor(plan: string | null | undefined): Tier {
   if (plan === "agency") return TIERS.agency;
   if (plan === "founder") return TIERS.founder;
   return TIERS.hobby;
+}
+
+// ─── "AI credits" presentation helper ───────────────────────────────────────
+//
+// Derives the single Blotato-style "AI credits (images + video)" number the
+// pricing UI shows from the tier's TWO underlying ceilings. THIS IS A DISPLAY
+// AGGREGATE ONLY — it does NOT change metering. The backend keeps enforcing
+// imageGensPerMonth and videosPerMonth as two independent counters (see
+// limits.ts / usage.ts). Honestly: "credits" = images + videos combined.
+//
+//   • If either ceiling is unlimited (-1), the combined credits are unlimited
+//     (returns Infinity), since you can't sum a finite number with "infinite".
+//   • Otherwise returns imageGensPerMonth + videosPerMonth.
+//
+// Use aiCreditsLabel() for the human-readable string ("Unlimited" / "1,250").
+export function aiCreditsFor(plan: string | null | undefined): number {
+  const { imageGensPerMonth, videosPerMonth } = tierFor(plan).limits;
+  if (imageGensPerMonth === -1 || videosPerMonth === -1) return Number.POSITIVE_INFINITY;
+  return imageGensPerMonth + videosPerMonth;
+}
+
+// Human-readable AI-credits string for the pricing UI. "Unlimited" when the
+// combined credits are infinite; otherwise the integer formatted with thousands
+// separators (e.g. "1,250"). A tier with zero credits (Hobby) returns "0".
+export function aiCreditsLabel(plan: string | null | undefined): string {
+  const credits = aiCreditsFor(plan);
+  if (!Number.isFinite(credits)) return "Unlimited";
+  return credits.toLocaleString("en-US");
 }
 
 // Phase 2.6 + 6.6 capability gates. /record imports hasFounderMode;

@@ -99,7 +99,7 @@ export async function generateFromVoiceMemoAction(
     .eq("id", ws.id)
     .maybeSingle();
   if (tierFor(wsRow?.plan).id !== "founder") {
-    return { error: "Founder tier required to use voice capture.", planId: null };
+    return { error: "Creator tier required to use voice capture.", planId: null };
   }
 
   const supabase = await supabaseServer();
