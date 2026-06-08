@@ -13,7 +13,14 @@ import {
   type AutoReplyVoiceContext,
 } from "@/lib/interactions/auto-reply/send";
 import { attemptLeadCaptureDm } from "@/lib/interactions/auto-reply/dm-send";
-import { isAutoReplyChannel } from "@/lib/interactions/auto-reply/policy";
+import {
+  attemptSpamIgnore,
+  type SpamIgnoreContext,
+} from "@/lib/interactions/auto-reply/spam-ignore";
+import {
+  isAutoReplyChannel,
+  parseEngagementMode,
+} from "@/lib/interactions/auto-reply/policy";
 import { overLimitAccountIds } from "@/lib/billing/limits";
 import { loadFreshXCredentials, type XCredentials } from "@/lib/social/x";
 import type { LinkedInCredentials } from "@/lib/social/linkedin";
@@ -92,6 +99,9 @@ interface WorkspaceContextCache {
   killSwitch: boolean;
   // Bet 4 — voice context the auto-reply drafter needs.
   voice: AutoReplyVoiceContext;
+  // TODO #0 — inbox spam auto-ignore context (mode + Claude opt-in). Reuses
+  // the auto-reply kill switch above as its hard stop.
+  spamIgnore: SpamIgnoreContext;
 }
 
 interface PerAccountResult {
@@ -110,6 +120,9 @@ interface PerAccountResult {
   autoReplied?: number;
   // Bet 4 — count of comment→DM lead-capture DMs sent on this account this run.
   dmCaptured?: number;
+  // TODO #0 — count of rows auto-ignored as spam on this account this run
+  // (live flips only; shadow would-ignores are audited, not counted here).
+  spamIgnored?: number;
   reason?: string;
 }
 
@@ -244,8 +257,15 @@ async function handle(req: NextRequest) {
       // upgrades or disconnects. Same over-limit set the publish cron uses.
       let dmCaptured = 0;
       let autoReplied = 0;
+      let spamIgnored = 0;
       const overLimit = (await overLimitFor(acct.workspace_id)).has(acct.id);
       if (insertedIds.length > 0 && isAutoReplyChannel(acct.channel) && !overLimit) {
+        // ORDER MATTERS: the SPAM pass runs FIRST. A row classified+flipped to
+        // status='ignored' (live) is no longer 'unread', so the DM + auto-reply
+        // passes below (which reload only still-'unread' rows) never act on it —
+        // we never DM or publicly reply to spam. In shadow/off the row stays
+        // 'unread' and continues to the engagement passes unchanged.
+        spamIgnored = await runSpamIgnore(acct, insertedIds, briefCtx, now);
         dmCaptured = await runLeadCaptureDms(acct, insertedIds, briefCtx, now);
         autoReplied = await runAutoReplies(acct, insertedIds, briefCtx, now);
       }
@@ -259,6 +279,7 @@ async function handle(req: NextRequest) {
         inserted: insertedIds.length,
         autoReplied,
         dmCaptured,
+        spamIgnored,
         // Polling still ran; only the autonomous actions were withheld.
         reason: overLimit ? "auto_actions_held_over_channel_limit" : undefined,
       });
@@ -295,6 +316,7 @@ async function handle(req: NextRequest) {
     tierPending: results.filter((r) => r.status === "tier_pending").length,
     autoReplied: results.reduce((sum, r) => sum + (r.autoReplied ?? 0), 0),
     dmCaptured: results.reduce((sum, r) => sum + (r.dmCaptured ?? 0), 0),
+    spamIgnored: results.reduce((sum, r) => sum + (r.spamIgnored ?? 0), 0),
     results,
     at: now.toISOString(),
   });
@@ -314,22 +336,59 @@ async function loadWorkspaceContext(
       .maybeSingle(),
     svc
       .from("workspaces")
-      .select("auto_reply_kill_switch")
+      .select("auto_reply_kill_switch, spam_ignore_mode, spam_ignore_use_claude")
       .eq("id", workspaceId)
       .maybeSingle(),
   ]);
+  // Default-closed: if the column read fails for any reason, treat the kill
+  // switch as ENGAGED rather than risk an unwanted auto-send / auto-ignore.
+  const killSwitch = ws?.auto_reply_kill_switch ?? true;
   return {
     referenceLinks: brief?.reference_links ?? [],
-    // Default-closed: if the column read fails for any reason, treat the
-    // kill switch as ENGAGED rather than risk an unwanted auto-send.
-    killSwitch: ws?.auto_reply_kill_switch ?? true,
+    killSwitch,
     voice: {
       voiceProfile: brief?.voice_profile ?? null,
       voice: brief?.voice ?? "",
       doNotSay: brief?.do_not_say ?? [],
       productDescription: brief?.product_description ?? "",
     },
+    spamIgnore: {
+      // Fail-closed: an unknown / missing mode parses to 'off' (never ignore).
+      mode: parseEngagementMode(ws?.spam_ignore_mode),
+      useClaude: ws?.spam_ignore_use_claude ?? false,
+      killSwitch,
+    },
   };
+}
+
+// TODO #0 — run the spam auto-ignore pass for one account over the
+// newly-inserted, still-unread rows. Returns the count of rows flipped to
+// status='ignored' (LIVE only; shadow would-ignores are audited, not counted).
+// Each attempt is independently gated (trust + mode + kill switch + status +
+// spam verdict) and audited inside attemptSpamIgnore; a single failure never
+// poisons the rest. Runs BEFORE the DM + auto-reply passes so a row dropped as
+// spam is never also DMed or publicly replied to.
+async function runSpamIgnore(
+  acct: SocialAccountRow,
+  insertedIds: string[],
+  ctx: WorkspaceContextCache,
+  now: Date,
+): Promise<number> {
+  const svc = supabaseService();
+  // Reload only still-'unread' rows: the native-reply conflict pass may have
+  // flipped some to 'read', and we only auto-ignore fresh inbound.
+  const { data: freshRows } = await svc
+    .from("interactions")
+    .select("*")
+    .in("id", insertedIds)
+    .eq("status", "unread");
+  const rows = (freshRows ?? []) as InteractionRow[];
+  let ignored = 0;
+  for (const row of rows) {
+    const result = await attemptSpamIgnore(svc, acct, row, ctx.spamIgnore, now);
+    if (result.outcome === "ignored") ignored += 1;
+  }
+  return ignored;
 }
 
 // Bet 4 — run the autonomous auto-reply pass for one account over the

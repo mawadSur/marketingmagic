@@ -44,6 +44,9 @@ const STATUS_FILTERS: Array<{ value: InteractionStatus; label: string }> = [
   { value: "replied", label: "Replied" },
   { value: "snoozed", label: "Snoozed" },
   { value: "dismissed", label: "Dismissed" },
+  // TODO #0: explicit review lane for messages the spam pass auto-ignored,
+  // so nothing is silently dropped.
+  { value: "ignored", label: "Spam (ignored)" },
 ];
 
 function parseFilter<T extends string>(
@@ -127,6 +130,14 @@ export default async function InboxPage({
         />
       ) : null}
 
+      {status === "ignored" ? (
+        <Notice
+          variant="info"
+          className="px-3 py-2 text-xs"
+          title="These messages were auto-ignored as spam, not deleted. Open any item to reply or act on it — nothing is silently dropped, and every auto-ignore is logged."
+        />
+      ) : null}
+
       {interactions.length === 0 ? (
         <EmptyState
           icon="spark"
@@ -157,6 +168,18 @@ export default async function InboxPage({
                     <PriorityBadge band={band} score={i.priority_score} />
                     {isUnread ? <Badge variant="info">unread</Badge> : null}
                     {i.status === "replied" ? <Badge variant="success">replied</Badge> : null}
+                    {i.status === "ignored" ? (
+                      <Badge
+                        variant="danger"
+                        title={`Auto-ignored as spam${
+                          i.spam_score == null
+                            ? ""
+                            : ` · spam score ${Math.round(i.spam_score)}`
+                        }`}
+                      >
+                        spam
+                      </Badge>
+                    ) : null}
                     <span className="font-medium text-foreground">
                       @{i.author_handle}
                     </span>

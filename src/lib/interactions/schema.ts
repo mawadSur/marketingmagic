@@ -38,6 +38,10 @@ export const interactionStatusSchema = z.enum([
   "replied",
   "snoozed",
   "dismissed",
+  // TODO #0 (migration 056): auto-ignored as spam by the poll-interactions
+  // spam pass. Distinct from 'dismissed' (a manual human clear) so the inbox
+  // can surface an explicit "auto-ignored as spam" review lane.
+  "ignored",
 ]);
 export type InteractionStatus = z.infer<typeof interactionStatusSchema>;
 
@@ -88,6 +92,10 @@ export const interactionRowSchema = z.object({
   received_at: z.string(),
   status: interactionStatusSchema,
   priority_score: z.number().nullable(),
+  // TODO #0 (migration 056): 0-100 spam likelihood (higher = spammier). NULL
+  // until the poll-time spam classifier runs. Optional on read for back-compat
+  // with rows persisted before the column existed.
+  spam_score: z.number().nullable().optional(),
   snooze_until: z.string().nullable(),
   replied_at: z.string().nullable(),
   replied_to_post_id: z.string().uuid().nullable(),

@@ -171,6 +171,11 @@ export interface VoiceProfileDiff {
   // Counts of rejections that produced this diff. Helpful for the UI to
   // explain "we noticed N off-voice rejections this week."
   source_rejection_count: number;
+  // TODO #0 (gap 2): how many of the user's OWN sent/published exemplars
+  // informed this diff (published posts + manually-sent replies). Lets the UI
+  // explain "we also studied N posts you actually published." Optional /
+  // omitted on legacy rejection-only diffs.
+  source_sent_count?: number;
   proposed_at: string;
 }
 
@@ -207,9 +212,18 @@ export type InteractionChannel = "x" | "linkedin" | "bluesky" | "instagram" | "t
 // Phase 4.5: lifecycle of an interaction row. `unread` = freshly pulled;
 // `read` = opened OR downgraded by native-reply conflict; `replied` =
 // the user clicked send via the inbox composer; `snoozed` = hidden
-// until snooze_until passes; `dismissed` = manually cleared.
-// Mirrors the CHECK constraint in migration 023.
-export type InteractionStatus = "unread" | "read" | "replied" | "snoozed" | "dismissed";
+// until snooze_until passes; `dismissed` = manually cleared; `ignored` =
+// auto-ignored as spam by the poll-interactions spam pass (TODO #0,
+// migration 056) — distinct from `dismissed` so the inbox can show an
+// explicit "auto-ignored as spam" review lane.
+// Mirrors the CHECK constraint in migrations 023 + 056.
+export type InteractionStatus =
+  | "unread"
+  | "read"
+  | "replied"
+  | "snoozed"
+  | "dismissed"
+  | "ignored";
 
 export interface Database {
   public: {
@@ -241,6 +255,14 @@ export interface Database {
           // 'draft' (default) = prepare + email a recommendation, never act
           // autonomously. 'auto' = reserved future graduation.
           autopilot_mode: "draft" | "auto";
+          // TODO #0 (migration 056): tri-state inbox spam auto-ignore.
+          // 'shadow' classifies + audits would-ignore but never flips a row;
+          // 'live' flips spam → status='ignored'. Requires trust_mode to go
+          // live; respects auto_reply_kill_switch. Defaults 'off'.
+          spam_ignore_mode: EngagementMode;
+          // TODO #0 (migration 056): escalate borderline-band inbound to a
+          // Claude spam classify (fail-open toward ham). Defaults false.
+          spam_ignore_use_claude: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -259,6 +281,8 @@ export interface Database {
           attribution_enabled?: boolean;
           auto_reply_kill_switch?: boolean;
           autopilot_mode?: "draft" | "auto";
+          spam_ignore_mode?: EngagementMode;
+          spam_ignore_use_claude?: boolean;
         };
         Update: Partial<{
           slug: string;
@@ -273,6 +297,8 @@ export interface Database {
           attribution_enabled: boolean;
           auto_reply_kill_switch: boolean;
           autopilot_mode: "draft" | "auto";
+          spam_ignore_mode: EngagementMode;
+          spam_ignore_use_claude: boolean;
         }>;
         Relationships: [];
       };
@@ -1339,6 +1365,9 @@ export interface Database {
           received_at: string;
           status: InteractionStatus;
           priority_score: number | null;
+          // TODO #0 (migration 056): 0-100 spam likelihood (higher = spammier).
+          // Set by src/lib/interactions/spam.ts on poll. NULL until classified.
+          spam_score: number | null;
           snooze_until: string | null;
           replied_at: string | null;
           replied_to_post_id: string | null;
@@ -1357,6 +1386,7 @@ export interface Database {
           received_at: string;
           status?: InteractionStatus;
           priority_score?: number | null;
+          spam_score?: number | null;
           snooze_until?: string | null;
           replied_at?: string | null;
           replied_to_post_id?: string | null;
@@ -1364,6 +1394,7 @@ export interface Database {
         Update: Partial<{
           status: InteractionStatus;
           priority_score: number | null;
+          spam_score: number | null;
           snooze_until: string | null;
           replied_at: string | null;
           replied_to_post_id: string | null;
@@ -1463,6 +1494,48 @@ export interface Database {
           would_send_text: string | null;
           external_id: string | null;
           lead_tagged: boolean;
+        }>;
+        Relationships: [];
+      };
+      spam_ignore_log: {
+        // TODO #0 (migration 056): audit trail of every spam auto-ignore
+        // decision (ignored / shadow / blocked) on X, Bluesky, LinkedIn.
+        // 'ignored' = row flipped to status='ignored' (live). 'shadow' =
+        // would-ignore audited, row left visible. 'blocked' = a spam verdict
+        // held by a guard (kill switch / not-trusted). See
+        // src/lib/interactions/auto-reply/spam-ignore.ts. Nothing is silently
+        // dropped — every decision is reviewable here.
+        Row: {
+          id: string;
+          workspace_id: string;
+          social_account_id: string;
+          interaction_id: string | null;
+          channel: "x" | "bluesky" | "linkedin";
+          outcome: "ignored" | "shadow" | "blocked";
+          outcome_reason: string | null;
+          spam_score: number;
+          verdict: "ham" | "spam" | "borderline";
+          signal_summary: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          social_account_id: string;
+          interaction_id?: string | null;
+          channel: string;
+          outcome: "ignored" | "shadow" | "blocked";
+          outcome_reason?: string | null;
+          spam_score: number;
+          verdict: "ham" | "spam" | "borderline";
+          signal_summary: string;
+        };
+        Update: Partial<{
+          outcome: "ignored" | "shadow" | "blocked";
+          outcome_reason: string | null;
+          spam_score: number;
+          verdict: "ham" | "spam" | "borderline";
+          signal_summary: string;
         }>;
         Relationships: [];
       };
