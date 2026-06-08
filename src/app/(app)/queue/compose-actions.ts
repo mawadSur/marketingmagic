@@ -5,6 +5,7 @@ import { z } from "zod";
 import { supabaseServer } from "@/lib/supabase/server";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { channelSpec, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
+import { nextRecommendedSlot } from "@/lib/channels/best-times";
 
 // ─────────────────────────────────────────────────────────────
 // createDraftPostAction — single-post compose
@@ -64,6 +65,12 @@ export async function createDraftPostAction(input: {
     return { error: `Connect ${spec.label} before composing a post.`, postId: null };
   }
 
+  // Give the draft a sensible default time (next recommended window for the
+  // channel) so it never lands in the queue as "no time set". Still
+  // pending_approval — the user reviews + can retime before it ships.
+  const suggestedSlot =
+    nextRecommendedSlot(channel) ?? new Date().toISOString();
+
   const { data: inserted, error: insertErr } = await supabase
     .from("posts")
     .insert({
@@ -72,6 +79,7 @@ export async function createDraftPostAction(input: {
       channel,
       text: textParsed.data,
       status: "pending_approval",
+      scheduled_at: suggestedSlot,
       generation_metadata: { source: "compose" },
     })
     .select("id")

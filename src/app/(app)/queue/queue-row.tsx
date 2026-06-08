@@ -2,6 +2,7 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Loader2, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -110,12 +111,29 @@ export function QueueRow({
 
   // Image-gen state. `prompt` is what the user types/edits; seeded from the
   // saved media's prompt (when an image already exists), else from Claude's
-  // suggested image_prompt in generation_metadata.
+  // suggested image_prompt in generation_metadata. The seed is a useState
+  // INITIALIZER (not a value), so a later router.refresh() never clobbers what
+  // the user has typed — fixes the "value disappears" bug where edits were
+  // being reset on the post-generate refresh.
   const seedPrompt = post.media[0]?.prompt ?? post.image_prompt ?? "";
   const [imagePrompt, setImagePrompt] = useState(seedPrompt);
   const [imageBusy, imageStart] = useTransition();
   const [imageError, setImageError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // "Suggest a prompt" helper — for when there's no pre-filled prompt to start
+  // from. We already have Claude's plan-time suggestion (post.image_prompt);
+  // if even that's missing, fall back to a concrete visual seed built from the
+  // post's theme/copy so the user has something to edit instead of a blank box.
+  function suggestImagePrompt() {
+    const fallback =
+      post.image_prompt?.trim() ||
+      (post.theme
+        ? `A clean, on-brand visual representing "${post.theme}".`
+        : `A clean, on-brand visual that complements: ${post.text.slice(0, 120)}`);
+    setImagePrompt(fallback);
+    setImageError(null);
+  }
 
   // Phase 6B — Quick Experiment spawn state. Sits on its own transition
   // so kicking off a (slow) Claude call doesn't block the approve/edit
@@ -327,36 +345,68 @@ export function QueueRow({
       {/* Image block — only show in pending state (post-approval edits frozen). */}
       {isPending ? (
         <div className="space-y-2 rounded-md border bg-muted/30 p-3">
-          {hasImage ? (
-            <div className="space-y-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
+          {/* Fixed-aspect media area. The placeholder, the loading overlay, and
+              the final image ALL live in this same 16:9 box, so swapping
+              between them never changes the card's height — fixes the "card
+              jumps / moves until the image is done" layout shift (CLS). */}
+          <div className="relative aspect-video w-full overflow-hidden rounded-md border bg-muted/20">
+            {hasImage ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
               <img
                 src={post.mediaPublicUrl!}
                 alt={post.media[0]?.prompt ?? "Generated image"}
                 loading="lazy"
                 decoding="async"
-                className="max-h-64 w-full rounded-md border object-cover"
+                className="h-full w-full object-cover"
               />
-            </div>
-          ) : (
-            <div className="flex h-24 items-center justify-center rounded-md border border-dashed bg-muted/20 text-xs text-muted-foreground">
-              No image yet — type a prompt below or upload one.
-            </div>
-          )}
+            ) : (
+              <div className="flex h-full items-center justify-center px-4 text-center text-xs text-muted-foreground">
+                No image yet — type a prompt below or upload one.
+              </div>
+            )}
+            {/* Loading overlay — sits on top of whatever's in the box while a
+                generation/upload is in flight, so the user gets clear feedback
+                without the layout reflowing. */}
+            {imageBusy ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/70 backdrop-blur-sm">
+                <Loader2 className="h-6 w-6 animate-spin text-foreground/70" aria-hidden />
+                <span className="text-xs font-medium text-muted-foreground">
+                  {hasImage ? "Regenerating…" : "Generating your image…"}
+                </span>
+              </div>
+            ) : null}
+          </div>
 
           <div className="space-y-1">
-            <label
-              htmlFor={`image-prompt-${post.id}`}
-              className="text-xs font-medium text-muted-foreground"
-            >
-              Image prompt
-            </label>
+            <div className="flex items-center justify-between gap-2">
+              <label
+                htmlFor={`image-prompt-${post.id}`}
+                className="text-xs font-medium text-muted-foreground"
+              >
+                Image prompt
+              </label>
+              {/* Helper: when the box is empty, offer a one-click suggested
+                  prompt (Claude's plan-time suggestion, or a theme/copy-based
+                  fallback) so the user isn't staring at a blank field. */}
+              {imagePrompt.trim().length === 0 ? (
+                <button
+                  type="button"
+                  onClick={suggestImagePrompt}
+                  disabled={imageBusy}
+                  className="inline-flex items-center gap-1 rounded text-xs font-medium text-primary transition-colors hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 disabled:opacity-50"
+                >
+                  <Wand2 className="h-3 w-3" aria-hidden />
+                  Suggest a prompt
+                </button>
+              ) : null}
+            </div>
             <Input
               id={`image-prompt-${post.id}`}
               value={imagePrompt}
               onChange={(e) => setImagePrompt(e.target.value)}
               placeholder="Describe the image you want…"
               maxLength={500}
+              disabled={imageBusy}
             />
           </div>
 
@@ -367,7 +417,16 @@ export function QueueRow({
               disabled={imageBusy || imagePrompt.trim().length < 3}
               onClick={() => runImage(imagePrompt)}
             >
-              {imageBusy ? "Working…" : hasImage ? "Regenerate" : "Generate image"}
+              {imageBusy ? (
+                <>
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
+                  Working…
+                </>
+              ) : hasImage ? (
+                "Regenerate"
+              ) : (
+                "Generate image"
+              )}
             </Button>
             <Button
               size="sm"
