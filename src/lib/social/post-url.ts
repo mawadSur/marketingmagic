@@ -10,6 +10,7 @@
 //   bluesky   → at:// uri               → bsky.app/profile/<handle>/post/<rkey>
 //   linkedin  → ugcPost/share urn       → linkedin.com/feed/update/<urn>
 //   tiktok    → durable post id          → tiktok.com/@<handle>/video/<id>
+//   youtube   → video id (11-char)        → youtube.com/watch?v=<id>
 //
 // Returns null when we can't build a meaningful link (so callers render plain
 // text instead of a dead link). Pure + dependency-free so it's easy to unit-test.
@@ -45,6 +46,10 @@ export function postPublicUrl(
 
     case "tiktok":
       return h ? `https://www.tiktok.com/@${h}/video/${externalId}` : null;
+
+    case "youtube":
+      // The video id maps directly to a watch URL — no handle needed.
+      return `https://www.youtube.com/watch?v=${encodeURIComponent(externalId)}`;
 
     case "instagram":
       // No stable id→web-URL mapping for IG media; the profile is the best link.

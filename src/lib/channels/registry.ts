@@ -13,7 +13,8 @@ export type ChannelId =
   | "instagram"
   | "bluesky"
   | "facebook"
-  | "tiktok";
+  | "tiktok"
+  | "youtube";
 
 export interface ChannelSpec {
   id: ChannelId;
@@ -168,6 +169,39 @@ export const CHANNELS: Record<ChannelId, ChannelSpec> = {
     oauthEnvPrefix: "TIKTOK_",
     promptConstraint:
       "Max 2200 chars; video-first — the caption supports a vertical short-form video, never stands alone. Hook in the first line, conversational and native to TikTok. Hashtags allowed (3-6); emoji fine if the voice uses them.",
+  },
+  youtube: {
+    id: "youtube",
+    label: "YouTube",
+    // YouTube is video-only via the Data API v3 videos.insert path. The text
+    // the planner produces is the video DESCRIPTION (hard cap 5000 chars). The
+    // title is derived separately and capped at 100 chars (see youtube.ts), so
+    // maxChars here tracks the description — the longer field the caption rides
+    // in. Like TikTok, the caption never stands alone: it always accompanies an
+    // uploaded video (Shorts or long-form).
+    maxChars: 5000,
+    // Video-only publish path. Images aren't published as standalone posts
+    // (YouTube thumbnails exist but are a separate API surface we don't wire
+    // up here) — false so the planner never tries to attach an image-only post.
+    supportsImages: false,
+    supportsVideo: true,
+    recommendedWindows: [
+      // No Sprout YouTube dataset; use afternoon/early-evening windows that
+      // track YouTube's published "best time to publish" guidance (audiences
+      // watch after school/work, Thu-Sun lean for Shorts).
+      { weekday: 4, ranges: [["14:00", "16:00"]] },
+      { weekday: 5, ranges: [["12:00", "15:00"], ["18:00", "20:00"]] },
+      { weekday: 6, ranges: [["09:00", "11:00"], ["15:00", "18:00"]] },
+      { weekday: 7, ranges: [["09:00", "11:00"], ["15:00", "18:00"]] },
+    ],
+    // Google OAuth 2.0 (youtube.upload scope). We standardise on the YOUTUBE_
+    // prefix (YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET) rather than GOOGLE_ so
+    // the credentials read as channel-specific and don't collide with any other
+    // future Google product. When unset the connect tile is hidden, exactly
+    // like every other oauthEnvPrefix-gated channel.
+    oauthEnvPrefix: "YOUTUBE_",
+    promptConstraint:
+      "Video-first — the text is the video DESCRIPTION (max 5000 chars), never a standalone post. Open with a one-line hook that doubles as the title idea. For Shorts keep it tight (under ~300 chars) and punchy; for long-form, lead with the value then expand. Hashtags allowed (2-5); put the most important keyword first.",
   },
 };
 

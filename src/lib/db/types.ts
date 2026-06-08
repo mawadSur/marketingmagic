@@ -1,6 +1,6 @@
 export type Json = string | number | boolean | null | { [k: string]: Json | undefined } | Json[];
 
-export type Channel = "x" | "instagram" | "facebook" | "threads" | "bluesky" | "linkedin" | "tiktok";
+export type Channel = "x" | "instagram" | "facebook" | "threads" | "bluesky" | "linkedin" | "tiktok" | "youtube";
 export type PostStatus =
   | "draft"
   | "pending_approval"

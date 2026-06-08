@@ -57,6 +57,9 @@ const SOURCE_CLUSTER_CADENCE: Record<ChannelId, number> = {
   // TikTok is video-only and flag-gated off until the app is audited; keep the
   // cadence low so it doesn't dominate a focused source burst.
   tiktok: 1,
+  // YouTube is video-only and gated on Google OAuth verification + the video-
+  // publish allowlist; keep the cadence low for the same reason as TikTok.
+  youtube: 1,
 };
 
 export async function generateClusterAction(

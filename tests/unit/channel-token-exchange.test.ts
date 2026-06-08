@@ -23,6 +23,8 @@ function resetEnv() {
   env.TIKTOK_CLIENT_SECRET = "tt-secret";
   env.LINKEDIN_CLIENT_ID = "li-id";
   env.LINKEDIN_CLIENT_SECRET = "li-secret";
+  env.YOUTUBE_CLIENT_ID = "yt-id";
+  env.YOUTUBE_CLIENT_SECRET = "yt-secret";
 }
 vi.mock("@/lib/env", () => ({ serverEnv: () => env }));
 
@@ -41,6 +43,13 @@ import {
   type TikTokCredentials,
 } from "@/lib/social/tiktok";
 import { linkedinExchangeCode, linkedinVerify } from "@/lib/social/linkedin";
+import {
+  youtubeExchangeCode,
+  youtubeRefreshToken,
+  youtubeVerify,
+  loadFreshYouTubeCredentials,
+  type YouTubeCredentials,
+} from "@/lib/social/youtube";
 
 // ── fetch stub ────────────────────────────────────────────────────────────────
 // Each test pushes a queue of responder fns. The stub records every call
@@ -343,5 +352,125 @@ describe("LinkedIn token lifecycle", () => {
     const v = await linkedinVerify("AT");
     expect(v.urn).toBe("urn:li:person:abc123");
     expect(v.name).toBe("Mohammed Awad");
+  });
+});
+
+describe("YouTube token lifecycle (Google OAuth, ~1h tokens, non-rotating refresh)", () => {
+  it("exchangeCode posts client_id + client_secret to oauth2.googleapis.com/token", async () => {
+    responders.push(() =>
+      jsonResponse({
+        access_token: "AT",
+        expires_in: 3600,
+        refresh_token: "RT",
+        scope: "https://www.googleapis.com/auth/youtube.upload",
+        token_type: "Bearer",
+      }),
+    );
+    const tok = await youtubeExchangeCode({
+      clientId: "yt-id",
+      clientSecret: "yt-secret",
+      code: "c",
+      redirectUri: "https://app/cb",
+    });
+    expect(tok.access_token).toBe("AT");
+    expect(tok.refresh_token).toBe("RT");
+    expect(calls[0]!.url).toBe("https://oauth2.googleapis.com/token");
+    const body = bodyParams(calls[0]!.init);
+    expect(body.get("client_id")).toBe("yt-id");
+    expect(body.get("client_secret")).toBe("yt-secret");
+    expect(body.get("grant_type")).toBe("authorization_code");
+    // Google web-client flow authenticates with client_secret, NOT PKCE.
+    expect(body.get("code_verifier")).toBeNull();
+  });
+
+  it("exchangeCode throws on a non-2xx token response", async () => {
+    responders.push(() => new Response("nope", { status: 400 }));
+    await expect(
+      youtubeExchangeCode({
+        clientId: "yt-id",
+        clientSecret: "yt-secret",
+        code: "c",
+        redirectUri: "https://app/cb",
+      }),
+    ).rejects.toThrow(/YouTube token exchange failed \(400\)/);
+  });
+
+  it("loadFresh refreshes a stale ~1h token, KEEPING the original refresh token", async () => {
+    // Google does NOT rotate the refresh token — the refresh response omits it,
+    // so loadFresh must fall back to the stored one (the opposite of TikTok).
+    const { svc, updates } = fakeSvc();
+    responders.push(() =>
+      jsonResponse({
+        access_token: "AT-new",
+        expires_in: 3600,
+        // no refresh_token returned on a plain refresh
+        scope: "https://www.googleapis.com/auth/youtube.upload",
+        token_type: "Bearer",
+      }),
+    );
+    const stale: YouTubeCredentials = {
+      accessToken: "AT-old",
+      refreshToken: "RT-keep",
+      expiresAt: Date.now() + 60 * 1000,
+    };
+    const out = await loadFreshYouTubeCredentials(svc, "acct-1", stale);
+    expect(out.accessToken).toBe("AT-new");
+    expect(out.refreshToken).toBe("RT-keep");
+    expect((updates[0]!.credentials as YouTubeCredentials).refreshToken).toBe("RT-keep");
+    expect(bodyParams(calls[0]!.init).get("grant_type")).toBe("refresh_token");
+  });
+
+  it("loadFresh skips refresh when fresh (no fetch)", async () => {
+    const { svc } = fakeSvc();
+    const fresh: YouTubeCredentials = {
+      accessToken: "AT",
+      refreshToken: "RT",
+      expiresAt: Date.now() + 60 * 60 * 1000,
+    };
+    await loadFreshYouTubeCredentials(svc, "acct-1", fresh);
+    expect(calls.length).toBe(0);
+  });
+
+  it("refresh throws a clear error when keys are unset", async () => {
+    delete env.YOUTUBE_CLIENT_ID;
+    const { svc } = fakeSvc();
+    const stale: YouTubeCredentials = {
+      accessToken: "AT",
+      refreshToken: "RT",
+      expiresAt: Date.now() + 1000,
+    };
+    await expect(loadFreshYouTubeCredentials(svc, "acct-1", stale)).rejects.toThrow(
+      /YOUTUBE_CLIENT_ID \/ YOUTUBE_CLIENT_SECRET not set/,
+    );
+  });
+
+  it("refreshToken returns a rotated token when Google does supply one", async () => {
+    responders.push(() =>
+      jsonResponse({
+        access_token: "AT2",
+        expires_in: 3600,
+        refresh_token: "RT2",
+        scope: "https://www.googleapis.com/auth/youtube.upload",
+        token_type: "Bearer",
+      }),
+    );
+    const tok = await youtubeRefreshToken({
+      clientId: "yt-id",
+      clientSecret: "yt-secret",
+      refreshToken: "RT",
+    });
+    expect(tok.access_token).toBe("AT2");
+    expect(tok.refresh_token).toBe("RT2");
+    expect(bodyParams(calls[0]!.init).get("grant_type")).toBe("refresh_token");
+  });
+
+  it("verify resolves { channelId, handle } from channels.list?mine=true", async () => {
+    responders.push(() =>
+      jsonResponse({ items: [{ id: "UC123", snippet: { title: "MM", customUrl: "@mm" } }] }),
+    );
+    const v = await youtubeVerify({ accessToken: "AT", refreshToken: "RT", expiresAt: Date.now() + 1e9 });
+    expect(v).toEqual({ channelId: "UC123", handle: "@mm" });
+    const headers = calls[0]!.init!.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer AT");
   });
 });

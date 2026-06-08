@@ -25,6 +25,7 @@ function resetEnv() {
   env.META_APP_ID = "meta-app-id";
   env.META_FB_LOGIN_CONFIG_ID = "fb-config-id";
   env.TIKTOK_CLIENT_KEY = "tt-client-key";
+  env.YOUTUBE_CLIENT_ID = "yt-client-id";
 }
 
 vi.mock("@/lib/env", () => ({
@@ -37,6 +38,7 @@ import { instagramAuthorizeUrl } from "@/lib/social/instagram";
 import { threadsAuthorizeUrl } from "@/lib/social/threads";
 import { facebookAuthorizeUrl } from "@/lib/social/facebook";
 import { linkedinAuthorizeUrl } from "@/lib/social/linkedin";
+import { youtubeAuthorizeUrl, YOUTUBE_OAUTH_SCOPES } from "@/lib/social/youtube";
 
 const REDIRECT = "https://marketingmagic.vercel.app/api/oauth/{ch}/callback";
 const STATE = "ws-id:nonce-abc";
@@ -192,5 +194,40 @@ describe("LinkedIn authorize URL", () => {
     // only if the app passed Community Management review — graceful fallback).
     expect(scope).toContain("w_member_social");
     expect(scope).toContain("w_organization_social");
+  });
+});
+
+describe("YouTube authorize URL (Google OAuth 2.0)", () => {
+  const build = () =>
+    new URL(
+      youtubeAuthorizeUrl({
+        clientId: "yt-client-id",
+        redirectUri: REDIRECT.replace("{ch}", "youtube"),
+        state: STATE,
+      }),
+    );
+
+  it("targets accounts.google.com/o/oauth2/v2/auth (NOT the API/token hosts)", () => {
+    const u = build();
+    expect(u.host).toBe("accounts.google.com");
+    expect(u.pathname).toBe("/o/oauth2/v2/auth");
+    expect(u.searchParams.get("client_id")).toBe("yt-client-id");
+    expect(u.searchParams.get("response_type")).toBe("code");
+    expect(u.searchParams.get("state")).toBe(STATE);
+  });
+
+  it("space-joins the youtube.upload scope set (Google uses spaces, not commas)", () => {
+    const scope = build().searchParams.get("scope") ?? "";
+    expect(scope).not.toContain(",");
+    for (const s of YOUTUBE_OAUTH_SCOPES) expect(scope.split(" ")).toContain(s);
+    expect(scope).toContain("https://www.googleapis.com/auth/youtube.upload");
+  });
+
+  it("sends access_type=offline + prompt=consent so Google mints a refresh_token", () => {
+    // Without BOTH, a reconnect silently returns no refresh_token and the
+    // connection dies in ~1h — the load-bearing Google gotcha.
+    const u = build();
+    expect(u.searchParams.get("access_type")).toBe("offline");
+    expect(u.searchParams.get("prompt")).toBe("consent");
   });
 });

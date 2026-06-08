@@ -264,6 +264,7 @@ function recommendedHashtagsBlock(
     bluesky: "Bluesky: NO hashtags. Skip entirely.",
     facebook: "Facebook: 0–2 tags. Hashtags add little on a Page — default to none unless load-bearing.",
     tiktok: "TikTok: 3–6 tags. Blend 1–2 broad discovery tags with niche ones — tags carry real reach here.",
+    youtube: "YouTube: 2–5 tags in the description. Keyword-forward — put the most important search term first.",
   };
   for (const ch of activeChannels) {
     const tags = suggestions.get(ch) ?? [];

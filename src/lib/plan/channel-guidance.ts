@@ -34,6 +34,8 @@ export const CHANNEL_TONE: Record<ChannelId, string> = {
     "Conversational and community-oriented. Lead with the hook; keep it to 1–2 short paragraphs with one clear CTA. Hashtags sparing.",
   tiktok:
     "Video-first — the caption rides on a vertical short-form video, never stands alone. Hook in the first line, native and conversational. Hashtags 3-6 for discovery.",
+  youtube:
+    "Video-first — the text is the video description (and the first line seeds the title), never a standalone post. Lead with the value/hook; expand for long-form, keep it tight for Shorts. Keyword-forward; hashtags 2-5.",
 };
 
 // Render the per-channel tone block. Callers pass the active channel set so

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseService } from "@/lib/supabase/service";
+import { serverEnv } from "@/lib/env";
 import { tierFor, type PlanId } from "@/lib/billing/tiers";
 import { overLimitAccountIds } from "@/lib/billing/limits";
 import { ChannelBadge, statusBadgeVariant, Badge, statusBadgeLabel } from "@/components/ui/badge";
@@ -26,8 +27,24 @@ const CONNECTORS = [
   { slug: "instagram", label: "Connect Instagram", initiate: "/api/oauth/instagram/initiate" },
   { slug: "facebook", label: "Connect Facebook", initiate: "/api/oauth/facebook/initiate" },
   { slug: "tiktok", label: "Connect TikTok", initiate: "/api/oauth/tiktok/initiate", comingSoon: true },
+  // YouTube is video-only via the Data API v3 (Google OAuth). Live use needs a
+  // verified Google Cloud project + YOUTUBE_CLIENT_ID/SECRET; the tile is hidden
+  // entirely when that env is unset (see oauthEnvPrefix gating below).
+  { slug: "youtube", label: "Connect YouTube", initiate: "/api/oauth/youtube/initiate" },
   { slug: "bluesky", label: "Connect Bluesky", initiate: null }, // app-password flow, not OAuth
 ] as const;
+
+// Channels whose connect tile is gated on OAuth env presence. When the matching
+// keys are unset, the channel degrades gracefully — its tile is hidden from the
+// "Add a channel" grid (mirrors the registry's `oauthEnvPrefix` contract) so a
+// user never round-trips to a provider the deployment can't actually talk to.
+// Currently only YouTube opts into UI-level env gating; the other OAuth tiles
+// rely on their initiate route redirecting with `_not_configured`.
+function channelOauthConfigured(slug: string): boolean {
+  if (slug !== "youtube") return true;
+  const env = serverEnv();
+  return Boolean(env.YOUTUBE_CLIENT_ID && env.YOUTUBE_CLIENT_SECRET);
+}
 
 export default async function ChannelsPage({
   searchParams,
@@ -274,9 +291,12 @@ export default async function ChannelsPage({
       ) : null}
 
       {(() => {
-        // Only offer channels that aren't already connected. When every channel
-        // is connected the section collapses to a quiet "all set" note.
-        const available = CONNECTORS.filter((c) => !connectedChannels.has(c.slug));
+        // Only offer channels that aren't already connected AND whose OAuth env
+        // is configured on this deployment. When every channel is connected the
+        // section collapses to a quiet "all set" note.
+        const available = CONNECTORS.filter(
+          (c) => !connectedChannels.has(c.slug) && channelOauthConfigured(c.slug),
+        );
         if (available.length === 0) {
           return (
             <section className="space-y-3">
