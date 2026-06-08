@@ -53,26 +53,27 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+// Blotato-competitive ladder: pro (Solo) videosPerMonth = 250, agency = 6000.
 describe("assertWithinVideoQuota: under the limit", () => {
-  it("passes when usage + requested is below the tier cap (pro = 20)", async () => {
+  it("passes when usage + requested is below the tier cap (pro = 250)", async () => {
     setUsage(5);
     await expect(assertWithinVideoQuota("ws", 1)).resolves.toBeUndefined();
   });
 
   it("passes at exactly the boundary (usage + requested == limit)", async () => {
-    setUsage(19); // 19 + 1 == 20, allowed
+    setUsage(249); // 249 + 1 == 250, allowed
     await expect(assertWithinVideoQuota("ws", 1)).resolves.toBeUndefined();
   });
 });
 
 describe("assertWithinVideoQuota: at/over the limit", () => {
   it("throws QuotaExceededError when usage + requested would exceed the cap", async () => {
-    setUsage(20); // 20 + 1 > 20
+    setUsage(250); // 250 + 1 > 250
     await expect(assertWithinVideoQuota("ws", 1)).rejects.toBeInstanceOf(QuotaExceededError);
   });
 
   it("the thrown error reports kind=videos, plan, current and limit", async () => {
-    setUsage(20);
+    setUsage(250);
     try {
       await assertWithinVideoQuota("ws", 1);
       throw new Error("expected QuotaExceededError");
@@ -81,13 +82,13 @@ describe("assertWithinVideoQuota: at/over the limit", () => {
       const q = err as QuotaExceededError;
       expect(q.kind).toBe("videos");
       expect(q.plan).toBe("pro");
-      expect(q.current).toBe(20);
-      expect(q.limit).toBe(20);
+      expect(q.current).toBe(250);
+      expect(q.limit).toBe(250);
     }
   });
 
   it("respects a requested count > 1 (batch render)", async () => {
-    setUsage(18); // 18 + 5 > 20
+    setUsage(248); // 248 + 5 > 250
     await expect(assertWithinVideoQuota("ws", 5)).rejects.toBeInstanceOf(QuotaExceededError);
   });
 });
@@ -118,11 +119,11 @@ describe("assertWithinVideoQuota: tier semantics", () => {
     await expect(assertWithinVideoQuota("ws", 1)).rejects.toBeInstanceOf(QuotaExceededError);
   });
 
-  it("agency tier (60) allows a higher ceiling", async () => {
+  it("agency tier (6000) allows a higher ceiling", async () => {
     planHolder.plan = "agency";
-    setUsage(59);
+    setUsage(5999);
     await expect(assertWithinVideoQuota("ws", 1)).resolves.toBeUndefined();
-    setUsage(60);
+    setUsage(6000);
     await expect(assertWithinVideoQuota("ws", 1)).rejects.toBeInstanceOf(QuotaExceededError);
   });
 });

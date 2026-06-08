@@ -40,7 +40,7 @@ export async function addWatchHandleAction(
 ): Promise<AddWatchHandleState> {
   const ws = await getActiveWorkspaceOrRedirect();
   if (!isCompetitorWatchEnabled(ws.plan)) {
-    return { error: "Competitor Watch is available on the Founder tier.", ok: false };
+    return { error: "Competitor Watch is available on the Creator tier.", ok: false };
   }
   const user = await getAuthedUserOrRedirect();
 

@@ -87,11 +87,22 @@ const serverSchema = z.object({
   // stripeClient() throws a clear error at the call site.
   STRIPE_SECRET_KEY: z.preprocess(v => (v === "" ? undefined : v), z.string().min(8).optional()),
   STRIPE_WEBHOOK_SECRET: z.preprocess(v => (v === "" ? undefined : v), z.string().min(8).optional()),
+  // Blotato-competitive ladder: STRIPE_PRICE_PRO is the "Solo" $29 price.
+  // ENUM ID unchanged ('pro') — only the underlying Stripe price's amount moves
+  // when the operator creates the new $29 price (see docs/pricing-migration-
+  // runbook.md). All optional → graceful degrade when unset (planForPriceId
+  // returns null; the checkout UI hides the upgrade affordance).
   STRIPE_PRICE_PRO: z.preprocess(v => (v === "" ? undefined : v), z.string().min(4).optional()),
+  // STRIPE_PRICE_AGENCY is the "Agency" $499 price (enum id 'agency', which is
+  // ALSO the org/multi-workspace tier). The operator creates the new $499 price
+  // and sets this var; existing Agency subs stay on their old price until
+  // migrated. (The per-seat org price is the separate STRIPE_PRICE_ORG_SEAT.)
   STRIPE_PRICE_AGENCY: z.preprocess(v => (v === "" ? undefined : v), z.string().min(4).optional()),
-  // Phase 2.6 Founder tier. Optional like the others — when missing, the
-  // pricing page hides the upgrade affordance for Founder and existing
-  // subscribers degrade gracefully (planForPriceId returns null).
+  // STRIPE_PRICE_FOUNDER is the "Creator" $97 price (enum id 'founder' — display
+  // renamed from "Founder" to "Creator"; the voice-memo + Competitor Watch tier).
+  // The operator creates the new $97 price and sets this var. Optional like the
+  // others — when missing, the pricing page hides the Creator upgrade affordance
+  // and existing subscribers degrade gracefully (planForPriceId returns null).
   STRIPE_PRICE_FOUNDER: z.preprocess(v => (v === "" ? undefined : v), z.string().min(4).optional()),
   // Discord bot integration (Phase 4.7). All optional so the app boots without
   // Discord configured — `/integrations/discord` renders a "configure to enable"

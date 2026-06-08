@@ -4,8 +4,8 @@
 // but a separate module keeps the "which features are premium" surface
 // out of the price/limit table (which Stripe pulls from).
 //
-// Phase 2.6 update: the Founder tier ($149/mo) now owns Competitor Watch
-// as the marquee perk. `hasCompetitorWatch()` in `@/lib/billing/tiers`
+// Phase 2.6 update: the founder enum tier (displayed as "Creator", $97/mo)
+// owns Competitor Watch as the marquee perk. `hasCompetitorWatch()` in `@/lib/billing/tiers`
 // is the canonical capability check; this module re-exports it under the
 // `isCompetitorWatchEnabled` name that the Phase 6.6 callsites already
 // use, plus owns the per-channel rate-budget table that doesn't belong

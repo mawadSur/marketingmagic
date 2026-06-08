@@ -18,7 +18,7 @@ export default async function AddCompetitorPage() {
         </header>
         <EmptyState
           icon="spark"
-          title="Available on the Founder tier."
+          title="Available on the Creator tier."
           description="Competitor Watch tracks handles, surfaces what's working for them, and helps you respond constructively. Upgrade to enable."
           action={
             <Link
