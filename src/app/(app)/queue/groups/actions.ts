@@ -5,8 +5,9 @@ import { z } from "zod";
 import { supabaseServer } from "@/lib/supabase/server";
 import { getActiveWorkspaceOrRedirect, getAuthedUserOrRedirect } from "@/lib/workspace";
 import { generateGroupDrafts } from "@/lib/groups/generate";
+import { discoverGroups } from "@/lib/groups/discover";
 import { postingVerdictNow, type GroupPostingRules } from "@/lib/groups/posting-rules";
-import type { FacebookGroupPromoPolicy } from "@/lib/db/types";
+import type { FacebookGroupPromoPolicy, DiscoveredGroupStatus } from "@/lib/db/types";
 
 // Server actions for Facebook Group Assist. Everything is workspace-scoped via
 // the active workspace + RLS (members can read/write their own rows). These
@@ -300,6 +301,122 @@ export async function dismissDraftAction(draftId: string): Promise<ActionResult>
     .eq("id", draftId)
     .eq("workspace_id", ws.id)
     .eq("status", "draft"); // only an active draft can be dismissed (posted/dismissed are terminal)
+  if (error) return { error: error.message };
+
+  revalidatePath("/queue/groups");
+  return { error: null };
+}
+
+// ── Discovery ──────────────────────────────────────────────────────────────
+//
+// Find Facebook Groups worth joining to market this workspace's product. Meta
+// removed the Groups API (2024-04-22), so this is AI SUGGESTIONS + outbound
+// search links, never API-verified groups and never wired to auto-publish: we
+// ask Claude for relevant group archetypes from the brand brief, persist them
+// to discovered_groups so they survive, and the operator triages
+// (save/apply/joined/dismiss) and clicks through to find + join on Facebook.
+
+// Generate fresh suggestions and persist them. Returns a soft error (not a
+// throw) so the UI can surface it inline. Deduped against the workspace's
+// existing suggested queries (also guarded by the unique index in migration 055).
+export async function discoverGroupsAction(
+  count = 6,
+): Promise<ActionResult & { created: number }> {
+  const ws = await getActiveWorkspaceOrRedirect();
+  const user = await getAuthedUserOrRedirect();
+  const supabase = await supabaseServer();
+
+  // Discovery is grounded in the brand brief (product/audience/voice).
+  const { data: brief } = await supabase
+    .from("brand_briefs")
+    .select("*")
+    .eq("workspace_id", ws.id)
+    .maybeSingle();
+  if (!brief) {
+    return {
+      error: "Add your business brief first (Settings → Brief) so we can find groups for you.",
+      created: 0,
+    };
+  }
+
+  // Existing queries (any status) — so re-running doesn't re-surface dupes and
+  // we don't resurrect a dismissed suggestion.
+  const { data: existing } = await supabase
+    .from("discovered_groups")
+    .select("suggested_search_query")
+    .eq("workspace_id", ws.id);
+  const existingQueries = (existing ?? []).map((r) => r.suggested_search_query);
+
+  let result;
+  try {
+    result = await discoverGroups(brief, {
+      count: Math.max(1, Math.min(8, count)),
+      existingQueries,
+    });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Discovery failed.", created: 0 };
+  }
+
+  if (result.suggestions.length === 0) {
+    return {
+      error: "No new group ideas this time — you've already got the obvious ones. Try again later.",
+      created: 0,
+    };
+  }
+
+  const rows = result.suggestions.map((s) => ({
+    workspace_id: ws.id,
+    name: s.name,
+    description: s.description,
+    why_relevant: s.why_relevant,
+    approx_members: s.approx_members,
+    topic: s.topic,
+    facebook_search_url: s.facebook_search_url,
+    suggested_search_query: s.suggested_search_query,
+    status: "suggested" as const,
+    created_by: user.id,
+  }));
+
+  // App-layer dedupe (normalizeSuggestions, fed `existingQueries`) is the
+  // primary guard against re-surfacing the same query; the functional unique
+  // index in migration 055 is defense-in-depth against a concurrent run. On the
+  // rare race a duplicate trips the index — surface that honestly rather than
+  // pretend rows landed, but the common single-run path inserts cleanly.
+  const { data: inserted, error } = await supabase
+    .from("discovered_groups")
+    .insert(rows)
+    .select("id");
+  if (error) return { error: error.message, created: 0 };
+
+  revalidatePath("/queue/groups");
+  return { error: null, created: inserted?.length ?? 0 };
+}
+
+const discoveredStatusSchema = z.enum([
+  "suggested",
+  "saved",
+  "applied",
+  "joined",
+  "dismissed",
+]);
+
+// Triage a discovered group: save / mark applied / mark joined / dismiss /
+// (re)open. Workspace-scoped via RLS + the explicit workspace filter.
+export async function updateDiscoveredGroupStatusAction(
+  discoveredId: string,
+  status: DiscoveredGroupStatus,
+): Promise<ActionResult> {
+  if (!uuid.safeParse(discoveredId).success) return { error: "Bad suggestion id." };
+  const parsed = discoveredStatusSchema.safeParse(status);
+  if (!parsed.success) return { error: "Unknown status." };
+
+  const ws = await getActiveWorkspaceOrRedirect();
+  const supabase = await supabaseServer();
+  const { error } = await supabase
+    .from("discovered_groups")
+    .update({ status: parsed.data })
+    .eq("id", discoveredId)
+    .eq("workspace_id", ws.id);
   if (error) return { error: error.message };
 
   revalidatePath("/queue/groups");

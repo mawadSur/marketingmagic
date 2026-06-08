@@ -5,6 +5,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { QueueTabs } from "../queue-tabs";
 import { GroupsManager, type GroupView, type GroupDraftView } from "./groups-manager";
 import { TodayPanel } from "./today-panel";
+import { DiscoverSection, type DiscoveredGroupView } from "./discover-section";
 import {
   postingVerdictNow,
   type GroupPostingRules,
@@ -32,7 +33,7 @@ export default async function GroupsPage() {
   const ws = await getActiveWorkspaceOrRedirect();
   const supabase = await supabaseServer();
 
-  const [groupsRes, draftsRes, briefRes, hasBriefRes] = await Promise.all([
+  const [groupsRes, draftsRes, briefRes, hasBriefRes, discoveredRes] = await Promise.all([
     supabase
       .from("facebook_groups")
       .select("id, name, url, member_count, promo_policy, promo_weekdays, allow_links, rules_notes")
@@ -46,6 +47,16 @@ export default async function GroupsPage() {
       .order("created_at", { ascending: false }),
     supabase.from("brand_briefs").select("audience_timezone").eq("workspace_id", ws.id).maybeSingle(),
     supabase.from("brand_briefs").select("id").eq("workspace_id", ws.id).maybeSingle(),
+    // Discovery: AI-suggested groups to join (migration 055). Dismissed rows are
+    // filtered client-side so the operator can still re-run discovery against them.
+    supabase
+      .from("discovered_groups")
+      .select(
+        "id, name, description, why_relevant, approx_members, topic, facebook_search_url, suggested_search_query, status",
+      )
+      .eq("workspace_id", ws.id)
+      .neq("status", "dismissed")
+      .order("created_at", { ascending: false }),
   ]);
 
   const timezone = briefRes.data?.audience_timezone || "UTC";
@@ -94,6 +105,18 @@ export default async function GroupsPage() {
     };
   });
 
+  const discovered: DiscoveredGroupView[] = (discoveredRes.data ?? []).map((d) => ({
+    id: d.id,
+    name: d.name,
+    description: d.description,
+    why_relevant: d.why_relevant,
+    approx_members: d.approx_members,
+    topic: d.topic,
+    facebook_search_url: d.facebook_search_url,
+    suggested_search_query: d.suggested_search_query,
+    status: d.status,
+  }));
+
   return (
     <div className="space-y-10">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -123,6 +146,10 @@ export default async function GroupsPage() {
           each group allows it; you paste and post in one tap.
         </p>
       </div>
+
+      {/* Step 1 — find groups worth joining (AI suggestions + outbound search
+          links). Step 2 below is drafting for groups you're already in. */}
+      <DiscoverSection discovered={discovered} hasBrief={hasBrief} />
 
       {groups.length === 0 ? (
         <EmptyState

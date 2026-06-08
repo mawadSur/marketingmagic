@@ -39,6 +39,12 @@ const fkSqlPath = fileURLToPath(
 const fkSql = readFileSync(fkSqlPath, "utf8");
 const fk = fkSql.toLowerCase();
 
+const discoverSqlPath = fileURLToPath(
+  new URL("../../supabase/migrations/055_facebook_group_discovery.sql", import.meta.url),
+);
+const discoverSql = readFileSync(discoverSqlPath, "utf8");
+const discover = discoverSql.toLowerCase();
+
 describe("040 — facebook_groups table + RLS", () => {
   it("creates the facebook_groups table", () => {
     // The whole safety story relies on group drafts living OUTSIDE `posts`, in
@@ -141,6 +147,52 @@ describe("041 — composite FK enforces the cross-tenant invariant", () => {
     // this — only the composite (group_id, workspace_id) tuple does.
     expect(fk).toMatch(
       /foreign key \(group_id, workspace_id\)[\s\S]*references public\.facebook_groups \(id, workspace_id\)/,
+    );
+  });
+});
+
+describe("055 — discovered_groups table + RLS", () => {
+  // Discovery suggestions are workspace-scoped tenant data (the brief-derived
+  // "why relevant" reveals the product/audience). Same member-gated story as
+  // facebook_groups: a member CRUD surface whose only cross-tenant barrier is
+  // the RLS gate, so pin the same invariants at the source.
+  it("creates the discovered_groups table", () => {
+    expect(discover).toContain("create table if not exists public.discovered_groups");
+  });
+
+  it("enables row level security on discovered_groups", () => {
+    expect(discover).toContain(
+      "alter table public.discovered_groups enable row level security",
+    );
+  });
+
+  it("gates the SELECT policy on is_workspace_member(workspace_id)", () => {
+    expect(discover).toMatch(
+      /for select[\s\S]*using \(public\.is_workspace_member\(workspace_id\)\)/,
+    );
+  });
+
+  it("gates the `for all` write policy on member with BOTH using + with check", () => {
+    expect(discover).toMatch(
+      /for all[\s\S]*using \(public\.is_workspace_member\(workspace_id\)\)[\s\S]*with check \(public\.is_workspace_member\(workspace_id\)\)/,
+    );
+  });
+
+  it("never exposes an unscoped/public policy on discovered_groups", () => {
+    const policies = discover.match(
+      /create policy[^;]*on public\.discovered_groups[^;]*;/g,
+    );
+    expect(policies).not.toBeNull();
+    for (const policy of policies ?? []) {
+      expect(policy).not.toContain("using (true)");
+    }
+  });
+
+  it("status CHECK is the documented closed vocabulary (no auto-publish hook)", () => {
+    // The status enum is the triage lifecycle — deliberately NOT a `posts`
+    // status, so a discovery row can never enter the publish pipeline.
+    expect(discover).toMatch(
+      /status[\s\S]*check \(status in \('suggested', 'saved', 'applied', 'joined', 'dismissed'\)\)/,
     );
   });
 });
