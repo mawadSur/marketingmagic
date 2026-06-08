@@ -15,6 +15,16 @@ vi.mock("@/lib/env", () => ({
   mptConfigured: () => true,
 }));
 
+// Brand styling is additive; an un-branded workspace must leave the prompt
+// unchanged. Mock the loader to an empty style so these tests assert the
+// existing (un-branded) prompt contract without touching the DB. The empty
+// style is inlined inside the factory because vi.mock is hoisted above any
+// top-level const (which would be a TDZ ReferenceError).
+vi.mock("@/lib/brand/load", () => {
+  const empty = { colors: [], visualTone: null, voiceHint: null, hasLogo: false, subjectContext: null };
+  return { EMPTY_BRAND_STYLE: empty, loadBrandStyle: vi.fn().mockResolvedValue(empty) };
+});
+
 const assertWithinVideoQuota = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/lib/billing/limits", () => ({
   assertWithinVideoQuota: (...a: unknown[]) => assertWithinVideoQuota(...a),

@@ -13,6 +13,8 @@
 
 import { assertWithinVideoQuota } from "@/lib/billing/limits";
 import { incrementVideosGenerated } from "@/lib/billing/usage";
+import { loadBrandStyle } from "@/lib/brand/load";
+import { applyBrandStyleToPrompt } from "@/lib/brand/style";
 import type { Json } from "@/lib/db/types";
 import { mptConfigured, referenceVideoEnabled } from "@/lib/env";
 import { getWorkspaceKeys } from "@/lib/video/byo-keys";
@@ -96,6 +98,16 @@ export async function startVideoRender(
     throw new VideoRenderError("No Pexels API key configured for this workspace.");
   }
 
+  // Thread the workspace's brand identity into the subject MPT uses to pick
+  // stock footage AND generate the narration script — so the rendered video
+  // matches the brand (colours / visual tone / voice) like generated images do.
+  // We append to video_subject (not video_script): the script, when supplied by
+  // a plan post, is verbatim post copy and must stay untouched. loadBrandStyle
+  // never throws and yields an empty style for un-branded workspaces, in which
+  // case applyBrandStyleToPrompt returns `subject` unchanged (no regression).
+  const brandStyle = await loadBrandStyle(workspaceId);
+  const brandedSubject = applyBrandStyleToPrompt(subject, brandStyle);
+
   // Persist only the non-secret render parameters on the job.
   const params: Json = {
     video_subject: subject,
@@ -118,9 +130,10 @@ export async function startVideoRender(
     postId: input.postId ?? null,
   });
 
-  // Build the MPT request body: non-secret params + decrypted BYO keys.
+  // Build the MPT request body: non-secret params + decrypted BYO keys. Send the
+  // brand-styled subject (params above keeps the original for an honest audit).
   const renderParams: CreateRenderParams = {
-    video_subject: subject,
+    video_subject: brandedSubject,
     video_aspect: input.videoAspect ?? "9:16",
     video_source: "pexels",
     subtitle_enabled: input.subtitleEnabled ?? true,
@@ -305,6 +318,14 @@ export async function startReferenceVideoRender(
     );
   }
 
+  // Thread the workspace's brand identity into the motion/scene prompt so the
+  // generated video matches the brand, exactly like the image + MPT paths. We
+  // brand the PROMPT only — never the `script` (verbatim words the avatar
+  // speaks). For un-branded workspaces loadBrandStyle yields an empty style and
+  // the prompt is returned unchanged (no regression; an empty prompt stays empty).
+  const brandStyle = await loadBrandStyle(workspaceId);
+  const brandedPrompt = applyBrandStyleToPrompt(prompt, brandStyle);
+
   // The provider value stored on the job (poll-cron reads it to pick the matching
   // adapter + key per job): fal_video for animate, else the chosen present provider.
   const providerName = !isPresent ? "fal_video" : presentProvider;
@@ -346,7 +367,7 @@ export async function startReferenceVideoRender(
   const provider = getReferenceVideoProvider(capability, presentProvider);
   const providerInput: ReferenceVideoInputs = {
     referenceImageUrl: input.referenceImageUrl,
-    prompt,
+    prompt: brandedPrompt,
     aspect,
     ...(input.durationSeconds ? { durationSeconds: input.durationSeconds } : {}),
     ...(isPresent

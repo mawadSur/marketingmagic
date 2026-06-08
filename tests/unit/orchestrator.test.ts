@@ -15,6 +15,16 @@ vi.mock("@/lib/env", () => ({
   mptConfigured: () => mptConfigured(),
 }));
 
+// Brand styling is additive; an un-branded workspace must leave the subject
+// unchanged. Mock the loader to an empty style so these tests assert the
+// existing (un-branded) MPT renderParams contract without touching the DB.
+// The empty style is inlined inside the factory because vi.mock is hoisted
+// above any top-level const (which would be a TDZ ReferenceError).
+vi.mock("@/lib/brand/load", () => {
+  const empty = { colors: [], visualTone: null, voiceHint: null, hasLogo: false, subjectContext: null };
+  return { EMPTY_BRAND_STYLE: empty, loadBrandStyle: vi.fn().mockResolvedValue(empty) };
+});
+
 const assertWithinVideoQuota = vi.fn().mockResolvedValue(undefined);
 vi.mock("@/lib/billing/limits", () => ({
   assertWithinVideoQuota: (...a: unknown[]) => assertWithinVideoQuota(...a),
@@ -54,6 +64,9 @@ vi.mock("@/lib/video/mpt-client", () => ({
 }));
 
 import { startVideoRender, VideoRenderError } from "@/lib/video/orchestrator";
+import { loadBrandStyle } from "@/lib/brand/load";
+
+const loadBrandStyleMock = vi.mocked(loadBrandStyle);
 
 const WS = "ws-1";
 
@@ -98,6 +111,29 @@ describe("startVideoRender: happy path", () => {
       llm_base_url: "https://api.deepseek.com",
       pexels_api_keys: ["pexels-byo-a", "pexels-byo-b"],
     });
+  });
+
+  it("threads the workspace brand style into the MPT video_subject (script untouched)", async () => {
+    // A workspace WITH a brand identity: the MPT subject MPT uses to pick stock
+    // footage + write the script should carry the brand fragment, but the
+    // verbatim post-copy script must NOT be polluted.
+    loadBrandStyleMock.mockResolvedValueOnce({
+      colors: ["#1A2B3C"],
+      visualTone: "polished and professional",
+      voiceHint: null,
+      hasLogo: false,
+      subjectContext: null,
+    });
+    await startVideoRender(WS, { videoSubject: "Launch recap", videoScript: "scene one" });
+    const sent = createRenderJob.mock.calls[0][0] as { video_subject: string; video_script?: string };
+    expect(sent.video_subject).toContain("Launch recap");
+    expect(sent.video_subject).toContain("On-brand styling");
+    expect(sent.video_subject).toContain("#1A2B3C");
+    // The narration script is verbatim and must stay byte-for-byte.
+    expect(sent.video_script).toBe("scene one");
+    // The persisted job params keep the ORIGINAL subject for an honest audit.
+    const jobParams = createJob.mock.calls[0][0] as { params: { video_subject: string } };
+    expect(jobParams.params.video_subject).toBe("Launch recap");
   });
 
   it("ALWAYS sends a voice_name — defaulting when the caller leaves it blank", async () => {

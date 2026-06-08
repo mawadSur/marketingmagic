@@ -6,6 +6,8 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseService } from "@/lib/supabase/service";
 import { getActiveWorkspaceOrRedirect, getAuthedUserOrRedirect } from "@/lib/workspace";
 import { defaultImageProvider } from "@/lib/images";
+import { loadBrandStyle } from "@/lib/brand/load";
+import { applyBrandStyleToPrompt } from "@/lib/brand/style";
 import { maxCharsFor } from "@/lib/channels/registry";
 import { applyHashtagsToText, extractHashtags } from "@/lib/hashtags/extract";
 import { assertWithinImageQuota, QuotaExceededError } from "@/lib/billing/limits";
@@ -316,11 +318,20 @@ export async function generatePostImageAction(
     throw err;
   }
 
+  // Thread the workspace's brand identity (colours / visual tone / voice / logo)
+  // into the prompt so generated images match the brand instead of looking
+  // generic. loadBrandStyle never throws and returns an empty style when no
+  // brand identity is set — applyBrandStyleToPrompt then returns the user's
+  // prompt unchanged, so an un-branded workspace keeps today's behaviour.
+  const svc = supabaseService();
+  const brandStyle = await loadBrandStyle(post.workspace_id, svc);
+  const brandedPrompt = applyBrandStyleToPrompt(parsed.data, brandStyle);
+
   // Generate via the configured provider.
   let img;
   try {
     img = await defaultImageProvider().generate({
-      prompt: parsed.data,
+      prompt: brandedPrompt,
       aspect: "landscape",
     });
   } catch (err) {
@@ -335,7 +346,6 @@ export async function generatePostImageAction(
   const ext = img.contentType === "image/png" ? "png" : img.contentType === "image/webp" ? "webp" : "jpg";
   const filename = `${Date.now()}.${ext}`;
   const storagePath = `${post.workspace_id}/${postId}/${filename}`;
-  const svc = supabaseService();
   const { error: upErr } = await svc.storage
     .from("post-media")
     .upload(storagePath, img.bytes, {
