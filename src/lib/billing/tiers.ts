@@ -22,10 +22,10 @@
 //       update it if the org seat price itself is changing.)
 //   2. EXISTING SUBSCRIPTIONS STAY ON THEIR OLD STRIPE PRICE until the operator
 //      migrates them (Stripe proration, at renewal). See
-//      docs/pricing-migration-runbook.md for the exact enum→price steps + the
-//      grandfathered_until notice. Until env is updated these helpers degrade
-//      gracefully (planForPriceId returns null / billingConfigured() guards the
-//      checkout UI) — no fake price ids are ever invented here.
+//      docs/pricing-migration-runbook.md for the exact enum→price steps. Until
+//      env is updated these helpers degrade gracefully (planForPriceId returns
+//      null / billingConfigured() guards the checkout UI) — no fake price ids
+//      are ever invented here.
 
 export type PlanId = "hobby" | "pro" | "agency" | "founder";
 
