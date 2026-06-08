@@ -8,6 +8,7 @@ import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { atomize } from "@/lib/atomize/generate";
 import { sourceContextFromRow } from "@/lib/sources/generate-from-source";
 import { channelSpec, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
+import { nextRecommendedSlot } from "@/lib/channels/best-times";
 import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementPostsGenerated } from "@/lib/billing/usage";
 
@@ -159,12 +160,22 @@ export async function atomizeSourceAction(
   });
 
   const skipped: string[] = [];
+  // Stagger suggested slots so a burst of atomized drafts doesn't all land at
+  // the same timestamp. Each successfully-mapped variant advances the search
+  // origin by ~1 day, so nextRecommendedSlot spreads them across upcoming
+  // recommended windows. The user still reviews + can retime in the queue.
+  let slotCursor = new Date();
   const postsPayload = flatVariants.flatMap((p) => {
     const acct = accountByChannel.get(p.channel);
     if (!acct) {
       skipped.push(p.channel);
       return [];
     }
+    // Every queued card gets a sensible default time — never "no time set".
+    // Fall back to the cursor itself if the channel has no recommended windows.
+    const suggestedSlot =
+      nextRecommendedSlot(acct.channel, slotCursor) ?? slotCursor.toISOString();
+    slotCursor = new Date(new Date(suggestedSlot).getTime() + 24 * 60 * 60 * 1000);
     const voiceScore = typeof p.voice_score === "number" ? p.voice_score : null;
     const lowConfidence =
       hasVoiceProfile && voiceScore !== null && voiceScore < VOICE_SCORE_THRESHOLD;
@@ -181,11 +192,13 @@ export async function atomizeSourceAction(
         channel: acct.channel,
         text,
         theme: p.theme,
-        // Atomized drafts are unscheduled — the user picks timing in the queue.
-        // They always land in pending_approval (never auto-scheduled): trust
-        // mode auto-publishes a continuous calendar, but a one-shot atomization
-        // is an exploratory burst the user should eyeball before it ships.
-        scheduled_at: null,
+        // Atomized drafts get a SUGGESTED recommended-window slot (staggered
+        // above) so every queued card shows a time the user can adjust —
+        // rather than landing as "no time set". They still always land in
+        // pending_approval (never auto-scheduled): trust mode auto-publishes a
+        // continuous calendar, but a one-shot atomization is an exploratory
+        // burst the user should eyeball before it ships.
+        scheduled_at: suggestedSlot,
         status: "pending_approval" as const,
         voice_score: voiceScore,
         low_confidence: lowConfidence,
