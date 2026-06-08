@@ -58,7 +58,7 @@ is **not** upgraded (this was the prior silent-failure bug).
 
 - Vercel → Settings → Environment Variables, confirm present & matching live-mode price IDs:
   `STRIPE_SECRET_KEY`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_AGENCY`,
-  `STRIPE_PRICE_FOUNDER`, `STRIPE_PRICE_ORG_SEAT`.
+  `STRIPE_PRICE_CREATOR`, `STRIPE_PRICE_ORG_SEAT`.
 - Stripe Dashboard → Webhooks → confirm endpoint
   `https://marketingmagic.vercel.app/api/webhooks/stripe` is subscribed to
   `checkout.session.completed`, `customer.subscription.{created,updated,deleted}`.

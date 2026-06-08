@@ -85,7 +85,7 @@ export default async function BillingPage({
           <p className="font-medium">Stripe is not configured on this deployment.</p>
           <p className="mt-1 text-muted-foreground">
             Set <code>STRIPE_SECRET_KEY</code>, <code>STRIPE_WEBHOOK_SECRET</code>,{" "}
-            <code>STRIPE_PRICE_PRO</code> (Solo $29), <code>STRIPE_PRICE_FOUNDER</code>{" "}
+            <code>STRIPE_PRICE_PRO</code> (Solo $29), <code>STRIPE_PRICE_CREATOR</code>{" "}
             (Creator $97), and <code>STRIPE_PRICE_AGENCY</code> (Agency $499) in env.
           </p>
         </div>

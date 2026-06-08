@@ -260,7 +260,7 @@ async function applySubscriptionState(args: {
     console.error(
       `[stripe-webhook] price ${priceId} did not match any STRIPE_PRICE_* env var. ` +
         `Subscription ${sub.id} for workspace ${args.workspaceId} is being downgraded to hobby. ` +
-        `Fix: set STRIPE_PRICE_PRO / STRIPE_PRICE_AGENCY / STRIPE_PRICE_FOUNDER on Vercel to ` +
+        `Fix: set STRIPE_PRICE_PRO / STRIPE_PRICE_AGENCY / STRIPE_PRICE_CREATOR on Vercel to ` +
         `match the actual Stripe price ids, then re-run the subscription event from Stripe Dashboard.`,
     );
   }

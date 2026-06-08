@@ -3,7 +3,7 @@
 // Hard-coded so the app can boot without a working Stripe configuration —
 // every gating helper and the /settings/billing UI imports these. The
 // Stripe price IDs live in env (STRIPE_PRICE_PRO / STRIPE_PRICE_AGENCY /
-// STRIPE_PRICE_FOUNDER) and are resolved at request time via priceIdForPlan();
+// STRIPE_PRICE_CREATOR) and are resolved at request time via priceIdForPlan();
 // never in the hot path so missing keys don't crash unrelated pages.
 //
 // ─── OPERATOR ACTION (Blotato-competitive pricing) ──────────────────────────
@@ -16,7 +16,7 @@
 // To put the new prices LIVE the operator must, in the Stripe Dashboard:
 //   1. Create three new monthly recurring prices:
 //        • Solo $29   → set STRIPE_PRICE_PRO     to its price id
-//        • Creator $97 → set STRIPE_PRICE_FOUNDER to its price id (reuse this var)
+//        • Creator $97 → set STRIPE_PRICE_CREATOR to its price id
 //        • Agency $499 → set STRIPE_PRICE_AGENCY  to its price id (reuse this var)
 //      (STRIPE_PRICE_ORG_SEAT — the per-seat org price — is separate; only
 //       update it if the org seat price itself is changing.)
@@ -142,8 +142,9 @@ export const TIERS: Record<PlanId, Tier> = {
     ],
   },
   // "Creator" $97 — RENAMED display from "Founder" (the enum id stays 'founder'
-  // so hasFounderMode/hasCompetitorWatch, the STRIPE_PRICE_FOUNDER env var, the
-  // webhook, and every DB plan row keep working without a migration). This is
+  // so hasFounderMode/hasCompetitorWatch, the webhook, and every DB plan row keep
+  // working without a migration; only the STRIPE_PRICE_CREATOR env var name and
+  // the display name changed). This is
   // the voice-memo tier: founder ALREADY owns voiceMemoRecorder:true → Creator
   // keeps it. hasCompetitorWatch/hasFounderMode still key off id==='founder'.
   //
@@ -222,14 +223,14 @@ export function planForPriceId(priceId: string | null | undefined): PlanId | nul
   if (!priceId) return null;
   if (process.env.STRIPE_PRICE_PRO && priceId === process.env.STRIPE_PRICE_PRO) return "pro";
   if (process.env.STRIPE_PRICE_AGENCY && priceId === process.env.STRIPE_PRICE_AGENCY) return "agency";
-  if (process.env.STRIPE_PRICE_FOUNDER && priceId === process.env.STRIPE_PRICE_FOUNDER) return "founder";
+  if (process.env.STRIPE_PRICE_CREATOR && priceId === process.env.STRIPE_PRICE_CREATOR) return "founder";
   return null;
 }
 
 export function priceIdForPlan(plan: PlanId): string | null {
   if (plan === "pro") return process.env.STRIPE_PRICE_PRO ?? null;
   if (plan === "agency") return process.env.STRIPE_PRICE_AGENCY ?? null;
-  if (plan === "founder") return process.env.STRIPE_PRICE_FOUNDER ?? null;
+  if (plan === "founder") return process.env.STRIPE_PRICE_CREATOR ?? null;
   return null;
 }
 

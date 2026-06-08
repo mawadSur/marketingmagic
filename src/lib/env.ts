@@ -98,12 +98,14 @@ const serverSchema = z.object({
   // and sets this var; existing Agency subs stay on their old price until
   // migrated. (The per-seat org price is the separate STRIPE_PRICE_ORG_SEAT.)
   STRIPE_PRICE_AGENCY: z.preprocess(v => (v === "" ? undefined : v), z.string().min(4).optional()),
-  // STRIPE_PRICE_FOUNDER is the "Creator" $97 price (enum id 'founder' — display
+  // STRIPE_PRICE_CREATOR is the "Creator" $97 price (enum id 'founder' — display
   // renamed from "Founder" to "Creator"; the voice-memo + Competitor Watch tier).
+  // The env var name was migrated FOUNDER→CREATOR to match the display name; the
+  // plan enum id stays 'founder' so the webhook + DB plan rows are unaffected.
   // The operator creates the new $97 price and sets this var. Optional like the
   // others — when missing, the pricing page hides the Creator upgrade affordance
   // and existing subscribers degrade gracefully (planForPriceId returns null).
-  STRIPE_PRICE_FOUNDER: z.preprocess(v => (v === "" ? undefined : v), z.string().min(4).optional()),
+  STRIPE_PRICE_CREATOR: z.preprocess(v => (v === "" ? undefined : v), z.string().min(4).optional()),
   // Discord bot integration (Phase 4.7). All optional so the app boots without
   // Discord configured — `/integrations/discord` renders a "configure to enable"
   // empty state and the digest cron silently skips Discord transport.

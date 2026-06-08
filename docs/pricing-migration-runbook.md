@@ -47,7 +47,7 @@ still reference them.
 | Create this price | Set this env var      | Notes |
 | ----------------- | --------------------- | ----- |
 | Solo **$29/mo**   | `STRIPE_PRICE_PRO`    | If the $29 already exists, you may reuse its id. |
-| Creator **$97/mo**| `STRIPE_PRICE_FOUNDER`| New price (was $149). |
+| Creator **$97/mo**| `STRIPE_PRICE_CREATOR`| New price (was $149). Env var renamed from `STRIPE_PRICE_FOUNDER`. |
 | Agency **$499/mo**| `STRIPE_PRICE_AGENCY` | New price (was $99). |
 
 Set the env vars on Vercel (Production + Preview). Redeploy. After this:
@@ -97,7 +97,7 @@ the subscription item's price to the new price id. Use **proration at renewal**
 "none" at period end, per your notice).
 
 - `pro` subs → new Solo $29 price (`STRIPE_PRICE_PRO`)
-- `founder` subs → new Creator $97 price (`STRIPE_PRICE_FOUNDER`)
+- `founder` subs → new Creator $97 price (`STRIPE_PRICE_CREATOR`)
 - `agency` subs → new Agency $499 price (`STRIPE_PRICE_AGENCY`)
 - org subs → unchanged unless `STRIPE_PRICE_ORG_SEAT` is moving
 

@@ -146,19 +146,19 @@ describe("planForPriceId ⇄ priceIdForPlan round-trip (graceful degrade, no fak
   const ORIG = {
     pro: process.env.STRIPE_PRICE_PRO,
     agency: process.env.STRIPE_PRICE_AGENCY,
-    founder: process.env.STRIPE_PRICE_FOUNDER,
+    founder: process.env.STRIPE_PRICE_CREATOR,
   };
 
   afterEach(() => {
     process.env.STRIPE_PRICE_PRO = ORIG.pro;
     process.env.STRIPE_PRICE_AGENCY = ORIG.agency;
-    process.env.STRIPE_PRICE_FOUNDER = ORIG.founder;
+    process.env.STRIPE_PRICE_CREATOR = ORIG.founder;
   });
 
   beforeEach(() => {
     process.env.STRIPE_PRICE_PRO = "price_solo_29";
     process.env.STRIPE_PRICE_AGENCY = "price_agency_499";
-    process.env.STRIPE_PRICE_FOUNDER = "price_creator_97";
+    process.env.STRIPE_PRICE_CREATOR = "price_creator_97";
   });
 
   it("price id → plan maps to the unchanged enum ids", () => {
