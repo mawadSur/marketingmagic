@@ -45,7 +45,7 @@ export const metadata = {
 
 // Hero proof-strip stats. Illustrative product framing, not customer metrics.
 const HERO_STATS = [
-  { value: "7", label: "channels, one queue" },
+  { value: "8", label: "channels, one queue" },
   { value: "0", label: "posts you didn't approve" },
   { value: "∞", label: "themes it keeps testing" },
 ] as const;
@@ -110,6 +110,7 @@ const CHANNELS = [
   "Facebook",
   "Bluesky",
   "TikTok",
+  "YouTube",
 ] as const;
 
 // Illustrative social proof. Replace `quote` blocks with real testimonials as
