@@ -49,6 +49,13 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Lint runs but does not gate the build yet — there is a known backlog of
+      # 21 errors / 53 warnings against current main. Drop continue-on-error
+      # once the backlog is cleared so regressions start failing CI.
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true
+
       - name: Build
         run: npm run build
 
