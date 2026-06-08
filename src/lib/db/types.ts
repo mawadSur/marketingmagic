@@ -89,6 +89,23 @@ export type FacebookGroupPromoPolicy = "open" | "limited" | "value_only";
 export type FacebookGroupDraftSource = "ai" | "manual";
 export type FacebookGroupDraftStatus = "draft" | "posted" | "dismissed";
 
+// Facebook Group DISCOVERY (migration 055). Triage lifecycle of an AI-suggested
+// group archetype the operator should consider joining to market their product.
+// Meta has no Groups API, so these are SUGGESTIONS + outbound search links, not
+// API-verified groups — the status tracks the operator's manual follow-through.
+//   'suggested' — freshly generated, awaiting triage (default)
+//   'saved'     — kept on the shortlist to pursue
+//   'applied'   — operator requested to join a real group via the search link
+//   'joined'    — operator self-reports they were accepted
+//   'dismissed' — not relevant; hidden from the active shortlist
+// Mirrors the CHECK constraint on discovered_groups.status.
+export type DiscoveredGroupStatus =
+  | "suggested"
+  | "saved"
+  | "applied"
+  | "joined"
+  | "dismissed";
+
 // Outcome Loop MVP (migration 042). The kind of self-reported BUSINESS outcome
 // a user attributes to a live post. Closed vocabulary so the per-theme roll-up
 // (src/lib/analytics/outcomes.ts) stays comparable; 'other' is the catch-all.
@@ -1711,6 +1728,56 @@ export interface Database {
           text: string;
           status: FacebookGroupDraftStatus;
           posted_at: string | null;
+        }>;
+        Relationships: [];
+      };
+      // Facebook Group DISCOVERY (migration 055). AI-suggested group ARCHETYPES
+      // the operator should consider joining to market their product, each with
+      // an outbound facebook.com/search/groups/?q=… link to find + apply/join by
+      // hand. Meta removed the Groups API (2024-04-22), so these are SUGGESTIONS
+      // + links — never API-verified groups, and never wired to auto-publish.
+      // Members read/write their own workspace's rows (RLS via is_workspace_member).
+      discovered_groups: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          name: string;
+          description: string;
+          why_relevant: string;
+          // Rough size hint when the model estimates one; null when unknown.
+          // We have no API to verify membership counts.
+          approx_members: number | null;
+          topic: string;
+          // Always a facebook.com/search/groups/?q=… outbound link.
+          facebook_search_url: string;
+          suggested_search_query: string;
+          status: DiscoveredGroupStatus;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          name: string;
+          description?: string;
+          why_relevant?: string;
+          approx_members?: number | null;
+          topic?: string;
+          facebook_search_url: string;
+          suggested_search_query?: string;
+          status?: DiscoveredGroupStatus;
+          created_by?: string | null;
+        };
+        Update: Partial<{
+          name: string;
+          description: string;
+          why_relevant: string;
+          approx_members: number | null;
+          topic: string;
+          facebook_search_url: string;
+          suggested_search_query: string;
+          status: DiscoveredGroupStatus;
         }>;
         Relationships: [];
       };
