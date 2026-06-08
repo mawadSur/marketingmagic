@@ -111,13 +111,21 @@
       hsl(var(--brand-grad-end))
     );
   }
-  /* Same gradient as clipped text (hero headline accent). */
+  /* Same gradient as clipped text (hero headline accent). A third, lighter
+     stop in the middle gives the "shimmer" highlight; background-size:200%
+     lets the flow animation sweep that highlight across the text. The static
+     clip is the fallback — the motion is added under no-preference below. */
   .brand-gradient-text {
     background-image: linear-gradient(
       90deg,
       hsl(var(--brand-grad-start)),
-      hsl(var(--brand-grad-end))
+      hsl(var(--brand-grad-end)) 35%,
+      hsl(280 90% 78%) 50%,
+      hsl(var(--brand-grad-end)) 65%,
+      hsl(var(--brand-grad-start))
     );
+    background-size: 200% 100%;
+    background-position: 0% 50%;
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -131,6 +139,120 @@
       hsl(var(--brand-grad-start) / 0.18),
       transparent 70%
     );
+  }
+
+  /* ─── Magic layer ───────────────────────────────────────────────────────
+     Sparkle field, aurora blobs, shimmer sweep + scroll-reveal. Everything
+     here is purely decorative and compositor-only (transform/opacity), and
+     every animation is disabled under prefers-reduced-motion at the bottom of
+     this file. The indigo→violet brand tokens drive all of it so the "magic"
+     reads as the brand, not a separate theme. */
+
+  /* Aurora: slow-drifting blurred colour blobs behind the hero + final CTA.
+     Pointer-events-none + aria-hidden in markup; sits on -z-10. */
+  .aurora {
+    position: absolute;
+    border-radius: 9999px;
+    filter: blur(72px);
+    opacity: 0.5;
+    will-change: transform;
+  }
+  .aurora-a {
+    background: radial-gradient(circle, hsl(var(--brand-grad-start) / 0.55), transparent 70%);
+    animation: aurora-drift-a 26s ease-in-out infinite;
+  }
+  .aurora-b {
+    background: radial-gradient(circle, hsl(var(--brand-grad-end) / 0.5), transparent 70%);
+    animation: aurora-drift-b 32s ease-in-out infinite;
+  }
+  .aurora-c {
+    background: radial-gradient(circle, hsl(280 90% 70% / 0.4), transparent 70%);
+    animation: aurora-drift-a 38s ease-in-out infinite reverse;
+  }
+
+  /* A single twinkling star. Position + size + timing come from inline custom
+     props (--x/--y/--s/--d/--t) set per-element in the markup, so the field is
+     deterministic (SSR-safe — no runtime randomness). */
+  .sparkle {
+    position: absolute;
+    top: var(--y);
+    left: var(--x);
+    width: var(--s, 6px);
+    height: var(--s, 6px);
+    opacity: 0;
+    transform: scale(0);
+    background:
+      radial-gradient(circle, white 0%, hsl(var(--brand-grad-start)) 35%, transparent 70%);
+    border-radius: 9999px;
+    animation: twinkle var(--t, 4s) ease-in-out var(--d, 0s) infinite;
+    will-change: transform, opacity;
+  }
+  /* Four-point glint on the larger sparkles. */
+  .sparkle::before,
+  .sparkle::after {
+    content: "";
+    position: absolute;
+    inset: -40%;
+    background: linear-gradient(white, transparent 60%);
+    -webkit-mask: radial-gradient(circle, black 0, transparent 60%);
+  }
+
+  /* Light sweep across the primary CTA — a slow auto-shine that draws the eye,
+     plus a faster sweep on hover. The button needs position:relative +
+     overflow:hidden (added in markup via .btn-magic). */
+  .btn-magic {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+  }
+  .btn-magic::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-150%) skewX(-20deg);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      hsl(0 0% 100% / 0.35),
+      transparent
+    );
+    animation: shimmer-sweep 5.5s ease-in-out infinite;
+    z-index: -1;
+  }
+  .btn-magic:hover::after {
+    animation-duration: 1.1s;
+  }
+
+  /* Scroll-reveal: sections fade + rise as they scroll into view. Implemented
+     with CSS scroll-driven animations so no JS / IntersectionObserver is
+     needed. Gated behind @supports so browsers without view-timeline simply
+     render the content visible (no flash of hidden content). */
+  @supports (animation-timeline: view()) {
+    .reveal {
+      animation: reveal-up linear both;
+      animation-timeline: view();
+      animation-range: entry 0% cover 28%;
+    }
+  }
+
+  /* Soft pulsing ring behind the hero badge sparkle. */
+  .badge-glow {
+    position: relative;
+  }
+  .badge-glow::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    border-radius: 9999px;
+    background: linear-gradient(
+      120deg,
+      hsl(var(--brand-grad-start) / 0.5),
+      hsl(var(--brand-grad-end) / 0.5)
+    );
+    filter: blur(8px);
+    opacity: 0.55;
+    z-index: -1;
+    animation: badge-pulse 3.5s ease-in-out infinite;
   }
 
   /* Channel marquee: the showcase row scrolls horizontally on a loop. Uses
@@ -159,6 +281,48 @@
   }
 }
 
+/* ─── Magic keyframes ──────────────────────────────────────────────────── */
+@keyframes twinkle {
+  0%, 100% { opacity: 0; transform: scale(0) rotate(0deg); }
+  50% { opacity: 1; transform: scale(1) rotate(45deg); }
+}
+@keyframes aurora-drift-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(8%, 6%, 0) scale(1.18); }
+}
+@keyframes aurora-drift-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.1); }
+  50% { transform: translate3d(-10%, -5%, 0) scale(0.92); }
+}
+@keyframes gradient-flow {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+@keyframes shimmer-sweep {
+  0%, 65% { transform: translateX(-150%) skewX(-20deg); }
+  100% { transform: translateX(150%) skewX(-20deg); }
+}
+@keyframes badge-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.75; }
+}
+@keyframes reveal-up {
+  from { opacity: 0; transform: translateY(28px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Animate the headline gradient + hero glow drift only when motion is welcome.
+   Kept out of the base rule so reduced-motion users get the crisp static
+   gradient with zero movement. */
+@media (prefers-reduced-motion: no-preference) {
+  .brand-gradient-text {
+    animation: gradient-flow 6s linear infinite;
+  }
+  .brand-glow {
+    animation: aurora-drift-a 30s ease-in-out infinite;
+  }
+}
+
 @keyframes marquee {
   from {
     transform: translateX(0);
@@ -177,5 +341,27 @@
     flex-wrap: wrap;
     width: auto;
     justify-content: center;
+  }
+
+  /* Magic layer: hold everything still. Sparkles render as faint static dots,
+     aurora/glow stop drifting, the headline keeps its gradient but stops
+     flowing, the CTA shine is removed, and scroll-reveal content is shown
+     outright (no entrance animation). */
+  .sparkle {
+    animation: none;
+    opacity: 0.4;
+    transform: scale(0.7);
+  }
+  .aurora,
+  .badge-glow::before {
+    animation: none;
+  }
+  .btn-magic::after {
+    display: none;
+  }
+  .reveal {
+    animation: none;
+    opacity: 1;
+    transform: none;
   }
 }

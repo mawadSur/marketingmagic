@@ -13,6 +13,30 @@ import {
 } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 
+// Deterministic sparkle field for the hero. Positions/sizes/timing are fixed
+// (no Math.random) so SSR and client markup match — no hydration mismatch and
+// no layout shift. Each star reads its placement from CSS custom props that the
+// .sparkle rule animates (see globals.css). Spread across the hero box; a few
+// large four-point glints, many small twinkles.
+const SPARKLES = [
+  { x: "8%", y: "22%", s: "14px", d: "0s", t: "4.5s" },
+  { x: "18%", y: "62%", s: "8px", d: "1.2s", t: "5s" },
+  { x: "27%", y: "12%", s: "6px", d: "2.1s", t: "4s" },
+  { x: "33%", y: "78%", s: "10px", d: "0.6s", t: "5.5s" },
+  { x: "44%", y: "30%", s: "5px", d: "1.8s", t: "3.6s" },
+  { x: "52%", y: "8%", s: "12px", d: "2.6s", t: "6s" },
+  { x: "61%", y: "70%", s: "7px", d: "0.3s", t: "4.2s" },
+  { x: "69%", y: "20%", s: "9px", d: "1.5s", t: "5.2s" },
+  { x: "76%", y: "55%", s: "6px", d: "2.9s", t: "3.8s" },
+  { x: "84%", y: "14%", s: "13px", d: "0.9s", t: "5.8s" },
+  { x: "90%", y: "44%", s: "8px", d: "2.2s", t: "4.6s" },
+  { x: "94%", y: "72%", s: "5px", d: "1.1s", t: "4s" },
+  { x: "13%", y: "40%", s: "6px", d: "3.1s", t: "5s" },
+  { x: "40%", y: "58%", s: "7px", d: "1.7s", t: "4.4s" },
+  { x: "57%", y: "38%", s: "5px", d: "2.4s", t: "3.9s" },
+  { x: "72%", y: "82%", s: "10px", d: "0.4s", t: "6.2s" },
+] as const;
+
 export const metadata = {
   title: "marketingmagic — the social growth engine that learns what works",
   description:
@@ -144,8 +168,32 @@ export default function HomePage() {
       {/* ─── Hero ────────────────────────────────────────────────────────── */}
       <section className="relative overflow-hidden">
         <div aria-hidden className="brand-glow pointer-events-none absolute inset-x-0 top-0 -z-10 h-[480px]" />
+        {/* Aurora blobs — slow drifting colour behind the hero. */}
+        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+          <span className="aurora aurora-a left-[8%] top-[-6rem] h-72 w-72" />
+          <span className="aurora aurora-b right-[4%] top-[2rem] h-80 w-80" />
+          <span className="aurora aurora-c left-1/2 top-[10rem] h-64 w-64 -translate-x-1/2" />
+        </div>
+        {/* Twinkling sparkle field. Decorative, deterministic, reduced-motion safe. */}
+        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+          {SPARKLES.map((sp, i) => (
+            <span
+              key={i}
+              className="sparkle"
+              style={
+                {
+                  "--x": sp.x,
+                  "--y": sp.y,
+                  "--s": sp.s,
+                  "--d": sp.d,
+                  "--t": sp.t,
+                } as React.CSSProperties
+              }
+            />
+          ))}
+        </div>
         <div className="container flex flex-col items-center gap-7 py-20 text-center sm:py-28">
-          <div className="inline-flex items-center gap-2 rounded-full border bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground backdrop-blur">
+          <div className="badge-glow inline-flex items-center gap-2 rounded-full border bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground backdrop-blur">
             <Sparkles className="h-3.5 w-3.5" style={{ color: "hsl(var(--brand-grad-start))" }} aria-hidden />
             A growth engine, not another scheduler
           </div>
@@ -163,10 +211,10 @@ export default function HomePage() {
           <div className="flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">
             <Link
               href="/start"
-              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-primary px-6 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:w-auto"
+              className="btn-magic inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-primary px-6 text-sm font-medium text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:opacity-95 hover:shadow-xl hover:shadow-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:w-auto"
             >
               See a preview plan — 30s, no signup
-              <ArrowRight className="h-4 w-4" aria-hidden />
+              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
             </Link>
             <Link
               href="/signup"
@@ -223,7 +271,7 @@ export default function HomePage() {
       {/* ─── Differentiator: the learning loop, made visible ─────────────── */}
       <section className="border-b">
         <div className="container grid items-center gap-10 py-20 sm:py-28 lg:grid-cols-2 lg:gap-16">
-          <div className="space-y-5">
+          <div className="reveal space-y-5">
             <p className="label-eyebrow">Why it&apos;s different</p>
             <h2 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
               Your account, getting smarter every week.
@@ -253,7 +301,7 @@ export default function HomePage() {
           </div>
 
           {/* Winning-themes board — the loop visualised. */}
-          <div className="rounded-2xl border bg-card p-6 shadow-sm sm:p-8">
+          <div className="reveal rounded-2xl border bg-card p-6 shadow-sm sm:p-8">
             <div className="mb-6 flex items-center gap-2">
               <Trophy className="h-5 w-5" style={{ color: "hsl(var(--brand-grad-start))" }} aria-hidden />
               <h3 className="text-sm font-semibold">Your winning themes</h3>
@@ -304,7 +352,7 @@ export default function HomePage() {
       {/* ─── Three pillars ───────────────────────────────────────────────── */}
       <section className="border-b bg-muted/20">
         <div className="container py-20 sm:py-28">
-          <div className="mx-auto max-w-2xl text-center">
+          <div className="reveal mx-auto max-w-2xl text-center">
             <p className="label-eyebrow">What you get</p>
             <h2 className="mt-2 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
               Plan, publish, and improve — in one flow.
@@ -314,7 +362,7 @@ export default function HomePage() {
             {PILLARS.map(({ icon: Icon, eyebrow, title, body }) => (
               <div
                 key={title}
-                className="card-hover group rounded-2xl border bg-card p-7 text-left"
+                className="reveal card-hover group rounded-2xl border bg-card p-7 text-left transition-transform hover:-translate-y-1"
               >
                 <span
                   className="flex h-11 w-11 items-center justify-center rounded-xl transition-transform duration-200 group-hover:scale-105"
@@ -339,12 +387,41 @@ export default function HomePage() {
       {/* ─── AI video callout ────────────────────────────────────────────── */}
       <section className="border-b">
         <div className="container py-20 sm:py-28">
-          <div className="brand-gradient relative flex flex-col items-center gap-6 overflow-hidden rounded-3xl border px-6 py-14 text-center text-white sm:px-12">
+          <div className="reveal brand-gradient relative flex flex-col items-center gap-6 overflow-hidden rounded-3xl border px-6 py-14 text-center text-white sm:px-12">
             <span
               aria-hidden
               className="pointer-events-none absolute -right-10 -top-10 h-48 w-48 rounded-full bg-white/10 blur-2xl"
             />
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15">
+            <span
+              aria-hidden
+              className="pointer-events-none absolute -bottom-12 -left-8 h-56 w-56 rounded-full bg-white/10 blur-2xl"
+            />
+            {/* A few white sparkles dusted over the gradient panel. */}
+            <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+              {[
+                { x: "12%", y: "24%", s: "10px", d: "0s", t: "4.5s" },
+                { x: "82%", y: "30%", s: "8px", d: "1.4s", t: "5s" },
+                { x: "68%", y: "72%", s: "12px", d: "0.7s", t: "5.6s" },
+                { x: "28%", y: "78%", s: "7px", d: "2.2s", t: "4.2s" },
+              ].map((sp, i) => (
+                <span
+                  key={i}
+                  className="sparkle"
+                  style={
+                    {
+                      "--x": sp.x,
+                      "--y": sp.y,
+                      "--s": sp.s,
+                      "--d": sp.d,
+                      "--t": sp.t,
+                      background:
+                        "radial-gradient(circle, white 0%, rgba(255,255,255,0.6) 40%, transparent 70%)",
+                    } as React.CSSProperties
+                  }
+                />
+              ))}
+            </div>
+            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15 backdrop-blur">
               <Clapperboard className="h-6 w-6" aria-hidden />
             </span>
             <h2 className="max-w-xl text-balance text-2xl font-semibold tracking-tight sm:text-3xl">
@@ -433,9 +510,35 @@ export default function HomePage() {
       {/* ─── Final CTA ───────────────────────────────────────────────────── */}
       <section className="relative overflow-hidden">
         <div aria-hidden className="brand-glow pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-[420px] rotate-180" />
-        <div className="container flex flex-col items-center gap-6 py-24 text-center">
+        {/* Aurora + sparkle echo of the hero, mirrored to the bottom. */}
+        <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+          <span className="aurora aurora-b left-[10%] bottom-[-4rem] h-72 w-72" />
+          <span className="aurora aurora-a right-[8%] bottom-[1rem] h-80 w-80" />
+          {[
+            { x: "15%", y: "30%", s: "10px", d: "0.5s", t: "5s" },
+            { x: "78%", y: "24%", s: "12px", d: "1.6s", t: "5.8s" },
+            { x: "60%", y: "68%", s: "7px", d: "2.4s", t: "4.2s" },
+            { x: "34%", y: "72%", s: "8px", d: "0.9s", t: "4.8s" },
+          ].map((sp, i) => (
+            <span
+              key={i}
+              className="sparkle"
+              style={
+                {
+                  "--x": sp.x,
+                  "--y": sp.y,
+                  "--s": sp.s,
+                  "--d": sp.d,
+                  "--t": sp.t,
+                } as React.CSSProperties
+              }
+            />
+          ))}
+        </div>
+        <div className="reveal container flex flex-col items-center gap-6 py-24 text-center">
           <h2 className="max-w-2xl text-balance text-3xl font-bold tracking-tight sm:text-5xl">
-            Put your growth on autopilot — and keep your hand on the wheel.
+            Put your growth on autopilot — and{" "}
+            <span className="brand-gradient-text">keep your hand on the wheel.</span>
           </h2>
           <p className="max-w-md text-pretty text-muted-foreground">
             See what a week of on-brand, data-tuned content looks like for your business. No
@@ -444,7 +547,7 @@ export default function HomePage() {
           <div className="flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">
             <Link
               href="/start"
-              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-primary px-6 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:w-auto"
+              className="btn-magic inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-primary px-6 text-sm font-medium text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:opacity-95 hover:shadow-xl hover:shadow-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:w-auto"
             >
               See a preview plan
               <ArrowRight className="h-4 w-4" aria-hidden />
