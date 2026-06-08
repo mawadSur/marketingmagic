@@ -73,8 +73,12 @@ interface PostRow {
 // Phase 6.10: server-rendered hashtag chip row, passed in as a slot so
 // the QueueRow client component stays free of async data fetching. The
 // parent server page is responsible for constructing the node.
+//
+// Migration 052: `tagRow` is the parallel slot for the STRUCTURED auto-tags
+// chip row (posts.tags). Same pattern — built server-side, slotted in here.
 export interface QueueRowSlots {
   hashtagRow?: React.ReactNode;
+  tagRow?: React.ReactNode;
 }
 
 const REJECTION_REASONS: Array<{ value: RejectionReason; label: string; helper: string }> = [
@@ -87,6 +91,7 @@ const REJECTION_REASONS: Array<{ value: RejectionReason; label: string; helper: 
 export function QueueRow({
   post,
   hashtagRow,
+  tagRow,
 }: {
   post: PostRow;
 } & QueueRowSlots) {
@@ -315,6 +320,9 @@ export function QueueRow({
       {/* Phase 6.10: hashtag chip row, only in pending state and only
           when the parent passed a slot (so legacy renders stay clean). */}
       {isPending && hashtagRow ? hashtagRow : null}
+
+      {/* Migration 052: structured auto-tags chip row, same gating. */}
+      {isPending && tagRow ? tagRow : null}
 
       {/* Image block — only show in pending state (post-approval edits frozen). */}
       {isPending ? (
@@ -634,6 +642,7 @@ export function QueueIdeaRow({
   ideaId,
   variants,
   hashtagSlots,
+  tagSlots,
 }: {
   ideaId: string;
   variants: PostRow[];
@@ -641,6 +650,9 @@ export function QueueIdeaRow({
   // The parent server page builds this map; the client component just
   // forwards each slot into its matching QueueRow.
   hashtagSlots?: Map<string, React.ReactNode>;
+  // Migration 052: parallel per-variant auto-tags chip row slot, keyed by
+  // post id. Same forwarding contract as hashtagSlots.
+  tagSlots?: Map<string, React.ReactNode>;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(true);
@@ -717,7 +729,12 @@ export function QueueIdeaRow({
       {open ? (
         <ul className="divide-y rounded-md border bg-muted/20">
           {variants.map((v) => (
-            <QueueRow key={v.id} post={v} hashtagRow={hashtagSlots?.get(v.id)} />
+            <QueueRow
+              key={v.id}
+              post={v}
+              hashtagRow={hashtagSlots?.get(v.id)}
+              tagRow={tagSlots?.get(v.id)}
+            />
           ))}
         </ul>
       ) : null}

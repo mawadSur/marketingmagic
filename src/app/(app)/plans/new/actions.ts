@@ -14,6 +14,7 @@ import { loadThemeWinners } from "@/lib/analytics/themes";
 import { recommendHashtagsForChannels } from "@/lib/hashtags/recommend";
 import { gatherCompetitorInsights } from "@/lib/plan/competitor-insights-gather";
 import { backfillHashtagsForPosts } from "@/lib/hashtags/backfill";
+import { generateAndStoreTagsForPlan } from "@/lib/tags/persist";
 import { channelSpec, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
 import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementPostsGenerated } from "@/lib/billing/usage";
@@ -614,6 +615,31 @@ export async function generatePlanAction(
     if (newIds.length > 0) await backfillHashtagsForPosts(newIds);
   } catch (err) {
     console.warn("Hashtag backfill on new plan failed:", err);
+  }
+
+  // Auto-tags (migration 052): generate a structured tag set per post and
+  // write it into posts.tags. We reuse the per-channel hashtag suggestions
+  // already loaded above as the workspace-history blend (no extra query),
+  // and skip no-tag channels (Bluesky / X-by-default) without an LLM call.
+  // Index-aligned with postsPayload, so insertedPosts (insert preserves
+  // order) lines up by position. Best-effort — the plan + its text posts are
+  // already committed, and a tag-gen failure must never abort the redirect.
+  try {
+    const ids = (insertedPosts ?? []).map((r) => r.id);
+    const tagTargets = postsPayload.flatMap((p, i) => {
+      const postId = ids[i];
+      if (!postId) return [];
+      return [{ postId, channel: p.channel as string, text: p.text }];
+    });
+    if (tagTargets.length > 0) {
+      await generateAndStoreTagsForPlan(
+        tagTargets,
+        { product_description: briefRes.data.product_description, voice_profile: briefRes.data.voice_profile },
+        hashtagSuggestions,
+      );
+    }
+  } catch (err) {
+    console.warn("Auto-tag generation on new plan failed; plan saved without tags:", err);
   }
 
   // ── Plan videos — best-effort kickoff phase (AFTER the posts insert) ──────

@@ -724,6 +724,13 @@ export interface Database {
           // semantics as source_id — goal-attribution dashboards filter on
           // non-null.
           goal_id: string | null;
+          // Migration 052: auto-generated, user-editable tag set. Normalized
+          // lowercase, no leading #, ≤30 elements / channel cap. Defaults to
+          // [] (no tags) — correct for no-tag channels like Bluesky / X.
+          // Structured source of truth for the /queue tag chips; the inline
+          // #block in `text` is the published render. Distinct from the
+          // hashtag_usage recommendation history (014).
+          tags: string[];
           created_at: string;
           updated_at: string;
         };
@@ -746,6 +753,7 @@ export interface Database {
           idea_id?: IdeaId | null;
           source_id?: string | null;
           goal_id?: string | null;
+          tags?: string[];
         };
         Update: Partial<{
           text: string;
@@ -764,6 +772,7 @@ export interface Database {
           idea_id: IdeaId | null;
           source_id: string | null;
           goal_id: string | null;
+          tags: string[];
         }>;
         Relationships: [];
       };

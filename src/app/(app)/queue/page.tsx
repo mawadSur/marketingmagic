@@ -5,6 +5,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { QueueIdeaRow, QueueRow, type QueueMediaItem } from "./queue-row";
 import { QueueTabs } from "./queue-tabs";
 import { HashtagPillRow } from "@/components/hashtag-pill-row";
+import { TagChipRow } from "@/components/tag-chip-row";
 import { recommendHashtags } from "@/lib/hashtags/recommend";
 import { extractHashtags } from "@/lib/hashtags/extract";
 import { getChannelHashtagPolicy } from "@/lib/hashtags/rules";
@@ -37,6 +38,7 @@ interface PostQueryRow {
   idea_id: string | null;
   external_id: string | null;
   failure_reason: string | null;
+  tags: string[] | null;
 }
 
 interface QueueDisplayRow {
@@ -55,6 +57,8 @@ interface QueueDisplayRow {
   external_id: string | null;
   failure_reason: string | null;
   generation_metadata: unknown;
+  // Migration 052: structured auto-tag set (posts.tags). Drives TagChipRow.
+  tags: string[];
   // Phase 6B — set when this row is the parent of an active experiment
   // or is itself a variant inside one. Drives both the badge and the
   // suppression of the "Run Quick Experiment" CTA (no recursion).
@@ -67,7 +71,7 @@ export default async function QueuePage() {
   const { data: posts } = await supabase
     .from("posts")
     .select(
-      "id, text, theme, scheduled_at, status, channel, social_account_id, media, generation_metadata, voice_score, low_confidence, idea_id, external_id, failure_reason",
+      "id, text, theme, scheduled_at, status, channel, social_account_id, media, generation_metadata, voice_score, low_confidence, idea_id, external_id, failure_reason, tags",
     )
     .eq("workspace_id", ws.id)
     .in("status", ["pending_approval", "scheduled"])
@@ -86,7 +90,7 @@ export default async function QueuePage() {
     const { data: extras } = await supabase
       .from("posts")
       .select(
-        "id, text, theme, scheduled_at, status, channel, social_account_id, media, generation_metadata, voice_score, low_confidence, idea_id, external_id, failure_reason",
+        "id, text, theme, scheduled_at, status, channel, social_account_id, media, generation_metadata, voice_score, low_confidence, idea_id, external_id, failure_reason, tags",
       )
       .eq("workspace_id", ws.id)
       .in("idea_id", activeIdeaIds)
@@ -162,6 +166,7 @@ export default async function QueuePage() {
       external_id: p.external_id,
       failure_reason: p.failure_reason,
       generation_metadata: p.generation_metadata,
+      tags: Array.isArray(p.tags) ? p.tags : [],
       experiment_status: experimentStatus,
     };
   });
@@ -250,6 +255,20 @@ export default async function QueuePage() {
     );
   }
 
+  // Migration 052: per-post auto-tags chip row, bound to the structured
+  // posts.tags column. No DB fetch needed — tags are already on the row.
+  // Same pending-only + non-thread gating as the hashtag hints above.
+  const tagSlots = new Map<string, React.ReactNode>();
+  for (const p of hashtagPosts) {
+    const ch = p.channel as ChannelId;
+    if (!VALID_HASHTAG_CHANNELS.includes(ch)) continue;
+    const row = rows.find((r) => r.id === p.id);
+    tagSlots.set(
+      p.id,
+      <TagChipRow postId={p.id} channel={ch} initialTags={row?.tags ?? []} />,
+    );
+  }
+
   return (
     <div className="space-y-10">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -300,7 +319,7 @@ export default async function QueuePage() {
           />
         }
       >
-        {renderGrouped(pending, hashtagSlots)}
+        {renderGrouped(pending, hashtagSlots, tagSlots)}
       </Section>
 
       <Section
@@ -322,7 +341,7 @@ export default async function QueuePage() {
           />
         }
       >
-        {renderGrouped(scheduled, null)}
+        {renderGrouped(scheduled, null, null)}
       </Section>
     </div>
   );
@@ -339,6 +358,7 @@ export default async function QueuePage() {
 function renderGrouped(
   rows: QueueDisplayRow[],
   hashtagSlots: Map<string, React.ReactNode> | null,
+  tagSlots: Map<string, React.ReactNode> | null,
 ): React.ReactNode {
   type Group =
     | { kind: "single"; row: QueueDisplayRow; sortKey: string }
@@ -420,6 +440,7 @@ function renderGrouped(
           ideaId={g.ideaId}
           variants={g.variants}
           hashtagSlots={hashtagSlots ?? undefined}
+          tagSlots={tagSlots ?? undefined}
         />
       );
     }
@@ -428,6 +449,7 @@ function renderGrouped(
         key={g.row.id}
         post={g.row}
         hashtagRow={hashtagSlots?.get(g.row.id)}
+        tagRow={tagSlots?.get(g.row.id)}
       />
     );
   });

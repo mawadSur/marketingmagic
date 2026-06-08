@@ -6,8 +6,10 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseService } from "@/lib/supabase/service";
 import { getActiveWorkspaceOrRedirect, getAuthedUserOrRedirect } from "@/lib/workspace";
 import { defaultImageProvider } from "@/lib/images";
-import { maxCharsFor } from "@/lib/channels/registry";
+import { maxCharsFor, type ChannelId } from "@/lib/channels/registry";
 import { applyHashtagsToText, extractHashtags } from "@/lib/hashtags/extract";
+import { mergeAndCap, tagBoundsForChannel } from "@/lib/tags/generate";
+import { generateAndStoreTagsForPost } from "@/lib/tags/persist";
 import { assertWithinImageQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementImagesGenerated } from "@/lib/billing/usage";
 import type { RejectionReason } from "@/lib/db/types";
@@ -666,6 +668,110 @@ export async function setPostHashtagsAction(
 
   revalidatePath("/queue");
   return { error: null };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Auto-tags (migration 052) — setPostTagsAction / regeneratePostTagsAction
+// ─────────────────────────────────────────────────────────────
+//
+// These manage the STRUCTURED posts.tags column (the generation layer), as
+// opposed to setPostHashtagsAction above which mirrors tags into the inline
+// #block in posts.text (the published-render layer). setPostTagsAction does
+// BOTH: it writes the structured column AND keeps the inline #block in sync,
+// so "what we store" and "what publishes" never drift.
+type SetTagsResult = ActionResult & { tags: string[] };
+
+const tagsListSchema = z.array(z.string().trim().min(1).max(100)).max(30);
+
+export async function setPostTagsAction(
+  postId: string,
+  tags: string[],
+): Promise<SetTagsResult> {
+  if (!uuid.safeParse(postId).success) return { error: "Bad post id.", tags: [] };
+  const parsed = tagsListSchema.safeParse(tags);
+  if (!parsed.success) return { error: "Bad tag list.", tags: [] };
+
+  const { error, post, user, supabase } = await loadPostForWorkspace(postId);
+  if (error || !post) return { error, tags: [] };
+  if (post.status !== "pending_approval") {
+    return { error: `Cannot edit tags from ${post.status}.`, tags: [] };
+  }
+
+  const channel = post.channel as ChannelId;
+  const bounds = tagBoundsForChannel(channel);
+  // Normalize + cap via the same pure helper the generator uses, so the
+  // server is the single binding rule for the storage contract.
+  const normalized = bounds.enabled ? mergeAndCap(channel, parsed.data, []) : [];
+
+  // Mirror into the inline #block (reuses the existing text-rewrite path) and
+  // enforce the channel char cap, matching setPostHashtagsAction.
+  const newText = applyHashtagsToText(post.text, normalized);
+  const max = maxCharsFor(post.channel);
+  const finalText = newText.length > max ? newText.slice(0, max - 1) + "…" : newText;
+
+  const { error: updateErr } = await supabase
+    .from("posts")
+    .update({ tags: normalized, text: finalText })
+    .eq("id", postId);
+  if (updateErr) return { error: updateErr.message, tags: [] };
+
+  await supabase.from("approvals").insert({
+    post_id: postId,
+    user_id: user.id,
+    action: "edited",
+    diff: `tags: ${normalized.map((t) => `#${t}`).join(" ") || "(none)"}`,
+  });
+
+  // Feed the recommender (014) from the explicit user choice — same upsert as
+  // setPostHashtagsAction. Best-effort.
+  try {
+    const svc = supabaseService();
+    const { data: latestMetric } = await svc
+      .from("post_metrics")
+      .select("engagement_rate")
+      .eq("post_id", postId)
+      .order("fetched_at", { ascending: false })
+      .limit(1);
+    const engagement = latestMetric?.[0]?.engagement_rate ?? null;
+    const rows = normalized.map((tag) => ({
+      workspace_id: post.workspace_id,
+      channel: post.channel,
+      tag,
+      post_id: postId,
+      engagement_at_post: engagement,
+    }));
+    if (rows.length > 0) {
+      await svc.from("hashtag_usage").upsert(rows, {
+        onConflict: "post_id,tag",
+        ignoreDuplicates: true,
+      });
+    }
+  } catch (err) {
+    console.warn("hashtag_usage upsert (setPostTagsAction) failed:", err);
+  }
+
+  revalidatePath("/queue");
+  return { error: null, tags: normalized };
+}
+
+// (Re)generate tags for a pending draft via the auto-tag generator and persist
+// the result (column + inline mirror). The user can still edit afterward via
+// setPostTagsAction.
+export async function regeneratePostTagsAction(postId: string): Promise<SetTagsResult> {
+  if (!uuid.safeParse(postId).success) return { error: "Bad post id.", tags: [] };
+
+  const { error, post } = await loadPostForWorkspace(postId);
+  if (error || !post) return { error, tags: [] };
+  if (post.status !== "pending_approval") {
+    return { error: `Cannot regenerate tags from ${post.status}.`, tags: [] };
+  }
+
+  const tags = await generateAndStoreTagsForPost(postId);
+  if (tags === null) return { error: "Tag generation failed — try again.", tags: [] };
+
+  // Mirror the generated set into the inline #block so the published copy
+  // matches, routed through setPostTagsAction's text+audit+usage path.
+  return setPostTagsAction(postId, tags);
 }
 
 // ─────────────────────────────────────────────────────────────
