@@ -37,7 +37,7 @@ export default async function BillingPage({
   const { data: wsRow } = await svc
     .from("workspaces")
     .select(
-      "id, plan, stripe_customer_id, stripe_subscription_id, subscription_status, grandfathered_until",
+      "id, plan, stripe_customer_id, stripe_subscription_id, subscription_status",
     )
     .eq("id", ws.id)
     .maybeSingle();
@@ -60,26 +60,6 @@ export default async function BillingPage({
   const hasActiveSub = Boolean(wsRow?.stripe_subscription_id);
   const configured = billingConfigured();
 
-  // Blotato pricing migration (057): if this workspace is grandfathered onto its
-  // OLD Stripe price and the cutover is still in the future, show a heads-up
-  // ("your plan moves to $X on <date>") instead of pretending the new price is
-  // already live. A null or past timestamp means there's nothing to announce —
-  // the operator hasn't flagged them, or the migration window has elapsed.
-  const grandfatheredUntil = wsRow?.grandfathered_until
-    ? new Date(wsRow.grandfathered_until)
-    : null;
-  const grandfatherNotice =
-    grandfatheredUntil && grandfatheredUntil.getTime() > Date.now()
-      ? {
-          newPrice: currentTier.priceMonthly,
-          on: grandfatheredUntil.toLocaleDateString("en-US", {
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-          }),
-        }
-      : null;
-
   return (
     <div className="mx-auto max-w-4xl space-y-8">
       <header className="space-y-1">
@@ -97,19 +77,6 @@ export default async function BillingPage({
       {status === "cancelled" && (
         <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
           Checkout cancelled. No charge was made.
-        </div>
-      )}
-
-      {grandfatherNotice && (
-        <div className="rounded-md border border-sky-500/40 bg-sky-500/5 p-4 text-sm">
-          <p className="font-medium">
-            Your {currentTier.name} plan moves to ${grandfatherNotice.newPrice}/mo on{" "}
-            {grandfatherNotice.on}.
-          </p>
-          <p className="mt-1 text-muted-foreground">
-            You&rsquo;re currently on your original price — nothing changes until that
-            date, and your limits stay exactly as they are today.
-          </p>
         </div>
       )}
 
