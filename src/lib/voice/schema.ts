@@ -39,6 +39,12 @@ export const voiceProfileDiffSchema = z.object({
   remove_signature_phrases: z.array(z.string().min(1).max(200)).max(20).optional(),
   summary_patch: z.string().min(1).max(800).optional(),
   source_rejection_count: z.number().int().min(0),
+  // TODO #0 (gap 2): how many of the user's OWN sent/published exemplars
+  // informed this diff. The evolution cron now folds genuine-voice samples
+  // (published posts + manually-sent replies) in alongside rejections, so a
+  // diff can converge TOWARD how the user writes, not just away from what they
+  // rejected. 0 / omitted = a rejection-only diff (legacy behaviour).
+  source_sent_count: z.number().int().min(0).optional(),
   proposed_at: z.string().datetime(),
 });
 

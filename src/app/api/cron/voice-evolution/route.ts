@@ -3,14 +3,19 @@ import Anthropic from "@anthropic-ai/sdk";
 import { serverEnv } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { voiceProfileDiffSchema } from "@/lib/voice/schema";
+import { loadSentExemplars, type SentExemplar } from "@/lib/voice/from-sent";
 import type { VoiceProfile, VoiceProfileDiff } from "@/lib/db/types";
 
 // Weekly voice-evolution cron. Runs Monday 13:00 UTC from
 // .github/workflows/cron-voice-evolution.yml. Auth: Bearer CRON_SECRET.
 //
-// For each workspace with a voice_profile AND >= MIN_REJECTIONS rejections
-// in the last week, we ask Claude to read the rejection feedback alongside
-// the current profile and propose a diff. The diff is persisted to
+// For each workspace with a voice_profile we propose a CONSERVATIVE diff to
+// the profile from TWO signals (TODO #0, gap 2):
+//   1. Rejection feedback — posts the user rejected as off-voice (nudge AWAY
+//      from what they don't want). The original signal.
+//   2. The user's OWN sent/published text — published posts + manually-sent
+//      inbox replies (converge TOWARD how the user actually writes). NEW.
+// We run when there is enough of EITHER signal. The diff is persisted to
 // brand_briefs.pending_voice_diff; the user accepts (merge) or dismisses
 // from /settings/brief.
 //
@@ -25,6 +30,11 @@ const LOOKBACK_DAYS = 7;
 const MIN_REJECTIONS = 3;
 const MAX_REJECTIONS_PER_WORKSPACE = 20;
 const MAX_WORKSPACES_PER_RUN = 50;
+// Minimum genuine-voice exemplars (published posts + manually-sent replies)
+// before we'll evolve the profile from sent text alone. Lower than the extract
+// floor (3) since this only NUDGES an existing profile, not seeds a new one,
+// but we still want a few samples so one stray post can't shift the voice.
+const MIN_SENT_EXEMPLARS = 5;
 
 interface PerWorkspaceResult {
   workspaceId: string;
@@ -131,15 +141,26 @@ async function processBrief(
     (r) => r.reason === "off_voice" || (r.reason === "other" && r.reason_note),
   );
 
-  if (voiceRelevant.length < MIN_REJECTIONS) {
+  // TODO #0 (gap 2): also load the user's OWN sent/published text as genuine-
+  // voice exemplars. Best-effort — never fails the run.
+  const sentExemplars = await loadSentExemplars(svc, workspaceId, since);
+
+  // Run when there is enough of EITHER signal. Rejections nudge AWAY from what
+  // the user doesn't want; sent exemplars converge TOWARD how they write.
+  const haveRejections = voiceRelevant.length >= MIN_REJECTIONS;
+  const haveSent = sentExemplars.length >= MIN_SENT_EXEMPLARS;
+  if (!haveRejections && !haveSent) {
     return {
       workspaceId,
       status: "skipped",
-      reason: `only ${voiceRelevant.length} voice-relevant rejection(s); need ${MIN_REJECTIONS}.`,
+      reason:
+        `not enough signal — ${voiceRelevant.length} voice rejection(s) (need ${MIN_REJECTIONS}) ` +
+        `and ${sentExemplars.length} sent exemplar(s) (need ${MIN_SENT_EXEMPLARS}).`,
     };
   }
 
-  // Build the prompt input. Each item: snippet of rejected text + user note.
+  // Build the rejection prompt input. Each item: snippet of rejected text +
+  // user note. Empty when we're running on sent-text signal alone.
   const items = voiceRelevant.map((r, i) => {
     const post = Array.isArray(r.posts) ? r.posts[0] : r.posts;
     const text = (post?.text ?? "").slice(0, 280);
@@ -147,7 +168,12 @@ async function processBrief(
     return `--- rejection ${i + 1} (${r.reason}) ---\n${text}${note}`;
   });
 
-  const diff = await proposeDiff(profile, items, voiceRelevant.length);
+  const diff = await proposeDiff(
+    profile,
+    items,
+    voiceRelevant.length,
+    sentExemplars,
+  );
   if (!diff) {
     return { workspaceId, status: "skipped", reason: "no actionable change proposed." };
   }
@@ -169,7 +195,8 @@ async function processBrief(
 const DIFF_TOOL = {
   name: "propose_voice_diff",
   description:
-    "Propose a minimal, conservative diff to the current voice profile based on the rejection feedback. " +
+    "Propose a minimal, conservative diff to the current voice profile based on the evidence: " +
+    "the user's rejection feedback AND the user's own recently-published / sent text. " +
     "Only suggest changes you can defend from the evidence. If nothing actionable, set rationale to " +
     '"no change" and leave every other field empty.',
   input_schema: {
@@ -214,6 +241,12 @@ const DIFF_TOOL = {
         type: "integer",
         minimum: 0,
       },
+      source_sent_count: {
+        type: "integer",
+        minimum: 0,
+        description:
+          "How many of the user's own sent/published exemplars you used as evidence.",
+      },
       proposed_at: {
         type: "string",
         description: "ISO 8601 UTC datetime when this diff was proposed.",
@@ -227,21 +260,35 @@ async function proposeDiff(
   profile: VoiceProfile,
   items: string[],
   count: number,
+  sentExemplars: SentExemplar[],
 ): Promise<VoiceProfileDiff | null> {
   const system = [
-    "You are tuning a brand's voice profile based on user rejection feedback.",
-    "You will see (1) the current voice profile and (2) recent posts the user rejected",
-    "for being off-voice or with a user note explaining the problem.",
+    "You are tuning a brand's voice profile from two evidence sources.",
+    "You will see (1) the current voice profile, (2) recent posts the user REJECTED",
+    "as off-voice (nudge the profile AWAY from these), and (3) the user's OWN recently",
+    "PUBLISHED posts and manually-SENT replies (their genuine voice — converge the",
+    "profile TOWARD how they actually write).",
     "",
     "Propose a CONSERVATIVE diff:",
-    "- Only suggest changes you can defend from the rejection evidence.",
-    "- Prefer adding do_not_say entries over rewriting the summary.",
-    "- Change formality/emoji_usage only when there is clear, repeated signal.",
+    "- Only suggest changes you can defend from the evidence shown.",
+    "- From REJECTIONS: prefer adding do_not_say entries; nudge formality/emoji only on",
+    "  clear, repeated signal.",
+    "- From SENT TEXT: capture recurring genuine signature phrases the user actually uses,",
+    "  and align formality/emoji_usage with how they really write. Do NOT add a phrase",
+    "  unless it appears across multiple sent samples — one-off phrasing is not a pattern.",
+    "- Prefer small, evidence-backed edits over rewriting the summary wholesale.",
     "- Empty / unset every field if no change is warranted; set rationale to 'no change'.",
-    "- Never invent rejection evidence — if you cannot defend a change, do not propose it.",
+    "- Never invent evidence — if you cannot defend a change, do not propose it.",
     "",
     "Call propose_voice_diff exactly once. Do not respond with prose.",
   ].join("\n");
+
+  const sentBlock =
+    sentExemplars.length > 0
+      ? sentExemplars.map(
+          (e, i) => `--- ${e.source} ${i + 1} ---\n${e.text}`,
+        )
+      : ["(no sent/published exemplars this period)"];
 
   const user = [
     "## Current voice profile",
@@ -256,8 +303,11 @@ async function proposeDiff(
       ? `Do not say: ${profile.do_not_say.join(", ")}`
       : "Do not say: (none)",
     "",
-    "## Recent rejections (voice-relevant only)",
-    ...items,
+    "## Recent rejections (voice-relevant only — nudge AWAY)",
+    ...(items.length > 0 ? items : ["(no voice-relevant rejections this period)"]),
+    "",
+    "## The user's own sent/published text (genuine voice — converge TOWARD)",
+    ...sentBlock,
   ].join("\n");
 
   const resp = await client().messages.create({
@@ -280,6 +330,7 @@ async function proposeDiff(
   const fixed = {
     ...raw,
     source_rejection_count: count,
+    source_sent_count: sentExemplars.length,
     proposed_at: new Date().toISOString(),
   };
   const parsed = voiceProfileDiffSchema.safeParse(fixed);

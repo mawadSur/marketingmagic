@@ -154,6 +154,11 @@ export interface VoiceProfileDiff {
   // Counts of rejections that produced this diff. Helpful for the UI to
   // explain "we noticed N off-voice rejections this week."
   source_rejection_count: number;
+  // TODO #0 (gap 2): how many of the user's OWN sent/published exemplars
+  // informed this diff (published posts + manually-sent replies). Lets the UI
+  // explain "we also studied N posts you actually published." Optional /
+  // omitted on legacy rejection-only diffs.
+  source_sent_count?: number;
   proposed_at: string;
 }
 
