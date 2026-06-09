@@ -18,7 +18,12 @@ vi.mock("@/lib/env", () => ({
   geminiApiBase: () => "https://gemini.test/v1beta",
 }));
 
-import { analyzeVideo, selectAnalyzer, VideoAnalysisError } from "@/lib/video/analyze";
+import {
+  analyzeVideo,
+  selectAnalyzer,
+  VideoAnalysisError,
+  HOOK_CRITERIA,
+} from "@/lib/video/analyze";
 import { geminiVideoAnalyzer, normalize } from "@/lib/video/analyze/gemini-analyzer";
 
 // Build a Gemini generateContent response whose single text part is the given
@@ -40,6 +45,18 @@ const GOOD_ANALYSIS = {
       { atSeconds: 3.0, description: "Zoom punch-in on the face" },
     ],
     onScreenText: ["THE 1 TRICK", "Save this"],
+  },
+  hook_rating: {
+    score: 82,
+    verdict: "Strong scroll-stopper, weak CTA",
+    criteria: [
+      { key: "scroll_stop", label: "Scroll-stop power", score: 9, reason: "Punchy first frame" },
+      { key: "clarity", label: "Clarity of promise", score: 8, reason: "Clear payoff" },
+      { key: "curiosity", label: "Curiosity / tension", score: 9, reason: "Open loop" },
+      { key: "specificity", label: "Specificity", score: 7, reason: "One concrete claim" },
+      { key: "callout", label: "Audience call-out", score: 6, reason: "Implicit only" },
+    ],
+    improvements: ["Add a who-this-is-for callout in the first second", "End on a stronger CTA"],
   },
 };
 
@@ -97,6 +114,17 @@ describe("analyzeVideo: structured shape (gemini path, mocked fetch)", () => {
       description: "Hard cut to a phone screen",
     });
     expect(result.visual_breakdown.onScreenText).toEqual(["THE 1 TRICK", "Save this"]);
+    // The graded hook rating rides alongside the breakdown.
+    expect(result.hook_rating.score).toBe(82);
+    expect(result.hook_rating.verdict).toBe("Strong scroll-stopper, weak CTA");
+    expect(result.hook_rating.criteria).toHaveLength(HOOK_CRITERIA.length);
+    expect(result.hook_rating.criteria[0]).toEqual({
+      key: "scroll_stop",
+      label: "Scroll-stop power",
+      score: 9,
+      reason: "Punchy first frame",
+    });
+    expect(result.hook_rating.improvements).toHaveLength(2);
     // `raw` keeps the verbatim envelope for re-parsing.
     expect(result.raw).toBeTruthy();
   });
@@ -141,6 +169,67 @@ describe("analyzeVideo: structured shape (gemini path, mocked fetch)", () => {
     expect(result.visual_breakdown.firstFiveSeconds).toBe("");
     expect(result.visual_breakdown.patternInterrupts).toEqual([]);
     expect(result.visual_breakdown.onScreenText).toEqual([]);
+    // An absent rating degrades to a complete, zeroed object (full rubric, score 0).
+    expect(result.hook_rating.score).toBe(0);
+    expect(result.hook_rating.verdict).toBe("");
+    expect(result.hook_rating.improvements).toEqual([]);
+    expect(result.hook_rating.criteria).toHaveLength(HOOK_CRITERIA.length);
+    expect(result.hook_rating.criteria.every((c) => c.score === 0)).toBe(true);
+  });
+});
+
+describe("hook rating: parse + defend (normalize)", () => {
+  it("clamps the overall score into 0–100 and rounds", () => {
+    const high = normalize(JSON.stringify({ hook_rating: { score: 250 } }), {});
+    expect(high.hook_rating.score).toBe(100);
+    const low = normalize(JSON.stringify({ hook_rating: { score: -40 } }), {});
+    expect(low.hook_rating.score).toBe(0);
+    const rounded = normalize(JSON.stringify({ hook_rating: { score: 73.6 } }), {});
+    expect(rounded.hook_rating.score).toBe(74);
+  });
+
+  it("coerces a string score and clamps per-criterion scores to 0–10", () => {
+    const r = normalize(
+      JSON.stringify({
+        hook_rating: {
+          score: "65",
+          criteria: [{ key: "scroll_stop", score: 99, reason: "x" }],
+        },
+      }),
+      {},
+    );
+    expect(r.hook_rating.score).toBe(65);
+    const scrollStop = r.hook_rating.criteria.find((c) => c.key === "scroll_stop");
+    expect(scrollStop?.score).toBe(10);
+  });
+
+  it("emits the full rubric in canonical order, backfilling missing dimensions to 0", () => {
+    const r = normalize(
+      JSON.stringify({
+        hook_rating: {
+          score: 50,
+          // Only one dimension returned, out of order key only.
+          criteria: [{ key: "curiosity", score: 8, reason: "open loop" }],
+        },
+      }),
+      {},
+    );
+    expect(r.hook_rating.criteria.map((c) => c.key)).toEqual(HOOK_CRITERIA.map((c) => c.key));
+    const curiosity = r.hook_rating.criteria.find((c) => c.key === "curiosity");
+    expect(curiosity?.score).toBe(8);
+    // A dimension the model omitted defaults to 0 with the rubric's label.
+    const callout = r.hook_rating.criteria.find((c) => c.key === "callout");
+    expect(callout?.score).toBe(0);
+    expect(callout?.label).toBe("Audience call-out");
+  });
+
+  it("backfills the label from the rubric when the model omits it", () => {
+    const r = normalize(
+      JSON.stringify({ hook_rating: { score: 50, criteria: [{ key: "clarity", score: 7 }] } }),
+      {},
+    );
+    const clarity = r.hook_rating.criteria.find((c) => c.key === "clarity");
+    expect(clarity?.label).toBe("Clarity of promise");
   });
 });
 

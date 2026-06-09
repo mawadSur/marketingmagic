@@ -1920,6 +1920,12 @@ export interface Database {
           visual_breakdown: Json | null;
           hook_spoken: string | null;
           hook_visual: string | null;
+          // Headline 0–100 hook strength (migration 062), denormalised from
+          // hook_rating.score for cheap sort/filter.
+          hook_score: number | null;
+          // The full graded rating object { score, verdict, criteria[],
+          // improvements[] } (migration 062). Shape owned by the analyze module.
+          hook_rating: Json | null;
           provider: string | null;
           model: string | null;
           analyzed_at: string;
@@ -1936,6 +1942,8 @@ export interface Database {
           visual_breakdown?: Json | null;
           hook_spoken?: string | null;
           hook_visual?: string | null;
+          hook_score?: number | null;
+          hook_rating?: Json | null;
           provider?: string | null;
           model?: string | null;
           analyzed_at?: string;
@@ -1947,6 +1955,8 @@ export interface Database {
           visual_breakdown: Json | null;
           hook_spoken: string | null;
           hook_visual: string | null;
+          hook_score: number | null;
+          hook_rating: Json | null;
           provider: string | null;
           model: string | null;
           analyzed_at: string;

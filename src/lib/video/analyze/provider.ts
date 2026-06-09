@@ -58,9 +58,52 @@ export interface VisualBreakdown {
   onScreenText: string[];
 }
 
+// One graded dimension of the hook. The rubric is fixed (see HOOK_CRITERIA) so
+// scores are comparable across clips and over time; `key` ties a returned score
+// back to a known criterion, `label` is the human name, `score` is 0–10.
+export interface HookCriterion {
+  // Stable rubric id (e.g. "scroll_stop"). Lets the UI/consumer map a returned
+  // score to a known dimension regardless of the order the model emits them.
+  key: string;
+  // Human-readable name of the dimension (e.g. "Scroll-stop power").
+  label: string;
+  // This dimension's score, 0–10 (clamped on normalise).
+  score: number;
+  // One-line justification for the score — what earned/cost the points.
+  reason: string;
+}
+
+// A direct-response GRADE of the hook (Hormozi: a hook either stops the scroll
+// or it doesn't — so score it, don't just describe it). `score` is the headline
+// 0–100; `criteria` are the per-dimension sub-scores; `verdict` is a one-line
+// call; `improvements` are concrete, actionable rewrites/changes to raise the
+// score. This is the "rating" the analyzer produces alongside the breakdown.
+export interface HookRating {
+  // Overall hook strength, 0–100 (clamped on normalise). Higher = stronger.
+  score: number;
+  // One-line verdict (e.g. "Strong scroll-stopper, weak CTA").
+  verdict: string;
+  // Per-dimension sub-scores against the fixed rubric.
+  criteria: HookCriterion[];
+  // Concrete, actionable fixes to raise the score (rewrites, cuts, overlays).
+  improvements: string[];
+}
+
+// The fixed direct-response hook rubric (Hormozi's first-3-seconds mechanics).
+// ONE source of truth, shared by the prompt (so the model knows what to grade)
+// and the normaliser (so it can backfill labels + default any missing
+// dimension). Keep keys stable — they're persisted and compared over time.
+export const HOOK_CRITERIA: ReadonlyArray<{ key: string; label: string; hint: string }> = [
+  { key: "scroll_stop", label: "Scroll-stop power", hint: "Does the first frame + first words make a thumb stop?" },
+  { key: "clarity", label: "Clarity of promise", hint: "Is it instantly clear what the viewer gets by staying?" },
+  { key: "curiosity", label: "Curiosity / tension", hint: "Is there an open loop that demands resolution?" },
+  { key: "specificity", label: "Specificity", hint: "Concrete numbers/claims vs. vague generalities?" },
+  { key: "callout", label: "Audience call-out", hint: "Does it signal exactly who this is for?" },
+];
+
 // The structured output every analyzer returns. Persisted 1:1 into
-// video_analysis (transcript, visual_breakdown, hook_spoken, hook_visual) plus
-// the verbatim `raw` for re-parsing.
+// video_analysis (transcript, visual_breakdown, hook_spoken, hook_visual,
+// hook_rating) plus the verbatim `raw` for re-parsing.
 export interface VideoAnalysis {
   transcript: string;
   visual_breakdown: VisualBreakdown;
@@ -68,6 +111,8 @@ export interface VideoAnalysis {
   hook_spoken: string;
   // The visual hook — what the eye lands on first.
   hook_visual: string;
+  // The graded hook-strength rating (overall score + rubric + fixes).
+  hook_rating: HookRating;
   // Verbatim provider response, kept so a row can be re-parsed without re-charge.
   raw: unknown;
 }

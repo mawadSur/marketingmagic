@@ -31,14 +31,25 @@ import {
   type VideoAnalyzer,
   type VisualBreakdown,
   type VisualMoment,
+  type HookRating,
+  type HookCriterion,
+  HOOK_CRITERIA,
   VideoAnalysisError,
 } from "./provider";
 
+// The rubric block injected into the prompt — the model grades EXACTLY these
+// keys, so its sub-scores line up with HOOK_CRITERIA on the way back. Built from
+// the shared rubric so the prompt can never drift from the normaliser.
+const CRITERIA_PROMPT = HOOK_CRITERIA.map(
+  (c) => `    { "key": "${c.key}", "label": "${c.label}", "score": number /*0-10*/, "reason": string }  // ${c.hint}`,
+).join("\n");
+
 // The instruction we hand Gemini. Asks for a STRICT JSON object matching our
 // VideoAnalysis-minus-raw shape so parsing is deterministic. Framed as a
-// direct-response hook breakdown (Hormozi: first 5s, pattern interrupts,
-// on-screen text, spoken + visual hooks).
-const ANALYSIS_PROMPT = `You are a direct-response short-form video analyst. Watch this video and return ONLY a JSON object (no markdown, no prose) with EXACTLY these keys:
+// direct-response hook breakdown AND grade (Hormozi: a hook either stops the
+// scroll or it doesn't — so describe it AND score it: first 5s, pattern
+// interrupts, on-screen text, spoken + visual hooks, plus a 0–100 hook rating).
+const ANALYSIS_PROMPT = `You are a direct-response short-form video analyst in the Alex Hormozi school: a hook's only job is to stop the scroll and earn the next 3 seconds. Watch this video and return ONLY a JSON object (no markdown, no prose) with EXACTLY these keys:
 {
   "transcript": string,            // the full spoken audio, transcribed
   "hook_spoken": string,           // the spoken hook — the words in the first ~3 seconds
@@ -49,6 +60,14 @@ const ANALYSIS_PROMPT = `You are a direct-response short-form video analyst. Wat
       { "atSeconds": number, "description": string }
     ],
     "onScreenText": [string]        // on-screen text / captions, read verbatim
+  },
+  "hook_rating": {
+    "score": number,               // OVERALL hook strength 0-100 (be a tough grader; reserve 80+ for hooks that genuinely stop the scroll)
+    "verdict": string,             // one-line call, e.g. "Strong scroll-stopper, weak CTA"
+    "criteria": [                   // grade EACH of these dimensions, 0-10:
+${CRITERIA_PROMPT}
+    ],
+    "improvements": [string]        // 2-4 concrete, actionable fixes to raise the score (rewrites, cuts, overlays)
   }
 }
 Return valid JSON only.`;
@@ -159,8 +178,64 @@ export function normalize(partText: string, raw: unknown): VideoAnalysis {
     visual_breakdown,
     hook_spoken: asString(parsed.hook_spoken),
     hook_visual: asString(parsed.hook_visual),
+    hook_rating: asRating(parsed.hook_rating),
     raw,
   };
+}
+
+// Parse + defend the hook rating. The overall score is clamped to 0–100; each
+// returned criterion is matched to the fixed rubric (so an off-label/missing
+// dimension still yields a complete, comparable set) with its score clamped to
+// 0–10. A wholly-absent rating degrades to a zeroed-but-complete object rather
+// than crashing the persist — same defensive contract as the rest of normalize.
+function asRating(v: unknown): HookRating {
+  const r = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+
+  // Index whatever criteria the model returned by rubric key, so we can backfill
+  // the full rubric in a stable order regardless of what (or how) it emitted.
+  const byKey = new Map<string, HookCriterion>();
+  if (Array.isArray(r.criteria)) {
+    for (const item of r.criteria) {
+      if (item && typeof item === "object") {
+        const rec = item as Record<string, unknown>;
+        const key = asString(rec.key).trim();
+        if (key) {
+          byKey.set(key, {
+            key,
+            label: asString(rec.label),
+            score: clamp(rec.score, 0, 10),
+            reason: asString(rec.reason),
+          });
+        }
+      }
+    }
+  }
+
+  // Emit the full rubric in canonical order; backfill the label from the rubric
+  // when the model omitted or mangled it, default any missing dimension to 0.
+  const criteria: HookCriterion[] = HOOK_CRITERIA.map((spec) => {
+    const got = byKey.get(spec.key);
+    return {
+      key: spec.key,
+      label: got?.label?.trim() ? got.label : spec.label,
+      score: got ? got.score : 0,
+      reason: got?.reason ?? "",
+    };
+  });
+
+  return {
+    score: clamp(r.score, 0, 100),
+    verdict: asString(r.verdict),
+    criteria,
+    improvements: asStringArray(r.improvements),
+  };
+}
+
+// Coerce an unknown into a finite number clamped to [min, max]; non-numbers → min.
+function clamp(v: unknown, min: number, max: number): number {
+  const n = typeof v === "number" && Number.isFinite(v) ? v : Number(v);
+  if (!Number.isFinite(n)) return min;
+  return Math.min(max, Math.max(min, Math.round(n)));
 }
 
 // Some models wrap JSON in a ```json … ``` fence despite the responseMimeType

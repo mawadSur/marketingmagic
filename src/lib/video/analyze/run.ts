@@ -117,6 +117,10 @@ export async function analyzePostVideo(
         visual_breakdown: analysis.visual_breakdown as unknown as never,
         hook_spoken: analysis.hook_spoken,
         hook_visual: analysis.hook_visual,
+        // The graded rating (migration 062): headline score denormalised into
+        // its own column for sort/filter; the full object kept as jsonb.
+        hook_score: analysis.hook_rating.score,
+        hook_rating: analysis.hook_rating as unknown as never,
         provider: analysisKey.provider,
         model: analysisKey.model,
         analyzed_at: new Date().toISOString(),

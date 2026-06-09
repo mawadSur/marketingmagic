@@ -60,5 +60,8 @@ export {
   type VideoAnalyzer,
   type VisualBreakdown,
   type VisualMoment,
+  type HookRating,
+  type HookCriterion,
+  HOOK_CRITERIA,
   VideoAnalysisError,
 } from "./provider";
