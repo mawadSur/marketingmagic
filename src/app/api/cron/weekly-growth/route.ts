@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { serverEnv, siteUrl } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import {
@@ -130,6 +131,11 @@ async function handle(req: NextRequest) {
     try {
       outcome = await runWorkspace(ws.id, ws.name, ws.owner_id, mode, base, now, windowStart);
     } catch (err) {
+      // Capture the error to Sentry so silently-broken crons are visible. Graceful
+      // no-op when SENTRY_DSN is unset.
+      Sentry.captureException(err, {
+        tags: { cron: "weekly-growth", workspace_id: ws.id },
+      });
       outcome = {
         workspaceId: ws.id,
         status: "failed",

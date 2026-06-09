@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { serverEnv } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { dispatchPost, type PostMediaItem } from "@/lib/social/dispatch";
@@ -169,6 +170,11 @@ async function handle(req: NextRequest) {
           });
         }
       } catch (err) {
+        // Capture the error to Sentry so silently-broken crons are visible. Graceful
+        // no-op when SENTRY_DSN is unset.
+        Sentry.captureException(err, {
+          tags: { cron: "post-scheduled", workspace_id: post.workspace_id, idea_id: ideaId },
+        });
         const reason = err instanceof Error ? err.message : "thread post failed";
         // Don't blanket-fail every row — load the thread rows again and mark
         // only the unposted ones so the user can retry.
@@ -290,6 +296,11 @@ async function handle(req: NextRequest) {
         results.push({ id: post.id, status: "skipped", reason: `retry next tick: ${reason}` });
         continue;
       }
+      // Capture the error to Sentry so silently-broken crons are visible. Graceful
+      // no-op when SENTRY_DSN is unset.
+      Sentry.captureException(err, {
+        tags: { cron: "post-scheduled", workspace_id: post.workspace_id, post_id: post.id },
+      });
       await markFailed(post.id, reason);
       results.push({ id: post.id, status: "failed", reason });
     }

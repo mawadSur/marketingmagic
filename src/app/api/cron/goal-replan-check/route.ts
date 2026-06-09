@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { serverEnv } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { checkGoalsForReplan } from "@/lib/goals/replan-check";
@@ -117,6 +118,11 @@ async function handle(req: NextRequest) {
         goalIds,
       });
     } catch (err) {
+      // Capture the error to Sentry so silently-broken crons are visible. Graceful
+      // no-op when SENTRY_DSN is unset.
+      Sentry.captureException(err, {
+        tags: { cron: "goal-replan-check", workspace_id: workspaceId },
+      });
       results.push({
         workspaceId,
         status: "failed",
