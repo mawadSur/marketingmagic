@@ -1964,6 +1964,31 @@ export interface Database {
         }>;
         Relationships: [];
       };
+      handle_checks: {
+        // Handle-finder availability cache (migration 063). GLOBAL (not
+        // workspace-scoped): "is x.com/acme taken?" is the same for everyone.
+        // Locked to the service role (RLS on, no policies). No user data.
+        Row: {
+          handle: string;
+          platform: string;
+          status: "available" | "taken" | "unknown" | "invalid";
+          source: string;
+          checked_at: string;
+        };
+        Insert: {
+          handle: string;
+          platform: string;
+          status: "available" | "taken" | "unknown" | "invalid";
+          source: string;
+          checked_at?: string;
+        };
+        Update: Partial<{
+          status: "available" | "taken" | "unknown" | "invalid";
+          source: string;
+          checked_at: string;
+        }>;
+        Relationships: [];
+      };
     };
     Views: {
       social_accounts_safe: {

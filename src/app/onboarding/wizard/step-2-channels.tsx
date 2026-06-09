@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, ExternalLink } from "lucide-react";
+import { CheckCircle2, ExternalLink, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -95,6 +95,22 @@ export function Step2Channels({ connectedChannels, justConnected }: Step2Props) 
           </p>
         </div>
       ) : null}
+
+      {/* New users may not have accounts yet — route them to the handle finder
+          to pick a brandable username + claim it everywhere before connecting. */}
+      <Link
+        href="/onboarding/handles"
+        className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm transition-colors hover:bg-primary/10"
+      >
+        <Sparkles className="h-5 w-5 shrink-0 text-primary" aria-hidden />
+        <span className="flex-1">
+          <span className="font-medium">Don&apos;t have accounts yet?</span>{" "}
+          <span className="text-muted-foreground">
+            Find a handle that&apos;s free across every platform — and claim it in one click.
+          </span>
+        </span>
+        <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+      </Link>
 
       <div className="grid gap-3 sm:grid-cols-2">
         {CHANNELS.map((c) => {
