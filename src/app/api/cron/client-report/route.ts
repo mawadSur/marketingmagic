@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { serverEnv } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { resolveTheme, type ResolvedTheme } from "@/lib/portal/branding";
@@ -154,6 +155,11 @@ async function handle(req: NextRequest) {
         sent += 1;
       }
     } catch (err) {
+      // Capture the error to Sentry so silently-broken crons are visible. Graceful
+      // no-op when SENTRY_DSN is unset.
+      Sentry.captureException(err, {
+        tags: { cron: "client-report", workspace_id: ws.id },
+      });
       result.status = "failed";
       result.reason = err instanceof Error ? err.message : "report assembly failed";
     }

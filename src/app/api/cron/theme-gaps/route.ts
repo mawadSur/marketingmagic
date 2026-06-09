@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { serverEnv } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { findNeglectedThemes, type NeglectedTheme } from "@/lib/themes/gaps";
@@ -69,6 +70,11 @@ async function handle(req: NextRequest) {
       const neglected = await findNeglectedThemes(row.workspace_id);
       results.push(summarise(row.workspace_id, neglected));
     } catch (err) {
+      // Capture the error to Sentry so silently-broken crons are visible. Graceful
+      // no-op when SENTRY_DSN is unset.
+      Sentry.captureException(err, {
+        tags: { cron: "theme-gaps", workspace_id: row.workspace_id },
+      });
       results.push({
         workspaceId: row.workspace_id,
         status: "failed",

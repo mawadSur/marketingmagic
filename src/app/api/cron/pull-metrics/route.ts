@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { serverEnv } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { dispatchMetrics } from "@/lib/social/dispatch";
@@ -130,6 +131,11 @@ async function handle(req: NextRequest) {
 
       results.push({ id: post.id, ok: true });
     } catch (err) {
+      // Capture the error to Sentry so silently-broken crons are visible. Graceful
+      // no-op when SENTRY_DSN is unset.
+      Sentry.captureException(err, {
+        tags: { cron: "pull-metrics", post_id: post.id },
+      });
       results.push({ id: post.id, ok: false, reason: err instanceof Error ? err.message : "unknown" });
     }
 

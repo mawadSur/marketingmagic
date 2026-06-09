@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { serverEnv } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { pollX } from "@/lib/interactions/pollers/x";
@@ -297,6 +298,11 @@ async function handle(req: NextRequest) {
         });
         continue;
       }
+      // Capture the error to Sentry so silently-broken crons are visible. Graceful
+      // no-op when SENTRY_DSN is unset.
+      Sentry.captureException(err, {
+        tags: { cron: "poll-interactions", social_account_id: acct.id },
+      });
       results.push({
         socialAccountId: acct.id,
         workspaceId: acct.workspace_id,

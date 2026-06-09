@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { serverEnv } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { fetchCompetitorPosts } from "@/lib/competitors/fetch";
@@ -179,6 +180,11 @@ async function handle(req: NextRequest) {
           const dispatched = await buildAndDispatchWeeklyDigest(ws.id, ws.name, ownerEmail);
           digestResults.push(dispatched);
         } catch (err) {
+          // Capture the error to Sentry so silently-broken crons are visible. Graceful
+          // no-op when SENTRY_DSN is unset.
+          Sentry.captureException(err, {
+            tags: { cron: "competitor-watch", workspace_id: ws.id },
+          });
           digestResults.push({
             workspaceId: ws.id,
             status: "failed",
