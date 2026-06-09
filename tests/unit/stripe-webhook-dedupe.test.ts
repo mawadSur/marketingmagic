@@ -18,6 +18,11 @@ const mockState = {
   insertCalls: [] as MockInsertCall[],
   insertedEventIds: new Set<string>(),
   nextInsertError: null as { code?: string; message: string } | null,
+  // Event ids the route DELETEd from stripe_events (handler-failure rollback).
+  deletedEventIds: [] as string[],
+  // When true, the handler path throws (we force it via a workspaces read error)
+  // so we can assert the dedupe row is rolled back.
+  forceHandlerError: false,
 };
 
 // Mock the Supabase service. The webhook handler calls .from("stripe_events").insert().
@@ -28,6 +33,18 @@ vi.mock("@/lib/supabase/service", () => ({
     from(table: string) {
       if (table !== "stripe_events") {
         // Other tables (workspaces, organizations) are hit by the handler; stub those.
+        // When forceHandlerError is set, make the handler's first read throw so we
+        // can exercise the failure-rollback path.
+        if (mockState.forceHandlerError) {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: () => Promise.reject(new Error("forced handler failure")),
+              }),
+            }),
+            update: () => ({ eq: () => Promise.resolve({ error: null }) }),
+          };
+        }
         return {
           select: () => ({
             eq: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) }),
@@ -36,6 +53,15 @@ vi.mock("@/lib/supabase/service", () => ({
         };
       }
       return {
+        // Handler-failure rollback: route DELETEs the dedupe row so Stripe's retry
+        // re-runs the handler. Record the deleted id for assertions.
+        delete: () => ({
+          eq: (_col: string, val: string) => {
+            mockState.deletedEventIds.push(val);
+            mockState.insertedEventIds.delete(val);
+            return Promise.resolve({ error: null });
+          },
+        }),
         insert: (payload: MockInsertCall | MockInsertCall[]) => {
           const row = Array.isArray(payload) ? payload[0] : payload;
 
@@ -101,8 +127,12 @@ vi.mock("@/lib/billing/tiers", () => ({
   isOrgSeatPrice: (priceId: string | null) => priceId === "price_org_seat",
 }));
 
-function makeFakeRequest(eventId: string, eventType: string): NextRequest {
-  const event = { id: eventId, type: eventType, data: { object: {} } };
+function makeFakeRequest(
+  eventId: string,
+  eventType: string,
+  object: Record<string, unknown> = {},
+): NextRequest {
+  const event = { id: eventId, type: eventType, data: { object } };
   const body = JSON.stringify(event);
   return {
     headers: new Map([["stripe-signature", "fake_sig"]]),
@@ -115,6 +145,8 @@ describe("Stripe webhook durable dedupe", () => {
     mockState.insertCalls.length = 0;
     mockState.insertedEventIds.clear();
     mockState.nextInsertError = null;
+    mockState.deletedEventIds.length = 0;
+    mockState.forceHandlerError = false;
   });
 
   afterEach(() => {
@@ -131,6 +163,24 @@ describe("Stripe webhook durable dedupe", () => {
     expect(mockState.insertCalls).toHaveLength(1);
     expect(mockState.insertCalls[0]).toEqual({ event_id: "evt_first", type: "customer.subscription.updated" });
     expect(mockState.insertedEventIds.has("evt_first")).toBe(true);
+  });
+
+  it("rolls back the dedupe row when the handler fails (so Stripe's retry re-processes)", async () => {
+    // CRITICAL idempotency property: the dedupe row means "processed", not
+    // "received". A transiently-failed handler must NOT permanently swallow the
+    // event — the route deletes the row + returns 500 so Stripe retries.
+    mockState.forceHandlerError = true;
+    // Give the event a customer id so the handler reaches resolveWorkspaceId's
+    // workspaces lookup — which the forceHandlerError hook makes throw.
+    const req = makeFakeRequest("evt_fail", "customer.subscription.updated", {
+      customer: "cus_test",
+    });
+    const res = await POST(req);
+
+    expect(res.status).toBe(500);
+    // The row we INSERTed was rolled back so a retry will re-run the handler.
+    expect(mockState.deletedEventIds).toContain("evt_fail");
+    expect(mockState.insertedEventIds.has("evt_fail")).toBe(false);
   });
 
   it("second POST with same event_id is caught by L1 cache (in-memory Set)", async () => {

@@ -129,7 +129,9 @@ export async function instagramVerify(accessToken: string, igUserId: string): Pr
   // igUserId arg is kept for backwards-compat with callers; we don't need
   // it for the verify call but log a mismatch if it disagrees.
   if (json.user_id && igUserId && json.user_id !== igUserId) {
-    console.warn(`IG verify: stored userId ${igUserId} != token's ${json.user_id}`);
+    // Log the FACT of a mismatch, not the ids themselves (an IG user id ties a
+    // workspace to a real account — keep it out of logs).
+    console.warn("IG verify: stored userId does not match the token's userId");
   }
   return { username: json.username };
 }

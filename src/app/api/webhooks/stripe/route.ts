@@ -81,10 +81,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // NEW event (INSERT succeeded) → the event_id is now durably recorded. Proceed
-  // to run the handler. If the handler below throws, we respond 500 and Stripe
-  // retries — but the DB dedupe above will catch the retry (PK conflict) and ack
-  // it without re-running the handler, so the handler runs exactly once.
+  // NEW event (INSERT succeeded) → the event_id is now durably recorded. Run the
+  // handler. CRITICAL: the dedupe row means "successfully processed", NOT merely
+  // "received" — so if the handler throws we DELETE the row in the catch below,
+  // letting Stripe's retry actually re-run the handler. Leaving the row would
+  // permanently swallow a transiently-failed billing event (the retry would hit
+  // the PK conflict and ack 200 without ever processing it). The window between
+  // INSERT and a same-event concurrent delivery is tiny; Stripe rarely fans a
+  // single event to two instances simultaneously, and a double-run is idempotent
+  // anyway — so we optimise for "never silently lose a billing event".
 
   try {
     switch (event.type) {
@@ -110,15 +115,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ received: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Handler error";
-    // Surface a 500 so Stripe retries. Don't add to seenEventIds (the in-memory
-    // set), but leave the DB row intact — when Stripe retries, the durable dedupe
-    // above will catch it (PK conflict) and ack 200 without re-running the handler.
-    // This is safe because the DB INSERT happened BEFORE the handler ran, so if the
-    // handler throws, the event is marked "seen" in the DB even though processing
-    // failed — Stripe will retry, the DB dedupe will catch it, and we'll ack 200
-    // without re-running the handler. This is the trade-off: we avoid double-
-    // processing (idempotency key) at the cost of potentially missing a failed event
-    // IF the operator doesn't manually replay it from the Stripe Dashboard.
+    // Handler failed → roll back the dedupe row so Stripe's retry RE-RUNS the
+    // handler (the row records success, not receipt). Without this delete, the
+    // retry would hit the PK conflict and ack 200, permanently dropping a
+    // failed billing event. We don't touch seenEventIds (never populated for a
+    // failed event). Best-effort delete: if it fails we still 500 (Stripe
+    // retries), and worst case a stuck row is one manual replay from the
+    // dashboard — strictly better than silently swallowing the event.
+    const { error: delError } = await svc
+      .from("stripe_events")
+      .delete()
+      .eq("event_id", event.id);
+    if (delError) {
+      console.error(
+        `[stripe-webhook] handler failed for ${event.id} AND dedupe-row rollback failed: ${delError.message}. Manual replay may be needed.`,
+      );
+    }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

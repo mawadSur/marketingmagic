@@ -129,8 +129,11 @@ export async function POST(req: NextRequest) {
   // Facebook user_id Meta sends does not directly match the IG/Threads
   // userId we store on the credentials row — a future enhancement should
   // capture the FB user_id at connect time to make this lookup possible.
+  // Do NOT log the raw Facebook user_id — this is the privacy/data-deletion
+  // endpoint and the subject's platform id is PII (GDPR/CCPA). Log our own
+  // opaque confirmation `code` + timing instead: enough to correlate a request
+  // without persisting the user's id in logs.
   console.log("[data-deletion] received", {
-    user_id: payload.user_id,
     issued_at: payload.issued_at,
     expires: payload.expires,
     code,
