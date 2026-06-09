@@ -9,6 +9,7 @@ import {
 } from "@/lib/interactions/auto-reply/policy";
 import { parseLeadKeywordRule } from "@/lib/interactions/auto-reply/lead-capture";
 import { leadRuleToForm } from "@/lib/interactions/auto-reply/lead-rule-input";
+import { displayHandle } from "@/lib/channels/registry";
 import { Notice } from "@/components/ui/notice";
 import { TrustToggle } from "./trust-toggle";
 import { AutoReplyToggle } from "./auto-reply-toggle";
@@ -67,7 +68,7 @@ export default async function ChannelDetailPage({
       <header className="space-y-1">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold tracking-tight">
-            {account.channel} · @{account.handle}
+            {account.channel} · {displayHandle(account.handle)}
           </h1>
           <Link href="/settings/channels" className="text-sm text-muted-foreground hover:text-foreground">
             ← All channels

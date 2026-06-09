@@ -6,6 +6,7 @@ import { serverEnv } from "@/lib/env";
 import { tierFor } from "@/lib/billing/tiers";
 import { overLimitAccountIds } from "@/lib/billing/limits";
 import { resolvePlanForWorkspace } from "@/lib/billing/entitlements";
+import { displayHandle } from "@/lib/channels/registry";
 import { ChannelBadge, statusBadgeVariant, Badge, statusBadgeLabel } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 
@@ -206,7 +207,10 @@ export default async function ChannelsPage({
                       <span
                         className={`font-medium${isOverLimit ? " text-muted-foreground" : ""}`}
                       >
-                        @{a.handle}
+                        {/* displayHandle strips any leading @ then prefixes one —
+                            YouTube stores "@name", which made a bare `@{handle}`
+                            render "@@name". */}
+                        {displayHandle(a.handle)}
                       </span>
                       {isOverLimit ? (
                         // Over the plan's connected-channel cap: stays connected but

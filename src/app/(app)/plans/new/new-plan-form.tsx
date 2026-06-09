@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ChannelBadge } from "@/components/ui/badge";
+import { displayHandle } from "@/lib/channels/registry";
 import { generatePlanAction, type GeneratePlanState } from "./actions";
 
 interface Account {
@@ -137,7 +138,7 @@ export function NewPlanForm({
                     className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5"
                   >
                     <ChannelBadge channel={a.channel} />
-                    <span className="truncate text-sm">@{a.handle}</span>
+                    <span className="truncate text-sm">{displayHandle(a.handle)}</span>
                   </Label>
                 </div>
                 <div className="flex flex-col items-stretch gap-2 self-stretch sm:flex-row sm:items-center sm:gap-3 sm:self-auto">

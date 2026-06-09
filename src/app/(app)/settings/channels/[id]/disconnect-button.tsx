@@ -4,6 +4,7 @@ import { useTransition, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { displayHandle } from "@/lib/channels/registry";
 import { disconnectAccountAction } from "./actions";
 
 // Disconnect affordance for a connected channel. Two-step (click → confirm) so
@@ -42,7 +43,7 @@ export function DisconnectButton({
       <div className="space-y-1">
         <p className="text-sm font-medium">Disconnect this channel</p>
         <p className="text-xs text-muted-foreground">
-          Stops all posting to {channel} @{handle} and removes the stored
+          Stops all posting to {channel} {displayHandle(handle)} and removes the stored
           credentials. Your post history is kept. You can reconnect any time —
           you&apos;ll just re-authorize.
         </p>

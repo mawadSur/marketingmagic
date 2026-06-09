@@ -9,6 +9,7 @@ import {
   generatePlanAction,
   type GeneratePlanState,
 } from "@/app/(app)/plans/new/actions";
+import { displayHandle } from "@/lib/channels/registry";
 
 interface Account {
   id: string;
@@ -80,7 +81,7 @@ export function Step3Plan({ accounts }: Step3PlanProps) {
                     <span className="rounded-md border px-2 py-0.5 text-xs uppercase tracking-wide">
                       {CHANNEL_LABEL[a.channel] ?? a.channel}
                     </span>
-                    <span className="text-sm">@{a.handle}</span>
+                    <span className="text-sm">{displayHandle(a.handle)}</span>
                   </Label>
                   {/* Hard-coded 5 posts/week to match the brief's "default to
                       1 week + 5 posts/week" spec. Field has to exist for the

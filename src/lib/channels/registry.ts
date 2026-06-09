@@ -37,6 +37,15 @@ export interface ChannelSpec {
   promptConstraint: string;
 }
 
+// Format a stored social-account handle for display with exactly one leading
+// "@". Most channels store a bare handle, but YouTube stores it as "@name"
+// (that's the canonical YouTube handle form), so a naive `@{handle}` rendered
+// "@@name". Strip any leading @(s) the stored value carries, then prefix one.
+export function displayHandle(handle: string | null | undefined): string {
+  if (!handle) return "";
+  return `@${handle.replace(/^@+/, "")}`;
+}
+
 // Weekday is 1=Monday … 7=Sunday (ISO).
 export const CHANNELS: Record<ChannelId, ChannelSpec> = {
   x: {
