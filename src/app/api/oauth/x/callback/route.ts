@@ -4,22 +4,26 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseService } from "@/lib/supabase/service";
 import { xExchangeCode, xVerify, type XCredentials } from "@/lib/social/x";
 import { assertWithinChannelQuota, QuotaExceededError } from "@/lib/billing/limits";
+import { verifyOAuthState } from "@/lib/social/oauth-state";
 
 // X redirects here with ?code=...&state=... once the user approves on
 // twitter.com/i/oauth2/authorize. We:
-//   1. Pull the {codeVerifier, state, workspaceId} stash out of the cookie.
-//   2. Verify the state query matches the stashed state (CSRF binding).
-//   3. Exchange code + verifier for access_token + refresh_token at
-//      /2/oauth2/token (PKCE).
+//   1. Verify the SIGNED state param (mobile-robust CSRF — survives cookie drops).
+//   2. Pull the {codeVerifier, workspaceId} stash out of the cookie (PKCE requires it).
+//   3. Exchange code + verifier for access_token + refresh_token at /2/oauth2/token (PKCE).
 //   4. Verify the token via /2/users/me, then upsert into social_accounts.
 //
 // Auth required — supabaseServer().auth.getUser() must succeed before we
 // touch workspace data. Persistence uses service role because credentials
 // must never round-trip through anon-key clients.
+//
+// PKCE note: the cookie is still REQUIRED for the code_verifier (PKCE spec).
+// The signed state makes CSRF mobile-robust, but if the cookie is missing the
+// token exchange will fail — this is a PKCE limitation. The verifier is a
+// cryptographic secret (not a CSRF token).
 
 interface StashedState {
   v: string; // code_verifier
-  s: string; // state
   w: string; // workspace id
 }
 
@@ -31,10 +35,8 @@ function decodeState(raw: string): StashedState | null {
       typeof parsed === "object" &&
       parsed !== null &&
       "v" in parsed &&
-      "s" in parsed &&
       "w" in parsed &&
       typeof (parsed as Record<string, unknown>).v === "string" &&
-      typeof (parsed as Record<string, unknown>).s === "string" &&
       typeof (parsed as Record<string, unknown>).w === "string"
     ) {
       return parsed as StashedState;
@@ -70,6 +72,17 @@ export async function GET(req: NextRequest) {
     return redirectWithError(base, "missing_oauth_params");
   }
 
+  // CSRF: verify the SIGNED state (mobile-robust — survives cookie drops).
+  const verified = verifyOAuthState(stateParam);
+  if (!verified.ok) {
+    return redirectWithError(base, `oauth_state_${verified.reason}`);
+  }
+  const workspaceId = verified.workspaceId;
+
+  // PKCE: pull the code_verifier from the cookie. Unlike the CSRF state, the
+  // verifier MUST come from a cookie because PKCE requires it server-side for
+  // the token exchange. If the cookie is missing, the flow fails — this is a
+  // PKCE limitation (the verifier is a cryptographic secret, not a CSRF token).
   const cookieValue = req.cookies.get("x_oauth_state")?.value;
   if (!cookieValue) {
     return redirectWithError(base, "x_state_expired");
@@ -78,8 +91,11 @@ export async function GET(req: NextRequest) {
   if (!stash) {
     return redirectWithError(base, "x_state_invalid");
   }
-  if (stash.s !== stateParam) {
-    return redirectWithError(base, "x_state_mismatch");
+  // Sanity-check: the workspaceId in the cookie should match the signed state.
+  // Both were set by our /initiate, but defense-in-depth in case of cookie
+  // replay or tampering.
+  if (stash.w !== workspaceId) {
+    return redirectWithError(base, "x_workspace_mismatch");
   }
 
   // Require an authenticated session before persisting credentials. Anyone
@@ -93,13 +109,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL("/login", base));
   }
 
-  // Confirm the authed user actually has access to the workspace stashed in
-  // state (defense in depth — the workspace id came from our own cookie, but
-  // we don't trust cookies for authorization).
+  // Confirm the authed user actually has access to the workspace from the signed
+  // state (defense in depth — the signed state proves it came from our /initiate,
+  // but we still verify the user owns the workspace before persisting tokens).
   const { data: workspace } = await sb
     .from("workspaces")
     .select("id")
-    .eq("id", stash.w)
+    .eq("id", workspaceId)
     .maybeSingle();
   if (!workspace) {
     return redirectWithError(base, "workspace_access_denied");
@@ -155,7 +171,7 @@ export async function GET(req: NextRequest) {
 
   // Plan gating — same shape as before.
   try {
-    await assertWithinChannelQuota(stash.w, { channel: "x", handle: username });
+    await assertWithinChannelQuota(workspaceId, { channel: "x", handle: username });
   } catch (err) {
     if (err instanceof QuotaExceededError) {
       const r = NextResponse.redirect(
@@ -170,7 +186,7 @@ export async function GET(req: NextRequest) {
   const svc = supabaseService();
   const { error: dbErr } = await svc.from("social_accounts").upsert(
     {
-      workspace_id: stash.w,
+      workspace_id: workspaceId,
       channel: "x",
       handle: username,
       // Cast through Record<string, string> to satisfy the jsonb column type
