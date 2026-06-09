@@ -3,7 +3,7 @@ import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { mptConfigured, byoKeysConfigured } from "@/lib/env";
 import { getWorkspaceKeyStatus } from "@/lib/video/byo-keys";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { LlmKeyForm, PexelsKeyForm, KeyStatus } from "./key-forms";
+import { LlmKeyForm, PexelsKeyForm, AnalysisKeyForm, KeyStatus } from "./key-forms";
 
 export const dynamic = "force-dynamic";
 
@@ -115,6 +115,24 @@ export default async function VideoKeysPage() {
           </Link>
         </p>
       ) : null}
+
+      {/* Optional, separate capability — hook analysis (Hormozi slice 2). BYO
+          analysis key + chosen model. Independent of the two render keys above. */}
+      <Card>
+        <CardHeader className="flex-row items-start justify-between space-y-0">
+          <div className="space-y-1.5">
+            <CardTitle className="text-base">Hook analysis (optional)</CardTitle>
+            <CardDescription>
+              Bring your own analysis key + model to break down a video&apos;s hook (Gemini
+              recommended — it reads audio and frames natively).
+            </CardDescription>
+          </div>
+          <KeyStatus configured={status.analysis} provider="analysis" />
+        </CardHeader>
+        <CardContent>
+          <AnalysisKeyForm configured={status.analysis} />
+        </CardContent>
+      </Card>
     </div>
   );
 }

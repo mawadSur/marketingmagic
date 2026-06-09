@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   saveLlmKeyAction,
   savePexelsKeyAction,
+  saveAnalysisKeyAction,
   removeKeyAction,
   type VideoKeysState,
 } from "./actions";
@@ -54,9 +55,35 @@ const PROVIDERS: ProviderMeta[] = [
 
 const byValue = (v: string) => PROVIDERS.find((p) => p.value === v) ?? PROVIDERS[0];
 
+// Video analysis (Hormozi slice 2) — providers whose model family has a wired
+// backend. Only Gemini is wired today (native-video; Claude has no video input
+// type). Prefills a sensible default model + points "Get a key" at the console.
+interface AnalysisProviderMeta {
+  value: string;
+  label: string;
+  model: string;
+  keyUrl: string;
+  keyHint?: string;
+}
+const ANALYSIS_PROVIDERS: AnalysisProviderMeta[] = [
+  {
+    value: "gemini",
+    label: "Google Gemini",
+    model: "gemini-2.5-flash",
+    keyUrl: "https://aistudio.google.com/app/apikey",
+    keyHint: "Native video — transcribes audio + reads the frames in one pass.",
+  },
+];
+
 // A small "remove" form — plain server action (no state), so it can sit
 // inside the status row without its own useActionState.
-function RemoveButton({ provider, label }: { provider: "llm" | "pexels"; label: string }) {
+function RemoveButton({
+  provider,
+  label,
+}: {
+  provider: "llm" | "pexels" | "analysis";
+  label: string;
+}) {
   return (
     <form action={removeKeyAction}>
       <input type="hidden" name="provider" value={provider} />
@@ -245,13 +272,124 @@ export function PexelsKeyForm({ configured }: { configured: boolean }) {
   );
 }
 
+// Video analysis (Hormozi slice 2) — store the workspace's own analysis key +
+// chosen model. Mirrors LlmKeyForm: pick a provider (prefills the model + the
+// "Get a key" link), paste the key, edit the model if you like. Stored encrypted;
+// never displayed again.
+export function AnalysisKeyForm({ configured }: { configured: boolean }) {
+  const [state, action, pending] = useActionState(saveAnalysisKeyAction, initial);
+  const [provider, setProvider] = useState(ANALYSIS_PROVIDERS[0]);
+  const [model, setModel] = useState(ANALYSIS_PROVIDERS[0].model);
+  const [showKey, setShowKey] = useState(false);
+
+  function onProviderChange(value: string) {
+    const next = ANALYSIS_PROVIDERS.find((p) => p.value === value) ?? ANALYSIS_PROVIDERS[0];
+    setProvider(next);
+    setModel(next.model);
+  }
+
+  return (
+    <form action={action} className="space-y-4">
+      <div className="space-y-1.5">
+        <Label htmlFor="analysis_provider">Provider</Label>
+        <select
+          id="analysis_provider"
+          name="provider"
+          value={provider.value}
+          onChange={(e) => onProviderChange(e.target.value)}
+          className={SELECT_CLASS}
+        >
+          {ANALYSIS_PROVIDERS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        {provider.keyUrl ? (
+          <p className="text-xs text-muted-foreground">
+            <a
+              className={`inline-flex items-center gap-1 rounded-sm underline-offset-4 hover:underline ${FOCUS_RING}`}
+              href={provider.keyUrl}
+              target="_blank"
+              rel="noreferrer"
+              title="Opens in new window"
+            >
+              Get a {provider.label} key
+              <ExternalLink className="h-3 w-3" aria-hidden />
+            </a>
+            {provider.keyHint ? <span className="ml-1">· {provider.keyHint}</span> : null}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="analysis_api_key">
+          API key <span className="text-destructive">*</span>
+        </Label>
+        <div className="relative">
+          <Input
+            id="analysis_api_key"
+            name="api_key"
+            type={showKey ? "text" : "password"}
+            placeholder={configured ? "Enter a new key to replace the stored one" : "AIza…"}
+            autoComplete="off"
+            className="pr-10"
+            required
+          />
+          <button
+            type="button"
+            onClick={() => setShowKey((s) => !s)}
+            className={`absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-md text-muted-foreground hover:text-foreground ${FOCUS_RING}`}
+            aria-label={showKey ? "Hide key" : "Show key"}
+          >
+            {showKey ? <EyeOff className="h-4 w-4" aria-hidden /> : <Eye className="h-4 w-4" aria-hidden />}
+          </button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Stored encrypted. We never display it again — only Replace or Remove.
+        </p>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="analysis_model">Model</Label>
+        <Input
+          id="analysis_model"
+          name="model"
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          placeholder="gemini-2.5-flash"
+          autoComplete="off"
+          required
+        />
+      </div>
+
+      {state.error ? (
+        <p className="flex items-center gap-1.5 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4 shrink-0" aria-hidden />
+          {state.error}
+        </p>
+      ) : null}
+      {state.success ? (
+        <p className="flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400">
+          <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />
+          {state.success}
+        </p>
+      ) : null}
+
+      <Button type="submit" disabled={pending}>
+        {pending ? "Saving…" : configured ? "Replace analysis key" : "Save analysis key"}
+      </Button>
+    </form>
+  );
+}
+
 // Status pill + Remove affordance. Presence only — never a value.
 export function KeyStatus({
   configured,
   provider,
 }: {
   configured: boolean;
-  provider: "llm" | "pexels";
+  provider: "llm" | "pexels" | "analysis";
 }) {
   return (
     <div className="flex items-center gap-2">

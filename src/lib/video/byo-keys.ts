@@ -64,20 +64,34 @@ export interface ByoHiggsfieldVideoSecrets {
   api_key_id: string;
   api_key_secret: string;
 }
+// Video analysis (Hormozi slice 2). The workspace's own analysis-provider key
+// AND chosen model — BYO-key + user-chooses-their-own-model, so there's no
+// central cost and the backend is configurable per workspace. `provider` names
+// the model family (e.g. "gemini" — the recommended native-video default);
+// `model` is the exact id the analyzer sends (e.g. "gemini-2.5-flash"). Same
+// AES-256-GCM machinery as the other BYO secrets; stored as its OWN provider row
+// ('analysis').
+export interface ByoAnalysisSecrets {
+  provider: string;
+  api_key: string;
+  model: string;
+}
 export type ByoProvider =
   | "llm"
   | "pexels"
   | "fal_video"
   | "did_video"
   | "heygen_video"
-  | "higgsfield_video";
+  | "higgsfield_video"
+  | "analysis";
 export type ByoSecrets =
   | ByoLlmSecrets
   | ByoPexelsSecrets
   | ByoFalVideoSecrets
   | ByoDidVideoSecrets
   | ByoHeygenVideoSecrets
-  | ByoHiggsfieldVideoSecrets;
+  | ByoHiggsfieldVideoSecrets
+  | ByoAnalysisSecrets;
 
 // Thrown when BYO_ENCRYPTION_KEY is missing/wrong-length. Distinct type so
 // callers can surface "video keys not configured" vs a generic crypto error.
@@ -184,6 +198,9 @@ export interface WorkspaceKeys {
   heygen_video?: ByoHeygenVideoSecrets;
   // UGC avatar video (Higgsfield) key presence/secret. Independent of the others.
   higgsfield_video?: ByoHiggsfieldVideoSecrets;
+  // Video analysis (Hormozi slice 2) — the workspace's own analysis key + chosen
+  // model. Independent of the others; absent until the user opts into analysis.
+  analysis?: ByoAnalysisSecrets;
 }
 
 export async function getWorkspaceKeys(workspaceId: string): Promise<WorkspaceKeys> {
@@ -205,6 +222,7 @@ export async function getWorkspaceKeys(workspaceId: string): Promise<WorkspaceKe
     else if (row.provider === "heygen_video") out.heygen_video = parsed as ByoHeygenVideoSecrets;
     else if (row.provider === "higgsfield_video")
       out.higgsfield_video = parsed as ByoHiggsfieldVideoSecrets;
+    else if (row.provider === "analysis") out.analysis = parsed as ByoAnalysisSecrets;
   }
   return out;
 }
@@ -228,6 +246,9 @@ export interface WorkspaceKeyStatus {
   heygen_video: boolean;
   // UGC avatar video (Higgsfield) key presence. Drives the settings UI pill.
   higgsfield_video: boolean;
+  // Video analysis (Hormozi slice 2) key presence. Drives the settings UI pill —
+  // never a value.
+  analysis: boolean;
 }
 
 export async function getWorkspaceKeyStatus(workspaceId: string): Promise<WorkspaceKeyStatus> {
@@ -247,6 +268,7 @@ export async function getWorkspaceKeyStatus(workspaceId: string): Promise<Worksp
     did_video: providers.has("did_video"),
     heygen_video: providers.has("heygen_video"),
     higgsfield_video: providers.has("higgsfield_video"),
+    analysis: providers.has("analysis"),
   };
 }
 

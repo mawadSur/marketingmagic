@@ -198,6 +198,16 @@ const serverSchema = z.object({
   // this default is intentionally empty — HeyGen requires a real voice_id, so the
   // adapter rejects a render when neither the user nor this default supplies one.
   HEYGEN_DEFAULT_VOICE_ID: z.string().default(""),
+  // Video analysis (Hormozi slice 2) — base URL of the Gemini Generative Language
+  // API the native-video analyzer hits. Overridable via GEMINI_API_BASE so the
+  // host/version isn't hardcoded; trailing slash trimmed so the adapter builds a
+  // well-formed `${base}/models/{model}:generateContent` URL. The BYO key is the
+  // workspace's own (workspace_byo_keys, provider 'analysis'), NOT in env — this
+  // is only the endpoint, not a credential.
+  GEMINI_API_BASE: z
+    .string()
+    .min(1)
+    .default("https://generativelanguage.googleapis.com/v1beta"),
 });
 
 const publicSchema = serverSchema.pick({
@@ -372,4 +382,14 @@ export function higgsfieldBaseUrl(): string {
 // Overridable via HIGGSFIELD_MODEL so the tier/model isn't hardcoded.
 export function higgsfieldModel(): string {
   return serverEnv().HIGGSFIELD_MODEL;
+}
+
+// Video analysis (Hormozi slice 2) — base URL of the Gemini Generative Language
+// API the native-video analyzer submits to. Overridable via GEMINI_API_BASE so
+// it isn't hardcoded; trailing slash trimmed so
+// `${geminiApiBase()}/models/{model}:generateContent` is always well-formed. The
+// API key is the workspace's BYO secret (workspace_byo_keys, provider
+// 'analysis'), never env — this is only the endpoint.
+export function geminiApiBase(): string {
+  return serverEnv().GEMINI_API_BASE.replace(/\/$/, "");
 }
