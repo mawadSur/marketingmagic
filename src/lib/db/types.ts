@@ -774,6 +774,13 @@ export interface Database {
           // #block in `text` is the published render. Distinct from the
           // hashtag_usage recommendation history (014).
           tags: string[];
+          // Migration 060: variation lineage. parent_post_id points at the
+          // source post this row was generated as a hook×body variation OF
+          // (src/lib/variations). variation_group_id is the batch tag shared by
+          // every draft minted in one "Generate 30 variations" run. Both NULL
+          // for non-variation posts.
+          parent_post_id: string | null;
+          variation_group_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -797,6 +804,9 @@ export interface Database {
           source_id?: string | null;
           goal_id?: string | null;
           tags?: string[];
+          // Migration 060: variation lineage (see Row).
+          parent_post_id?: string | null;
+          variation_group_id?: string | null;
         };
         Update: Partial<{
           text: string;
