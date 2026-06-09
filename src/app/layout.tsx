@@ -29,6 +29,14 @@ export const metadata: Metadata = {
     ],
     apple: [{ url: "/apple-icon.png", sizes: "180x180" }],
   },
+  // Google Search Console site-ownership proof, needed to verify this domain as
+  // the OAuth-consent homepage (YouTube channel publishing requires the consent
+  // screen to pass verification). Belt-and-suspenders with the static
+  // /public/google35b7217c1d31d94f.html file — Next emits
+  // <meta name="google-site-verification"> into <head> on every page.
+  verification: {
+    google: "VmwDZ5puwOSkwhHaoQLe82bbt9_cYfB0TYPRjAJt9bA",
+  },
 };
 
 export const viewport = {
