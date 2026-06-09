@@ -9,6 +9,7 @@ import { previewPlan } from "@/lib/preview/plan";
 import { signPreviewToken } from "@/lib/preview/token";
 import { recordAttempt, clientIpFromHeaders } from "@/lib/preview/rate-limit";
 import { track, hashHandle } from "@/lib/preview/analytics";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export type StartActionState = {
   error: string | null;
@@ -83,7 +84,8 @@ export async function startPreviewAction(
   }
 
   // Rate limit per IP. Even on Vercel cold-start nodes this catches the
-  // common script-kiddie attempt to spam handles from one box.
+  // common script-kiddie attempt to spam handles from one box. This is the
+  // in-memory limiter (5/hour per IP).
   const hdrs = await headers();
   const ip = clientIpFromHeaders(hdrs);
   const limit = recordAttempt(ip);
@@ -97,6 +99,17 @@ export async function startPreviewAction(
     const minutes = Math.max(1, Math.ceil(limit.resetMs / 60_000));
     return {
       error: `You've hit the preview limit (5/hour). Try again in ~${minutes} minute${minutes === 1 ? "" : "s"} — or sign up to generate plans without limits.`,
+      needsPaste: false,
+    };
+  }
+
+  // Additional distributed rate limit (Upstash) for the AI-spend path, keyed by
+  // IP (10 req / min). When Upstash is unconfigured, this is a no-op (allows all).
+  const distributedLimit = await checkRateLimit("start-preview", ip, 10, 60_000);
+  if (!distributedLimit.ok) {
+    const minutes = Math.max(1, Math.ceil(distributedLimit.resetMs / 60_000));
+    return {
+      error: `Too many preview requests. Try again in ~${minutes} minute${minutes === 1 ? "" : "s"}.`,
       needsPaste: false,
     };
   }

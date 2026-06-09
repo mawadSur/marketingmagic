@@ -6,6 +6,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { generateHandleCandidates } from "@/lib/handles/generate";
 import { checkHandleCached, type CachedAvailability } from "@/lib/handles/check";
 import { normalizeHandle, PLATFORM_ORDER } from "@/lib/handles/platforms";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 // One candidate row the UI renders: the handle, its AI rationale, and the
 // per-platform availability grid.
@@ -37,6 +38,18 @@ export async function findHandlesAction(
   formData: FormData,
 ): Promise<FindHandlesState> {
   const ws = await getActiveWorkspaceOrRedirect();
+
+  // Rate limit per workspace (10 requests per minute). Protects the AI-spend path
+  // from abuse. When Upstash is unconfigured, this is a no-op (allows all).
+  const limit = await checkRateLimit("handle-finder", ws.id, 10, 60_000);
+  if (!limit.ok) {
+    const minutes = Math.max(1, Math.ceil(limit.resetMs / 60_000));
+    return {
+      error: `You're generating too many handles. Try again in ~${minutes} minute${minutes === 1 ? "" : "s"}.`,
+      rows: [],
+      seed: null,
+    };
+  }
 
   const parsed = generateSchema.safeParse({ seed: formData.get("seed") || undefined });
   if (!parsed.success) {

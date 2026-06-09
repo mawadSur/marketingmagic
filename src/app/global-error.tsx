@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { Logo } from "@/components/ui/logo";
 import { Button } from "@/components/ui/button";
 
@@ -13,6 +15,11 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useEffect(() => {
+    // Capture the error to Sentry. Graceful no-op when NEXT_PUBLIC_SENTRY_DSN
+    // is unset — Sentry.captureException is safe to call unconditionally.
+    Sentry.captureException(error);
+  }, [error]);
   return (
     <html lang="en">
       <body className="min-h-screen bg-background font-sans antialiased">

@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import Anthropic from "@anthropic-ai/sdk";
 import { serverEnv } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
@@ -82,6 +83,11 @@ async function handle(req: NextRequest) {
       const result = await processBrief(brief.workspace_id, brief.id, brief.voice_profile as VoiceProfile, since);
       results.push(result);
     } catch (err) {
+      // Capture the error to Sentry so silently-broken crons are visible. Graceful
+      // no-op when SENTRY_DSN is unset.
+      Sentry.captureException(err, {
+        tags: { cron: "voice-evolution", workspace_id: brief.workspace_id },
+      });
       results.push({
         workspaceId: brief.workspace_id,
         status: "failed",
