@@ -3,7 +3,6 @@
 import { z } from "zod";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
-import type { Channel } from "@/lib/db/types";
 import { generateHandleCandidates } from "@/lib/handles/generate";
 import { checkHandleCached, type CachedAvailability } from "@/lib/handles/check";
 import { normalizeHandle, PLATFORM_ORDER } from "@/lib/handles/platforms";
@@ -107,5 +106,3 @@ export async function checkHandleAction(
     return { error: message, rows: [], seed: handle };
   }
 }
-
-export type { Channel };
