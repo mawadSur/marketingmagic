@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseService } from "@/lib/supabase/service";
 import { TIERS, tierFor, hasFounderMode } from "@/lib/billing/tiers";
+import { resolvePlanForWorkspace } from "@/lib/billing/entitlements";
 import { transcriptionConfigured } from "@/lib/sources/transcribe";
 import { RecordClient } from "./record-client";
 
@@ -15,17 +16,10 @@ export const dynamic = "force-dynamic";
 export default async function RecordPage() {
   const ws = await getActiveWorkspaceOrRedirect();
 
-  // Service-role read because the active-workspace cookie path doesn't
-  // include billing columns by default. Same pattern /settings/billing
-  // uses.
-  const svc = supabaseService();
-  const { data: wsRow } = await svc
-    .from("workspaces")
-    .select("plan")
-    .eq("id", ws.id)
-    .maybeSingle();
-
-  const plan = wsRow?.plan ?? "hobby";
+  // EFFECTIVE plan (resolver, not the raw plan column) so the Creator gate also
+  // honours org inheritance + account-level sharing — a Creator subscription on
+  // another workspace this user owns unlocks the recorder here too.
+  const plan = await resolvePlanForWorkspace(ws.id);
   const tier = tierFor(plan);
   const founder = hasFounderMode(plan);
 
@@ -67,6 +61,7 @@ export default async function RecordPage() {
   // Pull retention preference so the client knows whether to surface the
   // "audio will be saved" label vs the "audio is discarded after
   // transcription" label.
+  const svc = supabaseService();
   const { data: brief } = await svc
     .from("brand_briefs")
     .select("audio_retention_opt_in")

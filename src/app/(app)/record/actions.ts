@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseService } from "@/lib/supabase/service";
 import { tierFor } from "@/lib/billing/tiers";
+import { resolvePlanForWorkspace } from "@/lib/billing/entitlements";
 import {
   transcribeAudioRich,
   TranscriptionUnavailableError,
@@ -62,14 +63,10 @@ export async function transcribeRecordingAction(
 
   // Tier gate. /record page also gates on render, but the server action
   // re-checks because the page guard isn't a security boundary — the
-  // action is.
+  // action is. Uses the EFFECTIVE plan (resolver) so account-level sharing /
+  // org inheritance count, not just this workspace's raw plan column.
   const svc = supabaseService();
-  const { data: wsRow } = await svc
-    .from("workspaces")
-    .select("plan")
-    .eq("id", ws.id)
-    .maybeSingle();
-  if (tierFor(wsRow?.plan).id !== "founder") {
+  if (tierFor(await resolvePlanForWorkspace(ws.id)).id !== "founder") {
     return { ok: false, error: "Creator tier required to use voice capture." };
   }
 

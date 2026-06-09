@@ -5,8 +5,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getActiveWorkspaceOrRedirect, getAuthedUserOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
-import { supabaseService } from "@/lib/supabase/service";
 import { tierFor } from "@/lib/billing/tiers";
+import { resolvePlanForWorkspace } from "@/lib/billing/entitlements";
 import { extractFromSource } from "@/lib/sources/extract-claude";
 import type { RawSource } from "@/lib/sources/schema";
 import { generateFromSource } from "@/lib/sources/generate-from-source";
@@ -92,13 +92,9 @@ export async function generateFromVoiceMemoAction(
     };
   }
 
-  const svc = supabaseService();
-  const { data: wsRow } = await svc
-    .from("workspaces")
-    .select("plan")
-    .eq("id", ws.id)
-    .maybeSingle();
-  if (tierFor(wsRow?.plan).id !== "founder") {
+  // EFFECTIVE plan (resolver) so account-level sharing / org inheritance count,
+  // not just this workspace's raw plan column.
+  if (tierFor(await resolvePlanForWorkspace(ws.id)).id !== "founder") {
     return { error: "Creator tier required to use voice capture.", planId: null };
   }
 

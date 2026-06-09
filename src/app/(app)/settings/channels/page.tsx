@@ -3,8 +3,9 @@ import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseService } from "@/lib/supabase/service";
 import { serverEnv } from "@/lib/env";
-import { tierFor, type PlanId } from "@/lib/billing/tiers";
+import { tierFor } from "@/lib/billing/tiers";
 import { overLimitAccountIds } from "@/lib/billing/limits";
+import { resolvePlanForWorkspace } from "@/lib/billing/entitlements";
 import { ChannelBadge, statusBadgeVariant, Badge, statusBadgeLabel } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 
@@ -74,19 +75,17 @@ export default async function ChannelsPage({
   // per-channel deep-link pages still exist for reconnect/advanced flows.)
   const connectedChannels = new Set((accounts ?? []).map((a) => a.channel));
 
-  // Read the plan via service role so we get the billing column even when the
-  // user session client doesn't carry it. The OAuth callbacks ALREADY enforce
-  // the channel quota server-side (see assertWithinChannelQuota in
-  // lib/billing/limits.ts) — this banner is the UX shortcut that explains
-  // *why* connecting more would fail, before the user round-trips through
-  // the provider's consent screen and gets bounced back with ?error=.
+  // Resolve the EFFECTIVE plan (not the raw workspaces.plan column) so the
+  // banner matches what assertWithinChannelQuota actually enforces. This is the
+  // same resolver the OAuth callbacks use, so it accounts for org inheritance
+  // AND account-level sharing (a paid plan on another workspace this user owns
+  // lifts this one) — without it the banner would wrongly say "Free, 1 channel"
+  // on a workspace that's actually covered by the user's subscription. The
+  // banner is the UX shortcut that explains *why* connecting more would fail,
+  // before the user round-trips through the provider's consent screen and gets
+  // bounced back with ?error=.
   const svc = supabaseService();
-  const { data: wsRow } = await svc
-    .from("workspaces")
-    .select("plan")
-    .eq("id", ws.id)
-    .maybeSingle();
-  const plan = (wsRow?.plan as PlanId | undefined) ?? "hobby";
+  const plan = await resolvePlanForWorkspace(ws.id);
   const tier = tierFor(plan);
   const channelLimit = tier.limits.channels;
   const atChannelLimit = channelLimit !== -1 && connectedCount >= channelLimit;
