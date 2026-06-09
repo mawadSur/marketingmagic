@@ -22,6 +22,7 @@ import { getOptimalWindows, nextOptimalSlotIso } from "@/lib/timing/analyze";
 import type { OptimalWindowsResult } from "@/lib/timing/schema";
 import { mptConfigured, byoKeysConfigured, referenceVideoEnabled } from "@/lib/env";
 import { getWorkspaceKeyStatus } from "@/lib/video/byo-keys";
+import { checkRateLimit } from "@/lib/rate-limit";
 import {
   parseVideoOptIns,
   shouldGenerateVideoForPost,
@@ -79,6 +80,18 @@ export async function generatePlanAction(
   formData: FormData,
 ): Promise<GeneratePlanState> {
   const ws = await getActiveWorkspaceOrRedirect();
+
+  // Rate limit per workspace (10 requests per minute). Protects the AI-spend path
+  // from abuse. When Upstash is unconfigured, this is a no-op (allows all).
+  const limit = await checkRateLimit("plan-gen", ws.id, 10, 60_000);
+  if (!limit.ok) {
+    const minutes = Math.max(1, Math.ceil(limit.resetMs / 60_000));
+    return {
+      error: `You're generating plans too quickly. Try again in ~${minutes} minute${minutes === 1 ? "" : "s"}.`,
+      planId: null,
+    };
+  }
+
   const parsed = parseFormData(formData);
   if (!parsed.success) {
     return {

@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { serverEnv, siteUrl } from "@/lib/env";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { youtubeAuthorizeUrl } from "@/lib/social/youtube";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 // Start the YouTube (Google) OAuth 2.0 flow. Mirrors the TikTok initiate route,
 // minus PKCE — Google's web-client flow authenticates the token exchange with
@@ -27,6 +28,16 @@ export async function POST(_req: NextRequest) {
 
   // getActiveWorkspaceOrRedirect handles auth + workspace bootstrap.
   const ws = await getActiveWorkspaceOrRedirect();
+
+  // Rate limit per workspace (20 requests per minute). Prevents OAuth initiate
+  // abuse. When Upstash is unconfigured, this is a no-op (allows all).
+  const limit = await checkRateLimit("oauth-initiate", ws.id, 20, 60_000);
+  if (!limit.ok) {
+    return NextResponse.redirect(
+      new URL("/settings/channels?error=rate_limited", siteUrl()),
+      303,
+    );
+  }
 
   const base = siteUrl();
   const redirectUri = `${base}/api/oauth/youtube/callback`;
