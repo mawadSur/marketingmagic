@@ -22,6 +22,7 @@ import {
   runQuickExperimentAction,
   uploadPostImageAction,
 } from "./actions";
+import { generateVariationsAction } from "@/lib/variations/actions";
 
 // Time helpers — the DB stores scheduled_at as a UTC ISO instant; the user
 // thinks in their own timezone. We render + edit in local time and convert
@@ -142,6 +143,12 @@ export function QueueRow({
   const [expBusy, expStart] = useTransition();
   const [expFlash, setExpFlash] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
 
+  // Hormozi slices #3+#4 — "Generate 30 variations". Own transition so the
+  // (slow) hook×body matrix call doesn't block approve/edit. Flash persists
+  // in-row until the next queue refresh.
+  const [varBusy, varStart] = useTransition();
+  const [varFlash, setVarFlash] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
+
   // "Publish now" — manual override that skips the up-to-5-min wait for the
   // cron tick. Own transition so a (potentially slow) platform call doesn't
   // disable the unrelated approve/edit/reject buttons.
@@ -249,6 +256,25 @@ export function QueueRow({
       setExpFlash({
         kind: "ok",
         msg: "Generated 3 variants. Find them in pending approval.",
+      });
+      router.refresh();
+    });
+  }
+
+  // Spin this post into a hook×body matrix (default 10×3 = 30 filmable
+  // variations), each traced to this post via parent_post_id + a shared
+  // variation_group_id. Drafts land in pending approval for review.
+  function generateVariations() {
+    setVarFlash(null);
+    varStart(async () => {
+      const r = await generateVariationsAction(post.id);
+      if (r.error) {
+        setVarFlash({ kind: "err", msg: r.error });
+        return;
+      }
+      setVarFlash({
+        kind: "ok",
+        msg: `Generated ${r.created} variations. Find them in pending approval.`,
       });
       router.refresh();
     });
@@ -657,6 +683,21 @@ export function QueueRow({
           </Button>
         ) : null}
 
+        {/* Hormozi slices #3+#4 — turn this post into 30 filmable variations,
+            each traced back to it (parent_post_id + variation_group_id). Shown
+            on any pending/scheduled post; the drafts land in pending approval. */}
+        {(isPending || isScheduled) && !editing && !rejecting ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={varBusy}
+            onClick={generateVariations}
+            title="Turn this post into a 10×3 = 30 hook×body matrix of filmable variations. Each lands in pending approval, traced back to this post."
+          >
+            {varBusy ? "Generating 30 variations…" : "Generate 30 variations"}
+          </Button>
+        ) : null}
+
         {post.experiment_status === "variant" ? (
           <Badge variant="info" title="This post belongs to a Quick Experiment.">
             Experiment variant
@@ -678,6 +719,19 @@ export function QueueRow({
             }
           >
             {expFlash.msg}
+          </span>
+        ) : null}
+
+        {varFlash ? (
+          <span
+            className={
+              "text-xs " +
+              (varFlash.kind === "err"
+                ? "text-destructive"
+                : "text-emerald-600 dark:text-emerald-400")
+            }
+          >
+            {varFlash.msg}
           </span>
         ) : null}
 
