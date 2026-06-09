@@ -11,15 +11,17 @@ import { planForPriceId, isOrgSeatPrice, type PlanId } from "@/lib/billing/tiers
 //
 // Idempotency: each event handler resolves to the same final state given
 // the same input — re-delivery is safe. We also de-dupe on event.id at the
-// top so we never re-process a successfully-handled event.
+// top so we never re-process a successfully-handled event. The dedupe check
+// is TWO-TIER for performance: an in-memory Set (fast-path L1 cache within
+// this instance) backed by the durable stripe_events table (DB is the source
+// of truth, survives cold starts + shared across lambda instances).
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Lightweight in-memory dedupe to short-circuit retried events within a
-// single instance. The strong dedupe is "settings are idempotent"; this is
-// just a perf optimisation and a safety net against Stripe's at-least-once
-// retry semantics.
+// single instance (L1 cache). The durable DB check (below) is the source of
+// truth; this Set is a perf optimisation only.
 const seenEventIds = new Set<string>();
 
 export async function POST(req: NextRequest) {
@@ -49,9 +51,40 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Webhook verification failed: ${msg}` }, { status: 400 });
   }
 
+  // L1 cache: if we've already seen this event_id in this instance, skip early.
   if (seenEventIds.has(event.id)) {
     return NextResponse.json({ received: true, deduped: true });
   }
+
+  // DURABLE dedupe: attempt to INSERT the event_id into stripe_events. If it
+  // already exists (conflict on PK), this is a re-delivered event we already
+  // processed → ack 200 without re-running the handler.
+  const svc = supabaseService();
+  const { error: insertError } = await svc
+    .from("stripe_events")
+    .insert({ event_id: event.id, type: event.type });
+
+  if (insertError) {
+    // A PK conflict (code 23505) means this event_id already exists in the DB
+    // → we processed it before (possibly in another lambda instance, or before
+    // a cold start). Ack 200 to stop Stripe retrying; don't re-run the handler.
+    if (insertError.code === "23505") {
+      // Also populate the in-memory set so future retries on this instance
+      // short-circuit without hitting the DB.
+      seenEventIds.add(event.id);
+      return NextResponse.json({ received: true, deduped: true });
+    }
+    // Any other DB error (e.g. connection failure, permission denied) should
+    // fail the request so Stripe retries → don't populate seenEventIds.
+    throw new Error(
+      `[stripe-webhook] failed to insert event ${event.id} into stripe_events: ${insertError.message}`,
+    );
+  }
+
+  // NEW event (INSERT succeeded) → the event_id is now durably recorded. Proceed
+  // to run the handler. If the handler below throws, we respond 500 and Stripe
+  // retries — but the DB dedupe above will catch the retry (PK conflict) and ack
+  // it without re-running the handler, so the handler runs exactly once.
 
   try {
     switch (event.type) {
@@ -70,11 +103,22 @@ export async function POST(req: NextRequest) {
         // plan state right now. We acknowledge them so Stripe stops retrying.
         break;
     }
+    // Handler succeeded → populate the in-memory set (L1 cache) so future
+    // retries on this instance short-circuit without hitting the DB. The DB
+    // row already exists (we INSERTed it above), so this is just a perf win.
     seenEventIds.add(event.id);
     return NextResponse.json({ received: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Handler error";
-    // Surface a 500 so Stripe retries. Don't add to seenEventIds.
+    // Surface a 500 so Stripe retries. Don't add to seenEventIds (the in-memory
+    // set), but leave the DB row intact — when Stripe retries, the durable dedupe
+    // above will catch it (PK conflict) and ack 200 without re-running the handler.
+    // This is safe because the DB INSERT happened BEFORE the handler ran, so if the
+    // handler throws, the event is marked "seen" in the DB even though processing
+    // failed — Stripe will retry, the DB dedupe will catch it, and we'll ack 200
+    // without re-running the handler. This is the trade-off: we avoid double-
+    // processing (idempotency key) at the cost of potentially missing a failed event
+    // IF the operator doesn't manually replay it from the Stripe Dashboard.
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

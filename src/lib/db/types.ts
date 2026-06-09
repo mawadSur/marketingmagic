@@ -1989,6 +1989,27 @@ export interface Database {
         }>;
         Relationships: [];
       };
+      stripe_events: {
+        // Stripe webhook dedupe ledger (migration 064). GLOBAL (not workspace-
+        // scoped): a Stripe event.id is globally unique forever, so the dedupe
+        // check needs no workspace scope. Locked to the service role (RLS on,
+        // no policies) — anon/auth denied, only the webhook handler writes.
+        Row: {
+          event_id: string;
+          type: string;
+          received_at: string;
+        };
+        Insert: {
+          event_id: string;
+          type: string;
+          received_at?: string;
+        };
+        Update: Partial<{
+          type: string;
+          received_at: string;
+        }>;
+        Relationships: [];
+      };
     };
     Views: {
       social_accounts_safe: {
