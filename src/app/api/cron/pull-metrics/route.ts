@@ -15,6 +15,10 @@ import { dispatchMetrics } from "@/lib/social/dispatch";
 //   - instagram : impressions/reach, likes, comments, shares, saves.
 //   - bluesky   : likes, reposts, quotes, replies (no impressions in API).
 //
+// Stored per row in post_metrics: impressions, likes, reposts, replies,
+// clicks, engagement_rate, saves, raw. `saves` is the organic optimization
+// signal (migration 059); IG-only today, NULL on every other channel.
+//
 // Failures on a single post are logged into `results` but do not abort the
 // batch — every channel helper either returns zeros or throws a typed
 // error and the loop swallows it.
@@ -115,6 +119,11 @@ async function handle(req: NextRequest) {
         replies: m.comments,
         clicks: m.clicks,
         engagement_rate,
+        // saves: the primary organic optimization signal (Hormozi slice 1,
+        // migration 059). IG populates UnifiedMetrics.saves; other channels
+        // leave it undefined → null ("channel doesn't report saves"), distinct
+        // from 0 ("reported, none").
+        saves: m.saves ?? null,
         raw: m as unknown as Record<string, number>,
       });
       if (insErr) throw new Error(insErr.message);
