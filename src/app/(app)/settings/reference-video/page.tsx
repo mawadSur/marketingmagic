@@ -75,6 +75,7 @@ export default async function ReferenceVideoPage() {
           did_video: false,
           heygen_video: false,
           higgsfield_video: false,
+          analysis: false,
         }),
     getUsageSnapshot(ws.id),
     supabase

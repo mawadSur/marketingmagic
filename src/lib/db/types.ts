@@ -1902,6 +1902,58 @@ export interface Database {
         }>;
         Relationships: [];
       };
+      video_analysis: {
+        // Hormozi slice 2 (migration 061): one direct-response hook breakdown
+        // per analysed post video. BYO-key + user-chosen model — `provider` +
+        // `model` record which backend produced THIS row (Gemini native-video is
+        // the recommended default). The key lives encrypted in workspace_byo_keys
+        // (provider 'analysis'), NOT here. v1 scope = our-rendered videos only;
+        // `media_storage_path` points at the owned mp4 in post-media-video.
+        Row: {
+          id: string;
+          workspace_id: string;
+          post_id: string | null;
+          media_storage_path: string | null;
+          transcript: string | null;
+          // Structured visual annotation (first-5s elements, pattern interrupts,
+          // on-screen text/captions). Shape owned by the analyze module.
+          visual_breakdown: Json | null;
+          hook_spoken: string | null;
+          hook_visual: string | null;
+          provider: string | null;
+          model: string | null;
+          analyzed_at: string;
+          // Verbatim provider response, kept for re-parsing without re-charging.
+          raw: Json | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          post_id?: string | null;
+          media_storage_path?: string | null;
+          transcript?: string | null;
+          visual_breakdown?: Json | null;
+          hook_spoken?: string | null;
+          hook_visual?: string | null;
+          provider?: string | null;
+          model?: string | null;
+          analyzed_at?: string;
+          raw?: Json | null;
+        };
+        Update: Partial<{
+          media_storage_path: string | null;
+          transcript: string | null;
+          visual_breakdown: Json | null;
+          hook_spoken: string | null;
+          hook_visual: string | null;
+          provider: string | null;
+          model: string | null;
+          analyzed_at: string;
+          raw: Json | null;
+        }>;
+        Relationships: [];
+      };
     };
     Views: {
       social_accounts_safe: {

@@ -9,6 +9,7 @@ import {
   removeWorkspaceKeys,
   type ByoLlmSecrets,
   type ByoPexelsSecrets,
+  type ByoAnalysisSecrets,
 } from "@/lib/video/byo-keys";
 
 export type VideoKeysState = { error: string | null; success: string | null };
@@ -137,7 +138,53 @@ export async function savePexelsKeyAction(
   };
 }
 
-const removeSchema = z.object({ provider: z.enum(["llm", "pexels"]) });
+// Video analysis (Hormozi slice 2) — BYO analysis-provider key + chosen model.
+// `provider` is the model family (only "gemini" is wired today; the input is a
+// closed enum so we never store a family with no backend). `model` is the exact
+// id the analyzer sends.
+const ANALYSIS_PROVIDERS = ["gemini"] as const;
+
+const analysisSchema = z.object({
+  provider: z.enum(ANALYSIS_PROVIDERS),
+  api_key: z.string().trim().min(8, "API key looks too short.").max(400),
+  model: z.string().trim().min(1, "Model name is required.").max(120),
+});
+
+export async function saveAnalysisKeyAction(
+  _prev: VideoKeysState,
+  formData: FormData,
+): Promise<VideoKeysState> {
+  const auth = await guard();
+  if ("error" in auth) return { error: auth.error, success: null };
+
+  const parsed = analysisSchema.safeParse({
+    provider: formData.get("provider"),
+    api_key: formData.get("api_key"),
+    model: formData.get("model"),
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input.", success: null };
+  }
+
+  const secrets: ByoAnalysisSecrets = {
+    provider: parsed.data.provider,
+    api_key: parsed.data.api_key,
+    model: parsed.data.model,
+  };
+  try {
+    await setWorkspaceKeys(auth.workspaceId, "analysis", secrets, auth.userId);
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : "Failed to save analysis key.",
+      success: null,
+    };
+  }
+
+  revalidatePath("/settings/video-keys");
+  return { error: null, success: "Analysis credentials saved." };
+}
+
+const removeSchema = z.object({ provider: z.enum(["llm", "pexels", "analysis"]) });
 
 export async function removeKeyAction(formData: FormData): Promise<void> {
   const auth = await guard();
