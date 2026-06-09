@@ -1008,6 +1008,7 @@ export interface Database {
           replies: number | null;
           clicks: number | null;
           engagement_rate: number | null;
+          saves: number | null;
           raw: Json | null;
         };
         Insert: {
@@ -1020,6 +1021,7 @@ export interface Database {
           replies?: number | null;
           clicks?: number | null;
           engagement_rate?: number | null;
+          saves?: number | null;
           raw?: Json | null;
         };
         Update: Record<string, never>;
