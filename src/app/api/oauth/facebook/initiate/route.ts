@@ -3,6 +3,7 @@ import { serverEnv, siteUrl } from "@/lib/env";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { facebookAuthorizeUrl } from "@/lib/social/facebook";
 import { signOAuthState } from "@/lib/social/oauth-state";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 // Start the Facebook Page OAuth flow. POST-only so prefetches don't trigger
 // a token allocation. Mirrors the X / IG / Threads initiate routes.
@@ -21,6 +22,16 @@ export async function POST(_req: NextRequest) {
     );
   }
   const ws = await getActiveWorkspaceOrRedirect();
+
+  // Rate limit per workspace (20 requests per minute). Prevents OAuth initiate
+  // abuse. When Upstash is unconfigured, this is a no-op (allows all).
+  const limit = await checkRateLimit("oauth-initiate", ws.id, 20, 60_000);
+  if (!limit.ok) {
+    return NextResponse.redirect(
+      new URL("/settings/channels?error=rate_limited", siteUrl()),
+      303,
+    );
+  }
 
   const { state, nonce } = signOAuthState(ws.id);
   const redirectUri = `${siteUrl()}/api/oauth/facebook/callback`;

@@ -3,6 +3,7 @@ import { serverEnv, siteUrl } from "@/lib/env";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { threadsAuthorizeUrl } from "@/lib/social/threads";
 import { signOAuthState } from "@/lib/social/oauth-state";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 // Start the Threads OAuth flow. POST-only; mirrors the X + IG initiate
 // pattern so the listing-page tile can POST here directly.
@@ -22,6 +23,16 @@ export async function POST(_req: NextRequest) {
     );
   }
   const ws = await getActiveWorkspaceOrRedirect();
+
+  // Rate limit per workspace (20 requests per minute). Prevents OAuth initiate
+  // abuse. When Upstash is unconfigured, this is a no-op (allows all).
+  const limit = await checkRateLimit("oauth-initiate", ws.id, 20, 60_000);
+  if (!limit.ok) {
+    return NextResponse.redirect(
+      new URL("/settings/channels?error=rate_limited", siteUrl()),
+      303,
+    );
+  }
 
   const { state, nonce } = signOAuthState(ws.id);
   const redirectUri = `${siteUrl()}/api/oauth/threads/callback`;

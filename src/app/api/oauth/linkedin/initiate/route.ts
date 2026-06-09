@@ -3,6 +3,7 @@ import { serverEnv, siteUrl } from "@/lib/env";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { linkedinAuthorizeUrl } from "@/lib/social/linkedin";
 import { signOAuthState } from "@/lib/social/oauth-state";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 // LinkedIn 3-legged OAuth initiation.
 //
@@ -40,6 +41,17 @@ async function handle() {
   }
 
   const ws = await getActiveWorkspaceOrRedirect();
+
+  // Rate limit per workspace (20 requests per minute). Prevents OAuth initiate
+  // abuse. When Upstash is unconfigured, this is a no-op (allows all).
+  const limit = await checkRateLimit("oauth-initiate", ws.id, 20, 60_000);
+  if (!limit.ok) {
+    return NextResponse.redirect(
+      new URL("/settings/channels?error=rate_limited", base),
+      303,
+    );
+  }
+
   const { state, nonce } = signOAuthState(ws.id);
   const redirectUri = `${base}/api/oauth/linkedin/callback`;
   const authorize = linkedinAuthorizeUrl({ redirectUri, state });
