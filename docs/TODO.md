@@ -62,6 +62,15 @@ without manual restyling.
 
 ## 2. Video marketing strategies — Hormozi-style organic-as-ad + AI feedback loop
 
+> **REVIEWED 2026-06-08** (4-lens CEO/eng/vision/skeptic). Verdict: **build a thin slice,
+> SHELVE the 7-phase loop.** The loop's premise needs ROAS/conversion data we don't have
+> (no ad-platform integration; `post_outcomes` is self-report only; no customers yet).
+> **Reframe "organic-as-ad/ROAS" → "double down on what your audience SAVES and BUYS."**
+> Build now: (1) persist `saves` metric, (2) video analysis/annotation [needs Gemini — Claude
+> has no video input], (3) hook×body variation gen on the atomizer, (4) variation lineage.
+> Kill ad-attribution + multi-strategy abstraction; defer pattern-engine/rubric/synthetic-audience.
+> **Full design + build order: `docs/designs/hormozi-video-strategy-review.md`.**
+
 **What:** Give video generation multiple marketing strategies (not one format). Headline
 strategy to implement: Alex Hormozi's "organic content as paid ad" approach, plus an AI
 feedback loop that learns which content converts and generates optimized variations.
