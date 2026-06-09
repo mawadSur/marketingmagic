@@ -1,8 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
-import crypto from "node:crypto";
 import { serverEnv, siteUrl } from "@/lib/env";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { linkedinAuthorizeUrl } from "@/lib/social/linkedin";
+import { signOAuthState } from "@/lib/social/oauth-state";
 
 // LinkedIn 3-legged OAuth initiation.
 //
@@ -12,8 +12,12 @@ import { linkedinAuthorizeUrl } from "@/lib/social/linkedin";
 // consent screen without first round-tripping through the settings page.
 //
 // Auth + workspace selection are handled by getActiveWorkspaceOrRedirect.
-// The CSRF nonce lives in a short-lived (10 min) httpOnly cookie and is
-// echoed back via the OAuth `state` param — the callback enforces both.
+//
+// CSRF is carried in a SIGNED state param (signOAuthState) so the callback can
+// verify the round-trip WITHOUT a cookie — mobile in-app browsers / strict
+// SameSite handling routinely drop the cookie, which used to 400 the callback
+// ("can't connect LinkedIn on my phone"). The nonce cookie is still set as
+// optional defense-in-depth, but is no longer required.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,8 +40,7 @@ async function handle() {
   }
 
   const ws = await getActiveWorkspaceOrRedirect();
-  const nonce = crypto.randomBytes(16).toString("hex");
-  const state = `${ws.id}:${nonce}`;
+  const { state, nonce } = signOAuthState(ws.id);
   const redirectUri = `${base}/api/oauth/linkedin/callback`;
   const authorize = linkedinAuthorizeUrl({ redirectUri, state });
 

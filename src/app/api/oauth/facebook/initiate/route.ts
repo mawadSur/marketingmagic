@@ -1,11 +1,17 @@
 import { NextResponse, type NextRequest } from "next/server";
-import crypto from "node:crypto";
 import { serverEnv, siteUrl } from "@/lib/env";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { facebookAuthorizeUrl } from "@/lib/social/facebook";
+import { signOAuthState } from "@/lib/social/oauth-state";
 
 // Start the Facebook Page OAuth flow. POST-only so prefetches don't trigger
 // a token allocation. Mirrors the X / IG / Threads initiate routes.
+//
+// CSRF is carried in a SIGNED state param (signOAuthState) so the callback can
+// verify the round-trip WITHOUT a cookie — mobile in-app browsers / the FB app
+// deep-link / strict SameSite handling routinely drop the cookie, which used to
+// 400 the callback ("can't connect Facebook on my phone"). The nonce cookie is
+// still set as optional defense-in-depth, but is no longer required.
 
 export async function POST(_req: NextRequest) {
   const env = serverEnv();
@@ -16,8 +22,7 @@ export async function POST(_req: NextRequest) {
   }
   const ws = await getActiveWorkspaceOrRedirect();
 
-  const nonce = crypto.randomBytes(16).toString("hex");
-  const state = `${ws.id}:${nonce}`;
+  const { state, nonce } = signOAuthState(ws.id);
   const redirectUri = `${siteUrl()}/api/oauth/facebook/callback`;
   const authorizeUrl = facebookAuthorizeUrl({ redirectUri, state });
 

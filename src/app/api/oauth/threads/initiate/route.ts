@@ -1,11 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
-import crypto from "node:crypto";
 import { serverEnv, siteUrl } from "@/lib/env";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { threadsAuthorizeUrl } from "@/lib/social/threads";
+import { signOAuthState } from "@/lib/social/oauth-state";
 
 // Start the Threads OAuth flow. POST-only; mirrors the X + IG initiate
 // pattern so the listing-page tile can POST here directly.
+//
+// CSRF is carried in a SIGNED state param (signOAuthState) so the callback can
+// verify the round-trip WITHOUT a cookie — mobile in-app browsers / the
+// Threads app deep-link / strict SameSite handling routinely drop the cookie,
+// which used to 400 the callback ("can't connect Threads on my phone"). The
+// nonce cookie is still set as optional defense-in-depth, but is no longer
+// required.
 
 export async function POST(_req: NextRequest) {
   const env = serverEnv();
@@ -16,8 +23,7 @@ export async function POST(_req: NextRequest) {
   }
   const ws = await getActiveWorkspaceOrRedirect();
 
-  const nonce = crypto.randomBytes(16).toString("hex");
-  const state = `${ws.id}:${nonce}`;
+  const { state, nonce } = signOAuthState(ws.id);
   const redirectUri = `${siteUrl()}/api/oauth/threads/callback`;
   const authorizeUrl = threadsAuthorizeUrl({ redirectUri, state });
 

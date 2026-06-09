@@ -3,6 +3,7 @@ import { siteUrl } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { threadsExchangeCode, threadsVerify, type ThreadsCredentials } from "@/lib/social/threads";
 import { assertWithinChannelQuota, QuotaExceededError } from "@/lib/billing/limits";
+import { verifyOAuthState } from "@/lib/social/oauth-state";
 
 export async function GET(req: NextRequest) {
   const base = siteUrl();
@@ -15,9 +16,20 @@ export async function GET(req: NextRequest) {
   if (!code || !state) {
     return NextResponse.json({ error: "missing code/state" }, { status: 400 });
   }
-  const [workspaceId, nonce] = state.split(":");
-  if (!workspaceId || !nonce) return NextResponse.json({ error: "bad state" }, { status: 400 });
-  if (req.cookies.get("th_oauth_nonce")?.value !== nonce) {
+
+  // CSRF: the SIGNED state is the real check (cookie-free, so it survives mobile
+  // in-app browsers / the Threads app deep-link that drop the nonce cookie). If
+  // the cookie IS present we additionally require it to match — defense-in-depth
+  // on desktop — but its ABSENCE no longer blocks the connect.
+  const verified = verifyOAuthState(state);
+  if (!verified.ok) {
+    return NextResponse.redirect(
+      new URL(`/settings/channels?error=${encodeURIComponent(`oauth_state_${verified.reason}`)}`, base),
+    );
+  }
+  const workspaceId = verified.workspaceId;
+  const cookieNonce = req.cookies.get("th_oauth_nonce")?.value;
+  if (cookieNonce && cookieNonce !== verified.nonce) {
     return NextResponse.json({ error: "nonce mismatch" }, { status: 400 });
   }
 
