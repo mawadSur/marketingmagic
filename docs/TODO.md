@@ -181,3 +181,33 @@ build it natively on LinkedIn's *official* OAuth API, or a paid B2B data provide
 "integrate OpenOutreach" task. Scope the native/compliant approach; only revisit OpenOutreach
 itself with legal sign-off. **Priority:** P2, needs legal + product review before any build.
 Related: Apollo lead-gen was previously paused (see roadmap.md "NOT in scope").
+
+---
+
+## 5. Facebook Login "Feature unavailable" — revisit Meta app status
+
+**Symptom (seen 2026-06-09, screenshot):** Connecting Facebook shows Meta's interstitial:
+> **Feature unavailable** — Facebook Login is currently unavailable for this app as we are
+> updating additional details for this app. Please try again later.
+
+**What this is:** This is Meta's message, NOT a bug in our code. Our FB OAuth path
+(`src/lib/social/facebook.ts`, Facebook Login *for Business* via `META_FB_LOGIN_CONFIG_ID`)
+is intact. Meta shows this when the app's own configuration is in a blocked state on their
+side, typically one of:
+- App is in **Development mode** (not Live) — Facebook Login is gated to admins/testers/devs only.
+- A pending/incomplete **Business Verification** or **App Review** for the requested permissions.
+- An in-progress **app settings edit** Meta hasn't finished propagating ("updating additional
+  details").
+- A Login-for-Business **configuration** (the config_id) that's incomplete or unpublished.
+
+**Revisit steps (operator, in developers.facebook.com → our app):**
+1. Check **App Mode** (Development vs Live). If Development, Facebook Login only works for app
+   roles — flip to Live once review is done, or add the affected user as a Tester.
+2. Check **App Review / Business Verification** status for the FB permissions we request.
+3. Open the **Facebook Login for Business → Configurations** and confirm the config tied to
+   `META_FB_LOGIN_CONFIG_ID` is published + has the right permissions/assets.
+4. Confirm no half-saved settings edit is pending in **App Settings**.
+5. Re-test the connect flow once Meta clears the state.
+
+**Priority:** P2 — external (Meta-side) gate, not a code fix. Related: the historical
+FB OAuth 500 fix + Meta App Review strategy notes in auto-memory.
