@@ -1,16 +1,19 @@
 import { NextResponse, type NextRequest } from "next/server";
-import crypto from "node:crypto";
 import { serverEnv, siteUrl } from "@/lib/env";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { instagramAuthorizeUrl } from "@/lib/social/instagram";
+import { signOAuthState } from "@/lib/social/oauth-state";
 
 // Start the Instagram (Instagram Login) OAuth flow. POST-only so a stray GET
 // or prefetch can't trigger a token-allocation flow. Mirrors the X initiate
 // pattern so the listing-page tile can POST here directly, instead of having
 // to go through the per-channel page first.
 //
-// Stashes a CSRF nonce in an httpOnly cookie before redirecting to IG so the
-// callback can verify the round-trip is the same one we issued.
+// CSRF is carried in a SIGNED state param (signOAuthState) so the callback can
+// verify the round-trip WITHOUT a cookie — mobile in-app browsers / the IG app
+// deep-link / strict SameSite handling routinely drop the cookie, which used to
+// 400 the callback ("can't connect Instagram on my phone"). The nonce cookie is
+// still set as optional defense-in-depth, but is no longer required.
 
 export async function POST(_req: NextRequest) {
   const env = serverEnv();
@@ -22,8 +25,7 @@ export async function POST(_req: NextRequest) {
   // getActiveWorkspaceOrRedirect handles auth + workspace bootstrap.
   const ws = await getActiveWorkspaceOrRedirect();
 
-  const nonce = crypto.randomBytes(16).toString("hex");
-  const state = `${ws.id}:${nonce}`;
+  const { state, nonce } = signOAuthState(ws.id);
   const redirectUri = `${siteUrl()}/api/oauth/instagram/callback`;
   const authorizeUrl = instagramAuthorizeUrl({ redirectUri, state });
 
