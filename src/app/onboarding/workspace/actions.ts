@@ -7,6 +7,7 @@ import { supabaseService } from "@/lib/supabase/service";
 import { slugify } from "@/lib/slug";
 import { setActiveWorkspaceCookie } from "@/lib/workspace";
 import { attributeWorkspaceCreation } from "@/lib/growth/referrals";
+import { resolveWorkspaceCreationGate } from "@/lib/billing/entitlements";
 
 export type CreateWorkspaceState = { error: string | null };
 
@@ -24,6 +25,19 @@ export async function createWorkspaceAction(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { error: "You must be signed in." };
+
+  // Paywall (security boundary — the /workspaces/new UI also gates, but this is
+  // the real enforcement). The Free plan includes ONE workspace: a brand-new
+  // user gets their first free, but an additional workspace needs a paid plan
+  // (or an org). resolveWorkspaceCreationGate runs service-role so the count +
+  // plan read aren't narrowed by RLS.
+  const gate = await resolveWorkspaceCreationGate(user.id, supabaseService());
+  if (!gate.allowed) {
+    return {
+      error:
+        "The Free plan includes one workspace. Upgrade to a paid plan to create more — Settings → Billing.",
+    };
+  }
 
   const baseSlug = slugify(parsed.data.name) || "workspace";
   const slug = await uniqueSlug(baseSlug);

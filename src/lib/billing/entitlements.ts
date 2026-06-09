@@ -186,6 +186,74 @@ function planRank(plan: PlanId): number {
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// Workspace-creation gate (paywall): how many workspaces can this account have?
+// ─────────────────────────────────────────────────────────────
+//
+// Policy: the Free (hobby) plan includes exactly ONE workspace. A user gets
+// their first workspace free (onboarding); creating ADDITIONAL workspaces
+// requires a paid entitlement. This pairs with account-level sharing
+// (resolveEntitlement) — one paid subscription both COVERS all your workspaces
+// AND is what lets you create more than one in the first place. Org owners /
+// members are always allowed (the agency tier is explicitly multi-workspace).
+//
+// "Paid" here means an actively-paying owned workspace OR org membership — the
+// same active-status policy as everywhere else (subscriptionPlanIsActive).
+export interface WorkspaceCreationGate {
+  // True → the create form is allowed. False → show the paywall.
+  allowed: boolean;
+  // Why it's allowed/blocked, so the UI + action can branch + explain.
+  reason: "first_workspace" | "paid_plan" | "organization" | "free_plan_limit";
+  // How many workspaces the user already owns (solo + org-owned).
+  ownedCount: number;
+}
+
+// Resolve whether `ownerId` may create ANOTHER workspace. Service-role read so
+// it sees plan/subscription columns regardless of the caller's session, and so
+// the count isn't narrowed by RLS. Exported + testable in isolation.
+export async function resolveWorkspaceCreationGate(
+  ownerId: string,
+  svc: ReturnType<typeof supabaseService> = supabaseService(),
+): Promise<WorkspaceCreationGate> {
+  // All workspaces this user OWNS (solo + any they own under an org). We gate on
+  // ownership, not membership: an agency staffer added to someone else's org
+  // creates clients through the org flow, not this one.
+  const { data: owned } = await svc
+    .from("workspaces")
+    .select("plan, subscription_status, organization_id")
+    .eq("owner_id", ownerId);
+
+  const ownedCount = owned?.length ?? 0;
+
+  // First workspace is always free — this is the onboarding path for a brand-new
+  // user (zero workspaces). Never paywall someone out of having any workspace.
+  if (ownedCount === 0) {
+    return { allowed: true, reason: "first_workspace", ownedCount };
+  }
+
+  // Owning (or belonging to) an organization means the agency tier, which is
+  // explicitly multi-workspace — always allowed to add more.
+  const { count: orgCount } = await svc
+    .from("organizations")
+    .select("id", { count: "exact", head: true })
+    .eq("owner_id", ownerId);
+  if ((orgCount ?? 0) > 0) {
+    return { allowed: true, reason: "organization", ownedCount };
+  }
+
+  // Otherwise: allowed only if the account has at least one actively-paying
+  // solo workspace. A free (or lapsed) account is capped at its existing
+  // workspace(s) and must upgrade to add another.
+  const hasPaid = (owned ?? []).some((w) => {
+    const plan = (w.plan as PlanId | undefined) ?? "hobby";
+    return plan !== "hobby" && subscriptionPlanIsActive(w.subscription_status);
+  });
+
+  return hasPaid
+    ? { allowed: true, reason: "paid_plan", ownedCount }
+    : { allowed: false, reason: "free_plan_limit", ownedCount };
+}
+
 // Stripe subscription statuses that still entitle a subscriber (solo workspace
 // OR an org and its inherited clients) to its paid plan. Shared by both the
 // solo and org branches above so the paying-state policy lives in ONE place.

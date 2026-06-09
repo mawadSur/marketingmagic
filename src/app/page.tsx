@@ -12,6 +12,7 @@ import {
   Repeat,
 } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
+import { TIERS, aiCreditsLabel, type PlanId } from "@/lib/billing/tiers";
 
 // Deterministic sparkle field for the hero. Positions/sizes/timing are fixed
 // (no Math.random) so SSR and client markup match — no hydration mismatch and
@@ -136,6 +137,36 @@ const PROOF = [
   },
 ] as const;
 
+// Pricing teaser ladder (Free → Agency). The full breakdown lives on /pricing;
+// this is the at-a-glance row that answers "what does it cost?" before the
+// final CTA. "Creator" (founder) is the highlighted middle tier.
+const PRICING_ORDER: PlanId[] = ["hobby", "pro", "founder", "agency"];
+const PRICING_HIGHLIGHT: PlanId = "founder";
+
+// Objection-handling FAQ. Native <details> accordion — accessible + zero JS.
+const FAQS = [
+  {
+    q: "How is this different from a scheduler like Buffer or Hootsuite?",
+    a: "Schedulers post and forget. marketingmagic measures every post, ranks the content themes that actually earn engagement for your audience, and feeds the winners back into next week's plan. The calendar gets smarter on its own.",
+  },
+  {
+    q: "Will it post without my approval?",
+    a: "Only if you let it. Everything is approve-and-go by default. You can opt specific themes into auto-posting once they've proven out — and turn that off any time. Automatic when you want it, never when you don't.",
+  },
+  {
+    q: "Which channels are supported?",
+    a: "X, LinkedIn, Instagram, Threads, Facebook, Bluesky, TikTok, and YouTube — all from one queue. Connect the ones you use; the plan adapts to each channel's format.",
+  },
+  {
+    q: "Do I need my own AI keys for video?",
+    a: "Short-form video uses a bring-your-own-key model, so there's no surprise metering on our side — you control the spend. AI writing and images are included in your plan.",
+  },
+  {
+    q: "Can I try it before paying?",
+    a: "Yes. The Free plan is free forever (one channel, ten posts a month), and you can preview a full week of on-brand content in about 30 seconds with no signup at all.",
+  },
+] as const;
+
 export default function HomePage() {
   return (
     <main className="flex min-h-dvh flex-col">
@@ -150,6 +181,12 @@ export default function HomePage() {
             <Logo variant="full" size="sm" />
           </Link>
           <div className="flex items-center gap-1 sm:gap-2">
+            <Link
+              href="/pricing"
+              className="inline-flex h-9 items-center rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              Pricing
+            </Link>
             <Link
               href="/login"
               className="inline-flex h-9 items-center rounded-md px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
@@ -193,49 +230,56 @@ export default function HomePage() {
             />
           ))}
         </div>
-        <div className="container flex flex-col items-center gap-7 py-20 text-center sm:py-28">
-          <div className="badge-glow inline-flex items-center gap-2 rounded-full border bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground backdrop-blur">
-            <Sparkles className="h-3.5 w-3.5" style={{ color: "hsl(var(--brand-grad-start))" }} aria-hidden />
-            A growth engine, not another scheduler
+        <div className="container grid items-center gap-12 py-20 sm:py-28 lg:grid-cols-[1.05fr_0.95fr] lg:gap-10">
+          {/* Left: copy + CTAs + proof. Centered on mobile, left-aligned at lg. */}
+          <div className="flex flex-col items-center gap-7 text-center lg:items-start lg:text-left">
+            <div className="badge-glow inline-flex items-center gap-2 rounded-full border bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground backdrop-blur">
+              <Sparkles className="h-3.5 w-3.5" style={{ color: "hsl(var(--brand-grad-start))" }} aria-hidden />
+              A growth engine, not another scheduler
+            </div>
+
+            <h1 className="max-w-4xl text-balance text-4xl font-bold leading-[1.05] tracking-tight sm:text-6xl">
+              Stop scheduling posts.{" "}
+              <span className="brand-gradient-text">Start compounding</span> what works.
+            </h1>
+
+            <p className="max-w-xl text-pretty text-base text-muted-foreground sm:text-lg">
+              marketingmagic drafts on-brand posts, ships AI short-form video, and learns which
+              themes actually drive engagement — then doubles down. You just approve.
+            </p>
+
+            <div className="flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">
+              <Link
+                href="/start"
+                className="btn-magic inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-primary px-6 text-sm font-medium text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:opacity-95 hover:shadow-xl hover:shadow-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:w-auto"
+              >
+                See a preview plan — 30s, no signup
+                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
+              </Link>
+              <Link
+                href="/signup"
+                className="inline-flex h-12 w-full items-center justify-center rounded-md border border-input px-6 text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:w-auto"
+              >
+                Sign up free
+              </Link>
+            </div>
+            <p className="text-xs text-muted-foreground">No credit card required.</p>
+
+            {/* Proof strip */}
+            <dl className="mt-6 grid w-full max-w-lg grid-cols-3 gap-4">
+              {HERO_STATS.map((s) => (
+                <div key={s.label} className="flex flex-col items-center gap-1 lg:items-start">
+                  <dt className="sr-only">{s.label}</dt>
+                  <dd className="text-3xl font-bold tabular-nums brand-gradient-text">{s.value}</dd>
+                  <p className="text-xs text-muted-foreground">{s.label}</p>
+                </div>
+              ))}
+            </dl>
           </div>
 
-          <h1 className="max-w-4xl text-balance text-4xl font-bold leading-[1.05] tracking-tight sm:text-6xl">
-            Stop scheduling posts.{" "}
-            <span className="brand-gradient-text">Start compounding</span> what works.
-          </h1>
-
-          <p className="max-w-xl text-pretty text-base text-muted-foreground sm:text-lg">
-            marketingmagic drafts on-brand posts, ships AI short-form video, and learns which
-            themes actually drive engagement — then doubles down. You just approve.
-          </p>
-
-          <div className="flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">
-            <Link
-              href="/start"
-              className="btn-magic inline-flex h-12 w-full items-center justify-center gap-2 rounded-md bg-primary px-6 text-sm font-medium text-primary-foreground shadow-lg shadow-primary/20 transition-all hover:opacity-95 hover:shadow-xl hover:shadow-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:w-auto"
-            >
-              See a preview plan — 30s, no signup
-              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
-            </Link>
-            <Link
-              href="/signup"
-              className="inline-flex h-12 w-full items-center justify-center rounded-md border border-input px-6 text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:w-auto"
-            >
-              Sign up free
-            </Link>
-          </div>
-          <p className="text-xs text-muted-foreground">No credit card required.</p>
-
-          {/* Proof strip */}
-          <dl className="mt-6 grid w-full max-w-lg grid-cols-3 gap-4">
-            {HERO_STATS.map((s) => (
-              <div key={s.label} className="flex flex-col items-center gap-1">
-                <dt className="sr-only">{s.label}</dt>
-                <dd className="text-3xl font-bold tabular-nums brand-gradient-text">{s.value}</dd>
-                <p className="text-xs text-muted-foreground">{s.label}</p>
-              </div>
-            ))}
-          </dl>
+          {/* Right: floating product mock — "this week's plan", the loop made
+              tangible in the hero. Decorative; the real proof board is below. */}
+          <HeroMock />
         </div>
       </section>
 
@@ -363,7 +407,7 @@ export default function HomePage() {
             {PILLARS.map(({ icon: Icon, eyebrow, title, body }) => (
               <div
                 key={title}
-                className="reveal card-hover group rounded-2xl border bg-card p-7 text-left transition-transform hover:-translate-y-1"
+                className="reveal spotlight-card card-hover group rounded-2xl border bg-card p-7 text-left transition-transform hover:-translate-y-1"
               >
                 <span
                   className="flex h-11 w-11 items-center justify-center rounded-xl transition-transform duration-200 group-hover:scale-105"
@@ -508,6 +552,97 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* ─── Pricing teaser ──────────────────────────────────────────────── */}
+      <section className="border-b bg-muted/20">
+        <div className="container py-20 sm:py-28">
+          <div className="reveal mx-auto max-w-2xl text-center">
+            <p className="label-eyebrow">Pricing</p>
+            <h2 className="mt-2 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
+              Start free. Upgrade when it&apos;s working.
+            </h2>
+            <p className="mt-3 text-pretty text-muted-foreground">
+              Unlimited AI writing on every paid plan, plus AI images and short-form video. One
+              subscription covers all your workspaces.
+            </p>
+          </div>
+
+          <div className="reveal mx-auto mt-12 grid max-w-5xl gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {PRICING_ORDER.map((id) => {
+              const tier = TIERS[id];
+              const highlighted = id === PRICING_HIGHLIGHT;
+              const credits = aiCreditsLabel(id);
+              return (
+                <div
+                  key={id}
+                  className={
+                    "relative flex flex-col rounded-2xl border bg-card p-6 " +
+                    (highlighted ? "gradient-border shadow-lg" : "")
+                  }
+                >
+                  {highlighted ? (
+                    <span className="brand-gradient absolute -top-3 left-1/2 -translate-x-1/2 rounded-full px-3 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                      Most popular
+                    </span>
+                  ) : null}
+                  <h3 className="text-sm font-semibold">{tier.name}</h3>
+                  <div className="mt-1 flex items-baseline gap-1">
+                    <span className="text-2xl font-bold tabular-nums">${tier.priceMonthly}</span>
+                    <span className="text-xs text-muted-foreground">/mo</span>
+                  </div>
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    {tier.limits.channels === -1
+                      ? "Unlimited channels"
+                      : `${tier.limits.channels} channel${tier.limits.channels === 1 ? "" : "s"}`}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {tier.limits.postsPerMonth === -1 ? "Unlimited AI writing" : `${tier.limits.postsPerMonth} posts / mo`}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {credits === "0" ? "No AI media" : `${credits} AI credits / mo`}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="reveal mt-8 flex justify-center">
+            <Link
+              href="/pricing"
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-input px-6 text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              Compare all plans
+              <ArrowRight className="h-4 w-4" aria-hidden />
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* ─── FAQ ─────────────────────────────────────────────────────────── */}
+      <section className="border-b">
+        <div className="container py-20 sm:py-28">
+          <div className="mx-auto max-w-2xl text-center">
+            <p className="label-eyebrow">Questions</p>
+            <h2 className="mt-2 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
+              Everything you might be wondering.
+            </h2>
+          </div>
+          <div className="mx-auto mt-12 max-w-3xl divide-y rounded-2xl border bg-card">
+            {FAQS.map((f) => (
+              <details key={f.q} className="group px-6 [&_summary::-webkit-details-marker]:hidden">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 py-5 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+                  {f.q}
+                  <ArrowRight
+                    className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-90"
+                    aria-hidden
+                  />
+                </summary>
+                <p className="pb-5 text-sm leading-relaxed text-muted-foreground">{f.a}</p>
+              </details>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ─── Final CTA ───────────────────────────────────────────────────── */}
       <section className="relative overflow-hidden">
         <div aria-hidden className="brand-glow pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-[420px] rotate-180" />
@@ -568,6 +703,9 @@ export default function HomePage() {
         <div className="container flex flex-col items-center justify-between gap-4 py-8 text-sm text-muted-foreground sm:flex-row">
           <Logo variant="full" size="sm" className="text-foreground" />
           <div className="flex items-center gap-5">
+            <Link href="/pricing" className="transition-colors hover:text-foreground">
+              Pricing
+            </Link>
             <Link href="/privacy" className="transition-colors hover:text-foreground">
               Privacy
             </Link>
@@ -585,5 +723,97 @@ export default function HomePage() {
         </div>
       </footer>
     </main>
+  );
+}
+
+// Hero product mock — a floating "this week's plan" card. Decorative (aria-hidden):
+// it's a stylised preview of the approval queue, not real data. The float-card +
+// gradient-border classes give it the bob + glowing edge; reduced-motion holds it
+// still. Sits on the right of the hero at lg, stacks under the copy on mobile.
+const MOCK_QUEUE = [
+  { channel: "LinkedIn", theme: "Behind-the-scenes", time: "Tue · 9:00", tone: "leading" },
+  { channel: "X", theme: "Customer win", time: "Tue · 1:30", tone: "ok" },
+  { channel: "Instagram", theme: "Short-form video", time: "Wed · 11:00", tone: "video" },
+] as const;
+
+function HeroMock() {
+  return (
+    <div aria-hidden className="relative mx-auto w-full max-w-md lg:mx-0">
+      {/* Soft brand halo behind the card. */}
+      <div className="pointer-events-none absolute -inset-6 -z-10 rounded-[2rem] bg-[radial-gradient(60%_60%_at_50%_30%,hsl(var(--brand-grad-start)/0.22),transparent_70%)] blur-xl" />
+
+      <div className="float-card gradient-border rounded-2xl border bg-card/90 p-5 shadow-2xl shadow-primary/10 backdrop-blur">
+        {/* Window chrome */}
+        <div className="mb-4 flex items-center gap-2">
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-full bg-foreground/15" />
+            <span className="h-2.5 w-2.5 rounded-full bg-foreground/15" />
+            <span className="h-2.5 w-2.5 rounded-full bg-foreground/15" />
+          </span>
+          <span className="ml-1 text-xs font-medium text-muted-foreground">This week&apos;s plan</span>
+          <span className="brand-gradient ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+            Auto-tuned
+          </span>
+        </div>
+
+        {/* Queue rows */}
+        <ul className="space-y-2.5">
+          {MOCK_QUEUE.map((row) => (
+            <li
+              key={row.channel}
+              className="flex items-center gap-3 rounded-xl border bg-background/60 p-3"
+            >
+              <span
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-bold"
+                style={{
+                  backgroundColor: "hsl(var(--brand-grad-start) / 0.1)",
+                  color: "hsl(var(--brand-grad-start))",
+                }}
+              >
+                {row.channel.slice(0, 2)}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1.5 text-sm font-medium">
+                  {row.theme}
+                  {row.tone === "leading" ? (
+                    <span className="brand-gradient rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-white">
+                      Leading
+                    </span>
+                  ) : null}
+                  {row.tone === "video" ? (
+                    <Clapperboard className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                  ) : null}
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  {row.channel} · {row.time}
+                </span>
+              </span>
+              <CheckCircle2
+                className="h-5 w-5 shrink-0"
+                style={{ color: "hsl(var(--positive))" }}
+                aria-hidden
+              />
+            </li>
+          ))}
+        </ul>
+
+        {/* Footer stat */}
+        <div className="mt-4 flex items-center justify-between rounded-xl bg-muted/40 px-3 py-2.5">
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <TrendingUp className="h-3.5 w-3.5" style={{ color: "hsl(var(--brand-grad-start))" }} aria-hidden />
+            Engagement vs last week
+          </span>
+          <span className="text-sm font-semibold tabular-nums" style={{ color: "hsl(var(--positive))" }}>
+            +27%
+          </span>
+        </div>
+      </div>
+
+      {/* Floating accent chip, lower-left, breaking the card edge for depth. */}
+      <div className="absolute -bottom-4 -left-4 hidden items-center gap-2 rounded-xl border bg-card px-3 py-2 shadow-lg sm:flex">
+        <Trophy className="h-4 w-4" style={{ color: "hsl(var(--brand-grad-start))" }} aria-hidden />
+        <span className="text-xs font-medium">3 themes winning</span>
+      </div>
+    </div>
   );
 }

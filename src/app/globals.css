@@ -279,6 +279,76 @@
       transparent
     );
   }
+
+  /* Animated brand gradient BORDER — for the "most popular" pricing tier + any
+     surface that should feel premium. The element gets a transparent border and
+     a conic brand gradient painted into the border-box only (border-box origin,
+     padding-box clip masked out). The slow spin reads as a soft glowing edge.
+     Compositor-friendly (background-position/rotation only); held still under
+     reduced-motion below. */
+  .gradient-border {
+    position: relative;
+    isolation: isolate;
+  }
+  .gradient-border::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    padding: 1.5px;
+    border-radius: inherit;
+    background: conic-gradient(
+      from var(--angle, 0deg),
+      hsl(var(--brand-grad-start)),
+      hsl(var(--brand-grad-end)),
+      hsl(280 90% 72%),
+      hsl(var(--brand-grad-start))
+    );
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    animation: border-spin 6s linear infinite;
+    z-index: -1;
+  }
+
+  /* Pointer-following spotlight glow on cards. JS sets --mx/--my (cursor x/y in
+     %); a radial highlight tracks the cursor. Pure paint, no layout. Falls back
+     to a static centered glow if JS never sets the vars. */
+  .spotlight-card {
+    position: relative;
+    isolation: isolate;
+  }
+  .spotlight-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(
+      18rem 18rem at var(--mx, 50%) var(--my, 0%),
+      hsl(var(--brand-grad-start) / 0.14),
+      transparent 60%
+    );
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    z-index: -1;
+  }
+  .spotlight-card:hover::before {
+    opacity: 1;
+  }
+
+  /* Gently floating product mock in the hero — a slow vertical bob + a fixed 3D
+     tilt that lifts on hover. Transform-only. Reduced-motion stops the bob and
+     flattens the tilt below. */
+  .float-card {
+    animation: float-bob 7s ease-in-out infinite;
+    transform: perspective(1200px) rotateX(6deg) rotateY(-7deg);
+    transition: transform 0.4s ease;
+    will-change: transform;
+  }
+  .float-card:hover {
+    transform: perspective(1200px) rotateX(2deg) rotateY(-2deg) translateY(-4px);
+  }
 }
 
 /* ─── Magic keyframes ──────────────────────────────────────────────────── */
@@ -309,6 +379,21 @@
 @keyframes reveal-up {
   from { opacity: 0; transform: translateY(28px); }
   to { opacity: 1; transform: translateY(0); }
+}
+/* Registered custom property so the conic gradient's start angle is animatable
+   (plain custom props don't interpolate). Progressive-enhancement: browsers
+   without @property still render a static gradient border. */
+@property --angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+@keyframes border-spin {
+  to { --angle: 360deg; }
+}
+@keyframes float-bob {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -10px; }
 }
 
 /* Animate the headline gradient + hero glow drift only when motion is welcome.
@@ -362,6 +447,16 @@
   .reveal {
     animation: none;
     opacity: 1;
+    transform: none;
+  }
+
+  /* New magic primitives: hold the gradient border still (still visible, just
+     not spinning), stop the hero card's bob and flatten its tilt. */
+  .gradient-border::before {
+    animation: none;
+  }
+  .float-card {
+    animation: none;
     transform: none;
   }
 }
