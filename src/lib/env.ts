@@ -208,12 +208,24 @@ const serverSchema = z.object({
     .string()
     .min(1)
     .default("https://generativelanguage.googleapis.com/v1beta"),
+  // Sentry error monitoring. Optional so the app boots without error tracking;
+  // when unset, Sentry init is a no-op. Server-side DSN (SENTRY_DSN) is private;
+  // client-side DSN (NEXT_PUBLIC_SENTRY_DSN) is public but project-access is
+  // allowlisted. Both optional — graceful-degrade mirrors FAL_API_KEY / RESEND_API_KEY.
+  SENTRY_DSN: z.preprocess(v => (v === "" ? undefined : v), z.string().url().optional()),
+  // Upstash rate limiting. Optional so the app boots without Upstash; when unset,
+  // the rate-limit helper is a no-op (logs once, allows). Redis URL + token are
+  // required for the distributed rate limiter to work; without them the AI-spend
+  // routes fall back to "allow all" with a warning log.
+  UPSTASH_REDIS_REST_URL: z.preprocess(v => (v === "" ? undefined : v), z.string().url().optional()),
+  UPSTASH_REDIS_REST_TOKEN: z.preprocess(v => (v === "" ? undefined : v), z.string().min(8).optional()),
 });
 
-const publicSchema = serverSchema.pick({
-  NEXT_PUBLIC_SUPABASE_URL: true,
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: true,
-  NEXT_PUBLIC_SITE_URL: true,
+const publicSchema = z.object({
+  NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
+  NEXT_PUBLIC_SITE_URL: z.preprocess(v => (v === "" ? undefined : v), z.string().url().optional()),
+  NEXT_PUBLIC_SENTRY_DSN: z.preprocess(v => (v === "" ? undefined : v), z.string().url().optional()),
 });
 
 type ServerEnv = z.infer<typeof serverSchema>;

@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect } from "react";
+import * as Sentry from "@sentry/nextjs";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
@@ -13,6 +15,11 @@ export default function AppError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  useEffect(() => {
+    // Capture the error to Sentry. Graceful no-op when NEXT_PUBLIC_SENTRY_DSN
+    // is unset — Sentry.captureException is safe to call unconditionally.
+    Sentry.captureException(error);
+  }, [error]);
   return (
     <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed bg-muted/20 px-6 py-16 text-center">
       <div className="space-y-1">

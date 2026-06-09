@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { serverEnv, mptConfigured, referenceVideoEnabled } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import {
@@ -164,6 +165,11 @@ async function handle(req: NextRequest) {
       results.push({ id: job.id, status: "ready" });
     } catch (err) {
       const reason = err instanceof Error ? err.message : "unknown error";
+      // Capture the error to Sentry so silently-broken crons are visible. Graceful
+      // no-op when SENTRY_DSN is unset.
+      Sentry.captureException(err, {
+        tags: { cron: "poll-video-jobs", job_id: job.id },
+      });
       // Transport hiccup (e.g. MPT briefly unreachable) — record but don't
       // hard-fail the job; the next tick retries. We only mark `failed` on
       // explicit MPT FAILED state above.

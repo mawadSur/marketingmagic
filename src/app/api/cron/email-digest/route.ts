@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import { serverEnv, siteUrl } from "@/lib/env";
 import { supabaseService } from "@/lib/supabase/service";
 import { signLinkToken } from "@/lib/email/sign";
@@ -151,7 +152,11 @@ async function handle(req: NextRequest) {
     try {
       neglectedThemes = await findNeglectedThemes(ws.id);
     } catch (err) {
-      // Detection failure is non-fatal — keep shipping the digest.
+      // Detection failure is non-fatal — keep shipping the digest. Capture to Sentry
+      // so we know when this breaks. Graceful no-op when SENTRY_DSN is unset.
+      Sentry.captureException(err, {
+        tags: { cron: "email-digest", workspace_id: ws.id, phase: "neglected-themes" },
+      });
       console.warn(`Neglected-theme detection failed for ${ws.id}:`, err);
     }
     result.neglectedThemesCount = neglectedThemes.length;
@@ -286,6 +291,11 @@ async function handle(req: NextRequest) {
         sentCount += 1;
       }
     } catch (err) {
+      // Capture the error to Sentry so silently-broken crons are visible. Graceful
+      // no-op when SENTRY_DSN is unset.
+      Sentry.captureException(err, {
+        tags: { cron: "email-digest", workspace_id: ws.id, phase: "send" },
+      });
       result.status = "failed";
       result.reason = err instanceof Error ? err.message : "fetch failed";
     }
