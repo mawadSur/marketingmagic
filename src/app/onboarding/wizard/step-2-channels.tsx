@@ -1,10 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, ExternalLink, Sparkles } from "lucide-react";
+import { CheckCircle2, ExternalLink, Sparkles, Link2, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import { HandleFinder } from "../handles/handle-finder";
 
 interface ChannelOption {
   slug: "facebook" | "bluesky" | "threads" | "x" | "linkedin" | "instagram";
@@ -62,6 +65,12 @@ const CHANNELS: ChannelOption[] = [
   },
 ];
 
+// The two ways a new user can answer "where do you want to post?": connect an
+// account they already have, or — if they don't have one yet — find + claim a
+// brandable handle first. A founder mid-launch often has SOME but not all, so
+// the toggle lets them flip between the two freely without leaving the step.
+type Mode = "connect" | "find";
+
 interface Step2Props {
   connectedChannels: string[];
   /** From `?connected=<slug>` after a successful OAuth round-trip. */
@@ -69,20 +78,30 @@ interface Step2Props {
 }
 
 /**
- * Step 2: a card grid of the supported channels, ready-to-publish ones first
- * so a new user hits a guaranteed win (Facebook/Bluesky/Threads/X) before the
- * setup-gated one (Instagram). Coming-soon channels (LinkedIn, awaiting its
- * Community Management API review) render as disabled cards — never a live
- * connect — so the wizard doesn't dead-end on a provider error, matching
- * settings/channels. Each connectable card links to that channel's existing
- * settings page. Connection state is read from the DB (passed in by the server
- * page), so connecting via any flow — OAuth, X paste, Bluesky app password —
- * lights up the right card on return.
+ * Step 2: connect channels — or find handles for the ones you don't have yet.
+ *
+ * A segmented toggle switches between two inline views:
+ *   • "I have accounts" → the channel card grid (ready-to-publish first, so a
+ *     new user hits a guaranteed win). Coming-soon channels render disabled.
+ *   • "Find me handles" → the handle finder mounts INLINE (no page jump), so a
+ *     user who isn't on a platform yet can claim a free username and come back.
+ *
+ * Connection state is read from the DB (passed in by the server page), so
+ * connecting via any flow — OAuth, X paste, Bluesky app password — lights up the
+ * right card on return. We default to whichever view fits: a brand-new user with
+ * zero connections lands on "Find me handles"; everyone else on "Connect".
  */
 export function Step2Channels({ connectedChannels, justConnected }: Step2Props) {
   const router = useRouter();
   const connected = new Set(connectedChannels);
   const hasAny = connected.size > 0;
+  // Brand-new user (no connections, didn't just connect one) → lead with the
+  // handle finder, since they likely need accounts before they can connect.
+  const [mode, setMode] = useState<Mode>(hasAny || justConnected ? "connect" : "find");
+
+  // Connectable (non-coming-soon) channels, for the "X of N connected" hint.
+  const connectableTotal = CHANNELS.filter((c) => !c.comingSoon).length;
+  const connectedCount = CHANNELS.filter((c) => !c.comingSoon && connected.has(c.slug)).length;
 
   return (
     <div className="space-y-6">
@@ -96,21 +115,126 @@ export function Step2Channels({ connectedChannels, justConnected }: Step2Props) 
         </div>
       ) : null}
 
-      {/* New users may not have accounts yet — route them to the handle finder
-          to pick a brandable username + claim it everywhere before connecting. */}
-      <Link
-        href="/onboarding/handles"
-        className="flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm transition-colors hover:bg-primary/10"
-      >
-        <Sparkles className="h-5 w-5 shrink-0 text-primary" aria-hidden />
-        <span className="flex-1">
-          <span className="font-medium">Don&apos;t have accounts yet?</span>{" "}
-          <span className="text-muted-foreground">
-            Find a handle that&apos;s free across every platform — and claim it in one click.
-          </span>
-        </span>
-        <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-      </Link>
+      {/* Segmented toggle: connect what you have vs. find what you're missing. */}
+      <div className="space-y-2">
+        <div
+          className="mx-auto grid w-full max-w-md grid-cols-2 gap-1 rounded-xl border bg-muted/40 p-1"
+          role="tablist"
+          aria-label="Connect an account or find a new handle"
+        >
+          <SegmentButton
+            active={mode === "connect"}
+            onClick={() => setMode("connect")}
+            icon={Link2}
+          >
+            I have accounts
+          </SegmentButton>
+          <SegmentButton
+            active={mode === "find"}
+            onClick={() => setMode("find")}
+            icon={Sparkles}
+            accent
+          >
+            Find me handles
+          </SegmentButton>
+        </div>
+        <p className="text-center text-xs text-muted-foreground">
+          {mode === "connect"
+            ? "Connect the accounts you already have."
+            : "Not on a platform yet? Claim a name that's free everywhere — then come back to connect."}
+        </p>
+      </div>
+
+      {mode === "connect" ? (
+        <ConnectGrid
+          connected={connected}
+          connectedCount={connectedCount}
+          connectableTotal={connectableTotal}
+          onFindHandles={() => setMode("find")}
+        />
+      ) : (
+        <FindHandlesPanel onDone={() => setMode("connect")} />
+      )}
+
+      {mode === "connect" ? (
+        <div className="flex flex-col items-center gap-2 pt-2">
+          <Button
+            type="button"
+            size="lg"
+            className="w-full sm:w-auto sm:min-w-[260px]"
+            disabled={!hasAny}
+            onClick={() => router.push("/onboarding/wizard?step=3")}
+          >
+            {hasAny ? "Continue to plan" : "Connect at least one channel"}
+          </Button>
+          {!hasAny ? (
+            <p className="text-xs text-muted-foreground">
+              We need somewhere to post. You can always add more later.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SegmentButton({
+  active,
+  onClick,
+  icon: Icon,
+  accent,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: typeof Link2;
+  // The "find" tab gets a brand-tinted icon so the discovery path draws the eye.
+  accent?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-150",
+        active
+          ? "bg-background text-foreground shadow-sm ring-1 ring-border"
+          : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      <Icon
+        className={cn("h-4 w-4", accent ? "text-primary" : undefined)}
+        aria-hidden
+      />
+      {children}
+    </button>
+  );
+}
+
+function ConnectGrid({
+  connected,
+  connectedCount,
+  connectableTotal,
+  onFindHandles,
+}: {
+  connected: Set<string>;
+  connectedCount: number;
+  connectableTotal: number;
+  onFindHandles: () => void;
+}) {
+  return (
+    <div className="space-y-3">
+      {connectedCount > 0 ? (
+        <p className="text-xs text-muted-foreground">
+          <span className="font-medium text-emerald-600 dark:text-emerald-400">
+            {connectedCount} of {connectableTotal}
+          </span>{" "}
+          connected.
+        </p>
+      ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2">
         {CHANNELS.map((c) => {
@@ -175,21 +299,63 @@ export function Step2Channels({ connectedChannels, justConnected }: Step2Props) 
         })}
       </div>
 
+      {/* Gentle nudge for the user who's missing a platform — flips to the
+          finder without leaving the step. */}
+      <button
+        type="button"
+        onClick={onFindHandles}
+        className="flex w-full items-center gap-3 rounded-lg border border-dashed border-primary/30 bg-primary/[0.03] px-4 py-3 text-left text-sm transition-colors hover:bg-primary/[0.07]"
+      >
+        <Sparkles className="h-5 w-5 shrink-0 text-primary" aria-hidden />
+        <span className="flex-1">
+          <span className="font-medium">Missing one?</span>{" "}
+          <span className="text-muted-foreground">
+            Find a handle that&apos;s free across every platform — and claim it in one click.
+          </span>
+        </span>
+        <ArrowRight className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+      </button>
+    </div>
+  );
+}
+
+function FindHandlesPanel({ onDone }: { onDone: () => void }) {
+  return (
+    <div className="space-y-6">
+      {/* Brand-gradient intro band — makes the discovery path feel like a first-
+          class part of the wizard, not a detour. */}
+      <div className="overflow-hidden rounded-2xl border">
+        <div className="brand-gradient px-5 py-4 text-white">
+          <div className="flex items-start gap-3">
+            <Sparkles className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <div className="space-y-1">
+              <p className="text-sm font-semibold">One name, everywhere you post.</p>
+              <p className="text-xs text-white/85">
+                We&apos;ll suggest brandable usernames from your brief and show where each one is
+                still free. Already on a few platforms? Just claim the ones you&apos;re missing.
+              </p>
+            </div>
+          </div>
+        </div>
+        <div className="bg-card p-5">
+          <HandleFinder />
+        </div>
+      </div>
+
       <div className="flex flex-col items-center gap-2 pt-2">
         <Button
           type="button"
           size="lg"
+          variant="outline"
           className="w-full sm:w-auto sm:min-w-[260px]"
-          disabled={!hasAny}
-          onClick={() => router.push("/onboarding/wizard?step=3")}
+          onClick={onDone}
         >
-          {hasAny ? "Continue to plan" : "Connect at least one channel"}
+          <Link2 className="mr-1.5 h-4 w-4" aria-hidden />
+          I&apos;ve got my accounts — connect them
         </Button>
-        {!hasAny ? (
-          <p className="text-xs text-muted-foreground">
-            We need somewhere to post. You can always add more later.
-          </p>
-        ) : null}
+        <p className="text-xs text-muted-foreground">
+          Claimed your handles? Sign up on each platform, then connect them here.
+        </p>
       </div>
     </div>
   );
