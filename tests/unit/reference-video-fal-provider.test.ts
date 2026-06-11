@@ -81,6 +81,26 @@ describe("poll status mapping", () => {
     expect(res.status).toBe("processing");
   });
 
+  it("polls the APP namespace, NOT the full versioned model path (regression: 405)", async () => {
+    // Model is "fal-ai/test-model/image-to-video"; the requests/* endpoints live
+    // under the app namespace "fal-ai/test-model". Polling the full path 405s.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ status: "IN_QUEUE" }));
+    await provider.poll("req-1", KEY);
+    const [statusUrl] = fetchMock.mock.calls[0];
+    expect(statusUrl).toBe("https://queue.fal.run/fal-ai/test-model/requests/req-1/status");
+    expect(statusUrl).not.toContain("/image-to-video/requests/");
+  });
+
+  it("fetches the result from the APP namespace, NOT the full versioned path", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ status: "COMPLETED" }))
+      .mockResolvedValueOnce(jsonResponse({ video: { url: "https://cdn.fal/out.mp4" } }));
+    await provider.poll("req-1", KEY);
+    const [resultUrl] = fetchMock.mock.calls[1];
+    expect(resultUrl).toBe("https://queue.fal.run/fal-ai/test-model/requests/req-1");
+    expect(resultUrl).not.toContain("/image-to-video/requests/");
+  });
+
   it("maps IN_PROGRESS → processing", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ status: "IN_PROGRESS" }));
     const res = await provider.poll("req-1", KEY);

@@ -10,10 +10,16 @@
 // Queue API shape (https://fal.ai/models/.../image-to-video/api):
 //   submit:  POST  https://queue.fal.run/{model}
 //              { image_url, prompt, duration, aspect_ratio } → { request_id }
-//   poll:    GET   https://queue.fal.run/{model}/requests/{id}/status
+//   poll:    GET   https://queue.fal.run/{app}/requests/{id}/status
 //              → { status: IN_QUEUE | IN_PROGRESS | COMPLETED }
-//   result:  GET   https://queue.fal.run/{model}/requests/{id}
+//   result:  GET   https://queue.fal.run/{app}/requests/{id}
 //              → { video: { url } }
+//
+// CRITICAL: submit uses the FULL versioned {model} path, but the requests/*
+// endpoints live under the model's APP namespace {app} (owner + app = first two
+// path segments, e.g. fal-ai/kling-video), NOT the full path. Polling the full
+// versioned path returns 405. The {app} form is exactly what fal echoes back in
+// the submit response's status_url/response_url. See requestsBase() below.
 //
 // The model id is NOT hardcoded — it comes from REFERENCE_VIDEO_FAL_MODEL via
 // referenceVideoFalModel() so the deployment picks the tier/model.
@@ -107,6 +113,21 @@ export class FalReferenceVideoProvider implements ReferenceVideoProvider {
     return `${QUEUE_BASE}/${referenceVideoFalModel()}`;
   }
 
+  // Base URL for the queue requests/* endpoints (status + result). fal serves
+  // these under the model's APP namespace — owner + app, the first TWO path
+  // segments — NOT the full versioned model path used for submit. Polling the
+  // full path 405s. This derivation yields the same host+path fal returns in the
+  // submit response's status_url/response_url for fal-ai models, so we stay
+  // within the existing (id-only) poll contract without threading those URLs
+  // through the shared provider interface.
+  private requestsBase(): string {
+    const segments = referenceVideoFalModel().split("/").filter(Boolean);
+    // owner/app (e.g. "fal-ai/kling-video"); fall back to the whole id if it has
+    // fewer than two segments (defensive — the env default always has more).
+    const app = segments.slice(0, 2).join("/") || segments.join("/");
+    return `${QUEUE_BASE}/${app}`;
+  }
+
   private authHeaders(apiKey: string): Record<string, string> {
     // Identical auth header to src/lib/images/fal.ts (Authorization: Key <key>).
     return {
@@ -155,7 +176,7 @@ export class FalReferenceVideoProvider implements ReferenceVideoProvider {
   // GET the queue status. Maps IN_QUEUE/IN_PROGRESS → processing, COMPLETED →
   // ready (fetching the result URL), and any error/moderation signal → failed.
   async poll(providerJobId: string, apiKey: string): Promise<ReferenceVideoPoll> {
-    const statusUrl = `${this.endpoint()}/requests/${providerJobId}/status`;
+    const statusUrl = `${this.requestsBase()}/requests/${providerJobId}/status`;
     const res = await fetch(statusUrl, { headers: this.authHeaders(apiKey) });
 
     if (!res.ok) {
@@ -208,7 +229,7 @@ export class FalReferenceVideoProvider implements ReferenceVideoProvider {
   // GET the result envelope and dig out the mp4 URL. Separate so poll() stays
   // readable; called only on COMPLETED.
   private async fetchResultUrl(providerJobId: string, apiKey: string): Promise<string | null> {
-    const resultUrl = `${this.endpoint()}/requests/${providerJobId}`;
+    const resultUrl = `${this.requestsBase()}/requests/${providerJobId}`;
     const res = await fetch(resultUrl, { headers: this.authHeaders(apiKey) });
     if (!res.ok) return null;
     const body = (await res.json()) as FalResultResponse;
