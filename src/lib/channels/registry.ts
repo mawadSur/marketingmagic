@@ -195,13 +195,18 @@ export const CHANNELS: Record<ChannelId, ChannelSpec> = {
     supportsImages: false,
     supportsVideo: true,
     recommendedWindows: [
-      // No Sprout YouTube dataset; use afternoon/early-evening windows that
-      // track YouTube's published "best time to publish" guidance (audiences
-      // watch after school/work, Thu-Sun lean for Shorts).
-      { weekday: 4, ranges: [["14:00", "16:00"]] },
-      { weekday: 5, ranges: [["12:00", "15:00"], ["18:00", "20:00"]] },
-      { weekday: 6, ranges: [["09:00", "11:00"], ["15:00", "18:00"]] },
-      { weekday: 7, ranges: [["09:00", "11:00"], ["15:00", "18:00"]] },
+      // Buffer 2025 (1.8M videos) + SocialPilot 2026 (301K videos). YouTube
+      // long-form peaks mornings/early-afternoon while Shorts peak late
+      // afternoon→evening — we publish both, so these windows span the blend.
+      // Friday afternoon→evening is the standout (Fri 4pm = best Shorts slot),
+      // Thu evening is strong, and weekend mornings carry long-form. ISO
+      // weekday: 1=Mon … 7=Sun.
+      { weekday: 2, ranges: [["09:00", "11:00"], ["14:00", "16:00"]] }, // Tue
+      { weekday: 3, ranges: [["14:00", "17:00"]] },                     // Wed
+      { weekday: 4, ranges: [["14:00", "16:00"], ["18:00", "20:00"]] }, // Thu
+      { weekday: 5, ranges: [["12:00", "14:00"], ["16:00", "19:00"]] }, // Fri
+      { weekday: 6, ranges: [["09:00", "11:00"], ["15:00", "18:00"]] }, // Sat
+      { weekday: 7, ranges: [["09:00", "11:00"], ["15:00", "17:00"]] }, // Sun
     ],
     // Google OAuth 2.0 (youtube.upload scope). We standardise on the YOUTUBE_
     // prefix (YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET) rather than GOOGLE_ so

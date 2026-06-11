@@ -83,6 +83,35 @@ const BLUESKY_BASELINE: BaselineMap = {
   0: { 10: 0.009, 12: 0.010, 14: 0.010 },
 };
 
+// YouTube
+// Buffer 2025 (1.8M videos) + SocialPilot 2026 (301K videos). YouTube is the
+// odd one out: long-form and Shorts have ALMOST OPPOSITE peaks — long-form wins
+// in the mornings/early-afternoon (Sun 10am is the single best long-form slot),
+// Shorts win in the late afternoon/evening (Fri 4-7pm is the single best Shorts
+// slot, with Thu evening close behind). We publish BOTH formats, so this prior
+// blends the two humps: a weekday midday→afternoon ridge, a strong Fri→Sat→Thu
+// late-afternoon/evening lift for Shorts, and good weekend-morning windows for
+// long-form. Early mornings (pre-8am) and late nights (post-10pm) are weak in
+// both datasets. hourBucket = START of the 2-hour window.
+const YOUTUBE_BASELINE: BaselineMap = {
+  // Sun — long-form's best day; mornings peak (Sun 10am = #1 long-form), with a
+  // softer Shorts lift in the early evening.
+  0: { 6: 0.014, 8: 0.030, 10: 0.042, 12: 0.034, 14: 0.024, 16: 0.022, 18: 0.030, 20: 0.022 },
+  // Mon — weakest day for Shorts; only the long-form morning + 2-4pm hold up.
+  1: { 6: 0.016, 8: 0.024, 10: 0.024, 12: 0.022, 14: 0.024, 16: 0.020, 18: 0.022, 20: 0.024, 22: 0.016 },
+  // Tue — long-form 9-11am + 2-4pm; Shorts climb into the evening.
+  2: { 6: 0.018, 8: 0.030, 10: 0.032, 12: 0.026, 14: 0.028, 16: 0.024, 18: 0.028, 20: 0.030 },
+  // Wed — strong afternoon ridge (long-form 3-5pm overlaps Shorts 3-6pm).
+  3: { 6: 0.018, 8: 0.022, 10: 0.024, 12: 0.030, 14: 0.034, 16: 0.034, 18: 0.030, 20: 0.026 },
+  // Thu — top-3 Shorts day; evening is the story (7-9pm), afternoon long-form solid.
+  4: { 6: 0.016, 8: 0.020, 10: 0.022, 12: 0.024, 14: 0.030, 16: 0.032, 18: 0.040, 20: 0.036, 22: 0.022 },
+  // Fri — THE standout: Fri 4pm is the single best Shorts slot across both
+  // datasets, with midday long-form right behind. The week's highest cells.
+  5: { 6: 0.016, 8: 0.024, 10: 0.030, 12: 0.034, 14: 0.034, 16: 0.044, 18: 0.040, 20: 0.024 },
+  // Sat — long-form mornings + a broad Shorts afternoon/early-evening plateau.
+  6: { 6: 0.014, 8: 0.028, 10: 0.032, 12: 0.030, 14: 0.028, 16: 0.030, 18: 0.030, 20: 0.020 },
+};
+
 // Facebook (registered in types but not in CHANNELS yet; included for parity
 // in case it lands — defaults to a Threads-like prior).
 const FACEBOOK_BASELINE: BaselineMap = THREADS_BASELINE;
@@ -94,6 +123,7 @@ const BASELINES: Record<string, BaselineMap> = {
   instagram: INSTAGRAM_BASELINE,
   bluesky: BLUESKY_BASELINE,
   facebook: FACEBOOK_BASELINE,
+  youtube: YOUTUBE_BASELINE,
 };
 
 export function baselineRate(channel: string, dayOfWeek: number, hourBucket: number): number {
@@ -133,4 +163,6 @@ export const BASELINE_SOURCES = {
   instagram: "Later 2023 + Hootsuite 2024 (Tue-Fri 10am + 6-8pm).",
   bluesky: "No public study; modelled as X with weaker evenings (early-adopter tech audience).",
   facebook: "Reused Threads heuristic (Meta surface, similar conversational pattern).",
+  youtube:
+    "Buffer 2025 (1.8M videos) + SocialPilot 2026 (301K videos). Blends long-form (morning/early-afternoon, Sun 10am peak) with Shorts (late-afternoon/evening, Fri 4-7pm + Thu evening peak); weak pre-8am and post-10pm.",
 } as const;
