@@ -486,6 +486,8 @@ export function planUserPrompt(inputs: PlanGenInputs): string {
     rejectionNote,
     retryNote,
     "",
+    "Keep `overview` to a tight 2-3 sentences — it MUST be 800 characters or fewer.",
+    "For every variant either write real `text`, OR set `skip: true` with a one-line `rationale`. Never leave a variant with empty text and skip unset.",
     "Call the submit_plan tool with the full plan. Do not respond with prose.",
   ]
     .filter(Boolean)

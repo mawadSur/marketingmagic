@@ -12,6 +12,7 @@ import {
   Repeat,
 } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
+import { ExplainerVideo } from "@/components/explainer-video";
 import { TIERS, aiCreditsLabel, type PlanId } from "@/lib/billing/tiers";
 
 // Deterministic sparkle field for the hero. Positions/sizes/timing are fixed
@@ -114,8 +115,20 @@ const CHANNELS = [
   "YouTube",
 ] as const;
 
-// Illustrative social proof. Replace `quote` blocks with real testimonials as
-// they come in; structure is ready for them.
+// Aggregate stat band — CAPABILITY framing, not fabricated customer counts (no
+// real customers yet, so no "10,000 users"). Each is a true property of the
+// product. Tune the copy, not into a false metric.
+const SOCIAL_STATS = [
+  { value: "8", label: "channels, one queue" },
+  { value: "∞", label: "AI writing on paid plans" },
+  { value: "1-tap", label: "approve or auto-post" },
+  { value: "30s", label: "to a preview plan" },
+] as const;
+
+// Illustrative social proof. There are no real customers yet, so these are
+// CLEARLY illustrative (generic roles, no fabricated names/companies/logos) and
+// the section carries an "early access" note. Replace `quote` blocks with real,
+// attributed testimonials as they come in; structure is ready for them.
 const PROOF = [
   {
     quote:
@@ -134,6 +147,24 @@ const PROOF = [
       "Generating the short-form video in the same place I plan posts saved me an entire tool and a freelancer.",
     name: "Solo creator",
     role: "Newsletter + social",
+  },
+  {
+    quote:
+      "I went from a blank calendar every Monday to a full week drafted in my voice. I just skim and approve over coffee.",
+    name: "Agency owner",
+    role: "Social-first studio",
+  },
+  {
+    quote:
+      "One handle, one queue, eight platforms. The format adapts per channel so I'm not rewriting the same post five times.",
+    name: "Community lead",
+    role: "Developer tool",
+  },
+  {
+    quote:
+      "The weekly 'what we learned and changed' digest is the part I didn't know I needed. It's like a strategist that never sleeps.",
+    name: "Indie maker",
+    role: "Bootstrapped SaaS",
   },
 ] as const;
 
@@ -519,18 +550,73 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ─── Social proof ────────────────────────────────────────────────── */}
+      {/* ─── See how it works (explainer video) ──────────────────────────── */}
+      <section className="border-b">
+        <div className="container py-20 sm:py-28">
+          <div className="reveal mx-auto max-w-2xl text-center">
+            <p className="label-eyebrow">See it in action</p>
+            <h2 className="mt-2 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
+              Watch a week of content build itself.
+            </h2>
+            <p className="mt-3 text-pretty text-muted-foreground">
+              A short walkthrough: describe your brand once, get a full plan, approve what you
+              like — and watch the loop double down on what works.
+            </p>
+          </div>
+          <div className="reveal mt-12">
+            {/* No video source yet → renders a branded "coming soon" poster.
+                Drop an mp4 in /public and pass src="/explainer.mp4" (or an
+                embedUrl), plus a poster, when the clip is ready — nothing else
+                changes. */}
+            <ExplainerVideo title="How marketingmagic works" />
+          </div>
+        </div>
+      </section>
+
+      {/* ─── Social proof: stats + trust strip + testimonials ────────────── */}
       <section className="border-b">
         <div className="container py-20 sm:py-28">
           <div className="mx-auto max-w-2xl text-center">
-            <p className="label-eyebrow">In their words</p>
+            <p className="label-eyebrow">Why teams pick it</p>
             <h2 className="mt-2 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
               Built for people who&apos;d rather grow than post.
             </h2>
           </div>
-          <div className="mt-12 grid gap-5 lg:grid-cols-3">
+
+          {/* Aggregate stat band — product-truthful framing (capabilities, not
+              fabricated customer counts). */}
+          <dl className="reveal mx-auto mt-12 grid max-w-4xl grid-cols-2 gap-6 rounded-2xl border bg-card p-8 sm:grid-cols-4">
+            {SOCIAL_STATS.map((s) => (
+              <div key={s.label} className="text-center">
+                <dt className="sr-only">{s.label}</dt>
+                <dd className="text-3xl font-bold tabular-nums brand-gradient-text">{s.value}</dd>
+                <p className="mt-1 text-xs text-muted-foreground">{s.label}</p>
+              </div>
+            ))}
+          </dl>
+
+          {/* Trust strip — the channels it works with. Honest "works with", not
+              "trusted by". */}
+          <div className="reveal mt-10 text-center">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Plans and publishes to
+            </p>
+            <ul className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
+              {CHANNELS.map((c) => (
+                <li
+                  key={c}
+                  className="rounded-full border bg-background px-3.5 py-1.5 text-sm font-medium text-foreground/80"
+                >
+                  {c}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Testimonials. Illustrative until real ones land (see PROOF note). */}
+          <div className="mt-14 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
             {PROOF.map((p) => (
-              <figure key={p.name + p.role} className="flex flex-col rounded-2xl border bg-card p-7">
+              <figure key={p.name + p.role} className="reveal flex flex-col rounded-2xl border bg-card p-7">
                 <blockquote className="text-sm leading-relaxed text-foreground/90">
                   “{p.quote}”
                 </blockquote>
@@ -549,6 +635,12 @@ export default function HomePage() {
               </figure>
             ))}
           </div>
+
+          {/* Honest pre-launch note — we don't fake "10,000 users". */}
+          <p className="mx-auto mt-8 max-w-xl text-center text-xs text-muted-foreground">
+            Early access — these reflect the workflows marketingmagic is built for. Real customer
+            stories land here as they come in.
+          </p>
         </div>
       </section>
 
@@ -640,6 +732,26 @@ export default function HomePage() {
               </details>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* ─── Founder note / credibility ──────────────────────────────────── */}
+      <section className="border-b bg-muted/20">
+        <div className="reveal container max-w-3xl py-20 text-center sm:py-24">
+          <span className="brand-gradient mx-auto flex h-12 w-12 items-center justify-center rounded-2xl text-white">
+            <Sparkles className="h-6 w-6" aria-hidden />
+          </span>
+          <h2 className="mt-5 text-balance text-2xl font-semibold tracking-tight sm:text-3xl">
+            Why we built this
+          </h2>
+          <p className="mt-4 text-pretty text-base leading-relaxed text-muted-foreground">
+            Most social tools stop at scheduling — they post and forget. We kept watching good
+            content get buried next to guesses, with no system to tell them apart. marketingmagic
+            is the loop we wanted: it drafts in your voice, ships across eight channels, measures
+            what each post actually earns, and pours your time into the themes that prove out. You
+            stay in control of every post; it just stops you from repeating what doesn&apos;t work.
+          </p>
+          <p className="mt-6 text-sm font-medium">— The marketingmagic team</p>
         </div>
       </section>
 

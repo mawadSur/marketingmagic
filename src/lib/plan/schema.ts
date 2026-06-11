@@ -107,3 +107,68 @@ export type PlanVariant = z.infer<typeof planVariantSchema>;
 export type PlanIdea = z.infer<typeof planIdeaSchema>;
 export type PlanPost = z.infer<typeof planPostSchema>;
 export type GeneratedPlan = z.infer<typeof planSchema>;
+
+// The hard cap on the plan overview (mirrors planSchema.overview).
+const OVERVIEW_MAX = 800;
+
+// ─────────────────────────────────────────────────────────────
+// repairPlanInput — coerce RECOVERABLE model slips before validation.
+// ─────────────────────────────────────────────────────────────
+//
+// The generator forces a tool call, but the model can still return output that
+// trips two recoverable schema rules — and rejecting an otherwise-good plan over
+// them is a bad experience (the user sees "Plan validation failed" and loses the
+// whole generation). We normalise those two cases here, BEFORE safeParse, so the
+// schema stays strict for genuinely-broken output but tolerant of these slips:
+//
+//   1. overview longer than the 800-char cap → truncate (trim + ellipsis). A
+//      slightly-long summary should never nuke a plan.
+//   2. a variant with skip!==true AND empty/whitespace text → mark skip:true.
+//      The schema's own intent (see planVariantSchema) is that an unfillable
+//      channel is a SKIP, not an error; the model just forgot to set the flag.
+//      A skipped variant needs no text, so this is loss-free.
+//
+// Pure + defensive: takes the raw tool input (unknown), returns a new object,
+// never throws. Anything it can't understand is passed through untouched so the
+// schema still catches truly-malformed input. Exported for direct unit testing.
+export function repairPlanInput(input: unknown): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const plan = { ...(input as Record<string, unknown>) };
+
+  // 1. Overview over the cap → truncate to fit (reserve room for the ellipsis).
+  if (typeof plan.overview === "string" && plan.overview.length > OVERVIEW_MAX) {
+    plan.overview = `${plan.overview.slice(0, OVERVIEW_MAX - 1).trimEnd()}…`;
+  }
+
+  // 2. Non-skipped variants with empty text → coerce skip:true.
+  if (Array.isArray(plan.ideas)) {
+    plan.ideas = plan.ideas.map((idea) => {
+      if (!idea || typeof idea !== "object" || Array.isArray(idea)) return idea;
+      const i = idea as Record<string, unknown>;
+      if (!Array.isArray(i.variants)) return idea;
+      return {
+        ...i,
+        variants: i.variants.map((variant) => {
+          if (!variant || typeof variant !== "object" || Array.isArray(variant)) return variant;
+          const v = variant as Record<string, unknown>;
+          const hasText = typeof v.text === "string" && v.text.trim().length > 0;
+          if (v.skip !== true && !hasText) {
+            return {
+              ...v,
+              skip: true,
+              // Give the skip a reason if the model left none, so the row still
+              // satisfies the schema's `rationale` requirement + reads sensibly.
+              rationale:
+                typeof v.rationale === "string" && v.rationale.trim().length > 0
+                  ? v.rationale
+                  : "Skipped — no copy was generated for this channel.",
+            };
+          }
+          return variant;
+        }),
+      };
+    });
+  }
+
+  return plan;
+}

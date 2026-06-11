@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { serverEnv } from "@/lib/env";
-import { planSchema, type GeneratedPlan } from "@/lib/plan/schema";
+import { planSchema, repairPlanInput, type GeneratedPlan } from "@/lib/plan/schema";
 import { planSystemPrompt, planUserPrompt, type PlanGenInputs } from "@/lib/plan/prompt";
 import { ENABLED_CHANNELS } from "@/lib/channels/registry";
 
@@ -164,7 +164,10 @@ export async function generatePlan(inputs: PlanGenInputs): Promise<PlanGenResult
     throw new Error("Claude did not call submit_plan.");
   }
 
-  const parsed = planSchema.safeParse(toolUse.input);
+  // Coerce recoverable model slips (over-long overview, non-skipped-but-empty
+  // variants) before validating, so a good plan isn't rejected over them. The
+  // schema stays strict for anything genuinely broken. See repairPlanInput.
+  const parsed = planSchema.safeParse(repairPlanInput(toolUse.input));
   if (!parsed.success) {
     throw new Error(
       `Plan validation failed: ${parsed.error.issues
