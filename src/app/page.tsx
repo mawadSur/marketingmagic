@@ -464,6 +464,27 @@ export default function HomePage() {
       <section className="border-b">
         <div className="container py-20 sm:py-28">
           <div className="reveal brand-gradient relative flex flex-col items-center gap-6 overflow-hidden rounded-3xl border px-6 py-14 text-center text-white sm:px-12">
+            {/* Cinematic background loop (generated with FAL/Kling, on-brand
+                indigo→violet light ribbons). Muted + looping + playsInline so it
+                autoplays everywhere without sound. The brand-gradient on the panel
+                is the base layer + instant fallback (and the poster), so there's
+                no black flash before the video decodes and no CLS. Hidden under
+                prefers-reduced-motion → those users keep the static gradient. */}
+            <video
+              aria-hidden
+              className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-60 mix-blend-screen motion-reduce:hidden"
+              autoPlay
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              poster="/explainer-seed.jpg"
+            >
+              <source src="/explainer-loop.mp4" type="video/mp4" />
+            </video>
+            {/* Scrim: keep the white headline/body legible over the moving video
+                (contrast can't rely on a single frame). */}
+            <div aria-hidden className="pointer-events-none absolute inset-0 bg-black/25" />
             <span
               aria-hidden
               className="pointer-events-none absolute -right-10 -top-10 h-48 w-48 rounded-full bg-white/10 blur-2xl"
@@ -497,19 +518,19 @@ export default function HomePage() {
                 />
               ))}
             </div>
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15 backdrop-blur">
+            <span className="relative z-10 flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15 backdrop-blur">
               <Clapperboard className="h-6 w-6" aria-hidden />
             </span>
-            <h2 className="max-w-xl text-balance text-2xl font-semibold tracking-tight sm:text-3xl">
+            <h2 className="relative z-10 max-w-xl text-balance text-2xl font-semibold tracking-tight sm:text-3xl">
               Short-form video, generated and published in the same place.
             </h2>
-            <p className="max-w-lg text-pretty text-sm text-white/85 sm:text-base">
+            <p className="relative z-10 max-w-lg text-pretty text-sm text-white/90 sm:text-base">
               Turn a topic into a captioned short with your own keys — then send it to every
               channel through the same approve-and-go flow as your posts.
             </p>
             <Link
               href="/signup"
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-md bg-white px-6 text-sm font-medium text-foreground transition-transform hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+              className="relative z-10 inline-flex h-11 items-center justify-center gap-2 rounded-md bg-white px-6 text-sm font-medium text-foreground transition-transform hover:scale-[1.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
             >
               Try it free
               <ArrowRight className="h-4 w-4" aria-hidden />
