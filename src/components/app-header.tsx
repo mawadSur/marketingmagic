@@ -27,6 +27,7 @@ const nav = [
   { href: "/video", label: "Video" },
   { href: "/inbox", label: "Inbox" },
   { href: "/analytics", label: "Analytics" },
+  { href: "/handles", label: "Handles" },
   { href: "/settings", label: "Settings" },
 ];
 

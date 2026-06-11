@@ -16,7 +16,7 @@
 
 import { supabaseService } from "@/lib/supabase/service";
 import type { Channel } from "@/lib/db/types";
-import { PLATFORMS } from "./platforms";
+import { PLATFORMS, probeIsReliable } from "./platforms";
 import {
   checkHandleAvailability,
   type AvailabilityStatus,
@@ -83,14 +83,18 @@ export async function checkHandleCached(
   }
   const probedByPlatform = new Map(probed.map((p) => [p.platform, p]));
 
-  // 5. Merge cache + fresh, preserving the requested platform order.
+  // 5. Merge cache + fresh, preserving the requested platform order. `reliable`
+  // is derived from the platform's probe kind (not stored — it's a pure function
+  // of the platform), so cached rows get the correct flag too.
   return platforms.map((platform): CachedAvailability => {
+    const reliable = probeIsReliable(PLATFORMS[platform].probeKind);
     const hit = cacheByPlatform.get(platform);
     if (hit) {
       return {
         platform,
         status: hit.status,
         source: hit.source as PlatformAvailability["source"],
+        reliable,
         cached: true,
         checkedAt: hit.checked_at,
       };
@@ -99,7 +103,8 @@ export async function checkHandleCached(
     return {
       platform,
       status: fresh?.status ?? "unknown",
-      source: fresh?.source ?? "http",
+      source: fresh?.source ?? "cloaked",
+      reliable,
       cached: false,
       checkedAt: nowIso,
     };

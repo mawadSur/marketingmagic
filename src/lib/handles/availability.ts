@@ -24,18 +24,28 @@
 // on top. Pure: handle + platforms in, statuses out. Tests stub global fetch.
 
 import type { Channel } from "@/lib/db/types";
-import { PLATFORMS, isValidForPlatform, normalizeHandle } from "./platforms";
+import { PLATFORMS, isValidForPlatform, normalizeHandle, probeIsReliable } from "./platforms";
 
 export type AvailabilityStatus = "available" | "taken" | "unknown" | "invalid";
 
 export interface PlatformAvailability {
   platform: Channel;
   status: AvailabilityStatus;
-  // 'bluesky' (authoritative) | 'http' (signal) | 'format' (invalid, no probe).
-  source: "bluesky" | "http" | "format";
+  // How the result was produced:
+  //   'bluesky' — authoritative API; 'tiktok' — oembed API (reliable);
+  //   'http'    — reliable 404/200 profile probe (YouTube/X);
+  //   'cloaked' — platform 200s for everyone, so we returned 'unknown' (no probe
+  //               result to trust — the user confirms via the Claim link);
+  //   'format'  — invalid handle, never probed.
+  source: "bluesky" | "tiktok" | "http" | "cloaked" | "format";
+  // True when `status` is trustworthy without a manual re-check (bluesky/tiktok/
+  // http). False for cloaked/format — the UI shows these as "open to check"
+  // rather than a confident green/red, so we never lie with a false signal.
+  reliable: boolean;
 }
 
 const BSKY_RESOLVE = "https://bsky.social/xrpc/com.atproto.identity.resolveHandle";
+const TIKTOK_OEMBED = "https://www.tiktok.com/oembed";
 const PROBE_TIMEOUT_MS = 8_000;
 // Keep outbound fan-out small so we never look like an attack to any platform.
 const MAX_CONCURRENCY = 4;
@@ -74,7 +84,7 @@ async function probeBluesky(handle: string): Promise<AvailabilityStatus> {
   return "unknown";
 }
 
-// Everyone else: best-effort signal off the public profile URL's status code.
+// YouTube / X: the public profile URL gives a RELIABLE 404-vs-200 split.
 async function probeHttp(platform: Channel, handle: string): Promise<AvailabilityStatus> {
   const url = PLATFORMS[platform].profileUrl(handle);
   // GET (not HEAD) — several platforms don't answer HEAD correctly and a wrong
@@ -89,20 +99,45 @@ async function probeHttp(platform: Channel, handle: string): Promise<Availabilit
   return "unknown";
 }
 
-// Probe a single platform: format-gate, then dispatch by probe kind.
+// TikTok: the profile HTML 200s for everyone, but the oembed JSON endpoint is a
+// reliable signal — 200 (returns the creator profile) ⇒ taken; 400 ("Something
+// went wrong") ⇒ the handle doesn't resolve ⇒ available.
+async function probeTikTok(handle: string): Promise<AvailabilityStatus> {
+  const profile = `https://www.tiktok.com/@${handle}`;
+  const res = await timedFetch(`${TIKTOK_OEMBED}?url=${encodeURIComponent(profile)}`, "GET");
+  if (!res) return "unknown";
+  if (res.status === 200) return "taken";
+  if (res.status === 400) return "available";
+  return "unknown";
+}
+
+// Probe a single platform: format-gate, then dispatch by probe kind. Attaches a
+// `reliable` flag so the UI can distinguish a trustworthy result from a "we
+// can't check here" (cloaked) one — we NEVER emit a confident-but-wrong signal.
 export async function probePlatform(
   handle: string,
   platform: Channel,
 ): Promise<PlatformAvailability> {
   const normalized = normalizeHandle(handle);
   if (!isValidForPlatform(normalized, platform)) {
-    return { platform, status: "invalid", source: "format" };
+    return { platform, status: "invalid", source: "format", reliable: false };
   }
   const kind = PLATFORMS[platform].probeKind;
+  const reliable = probeIsReliable(kind);
+
   if (kind === "bluesky") {
-    return { platform, status: await probeBluesky(normalized), source: "bluesky" };
+    return { platform, status: await probeBluesky(normalized), source: "bluesky", reliable };
   }
-  return { platform, status: await probeHttp(platform, normalized), source: "http" };
+  if (kind === "tiktok") {
+    return { platform, status: await probeTikTok(normalized), source: "tiktok", reliable };
+  }
+  if (kind === "cloaked") {
+    // The platform returns 200 (or a uniform error) for both real and missing
+    // handles — a status probe would lie. Report 'unknown' and let the user
+    // confirm via the Claim link. NO outbound request (it can't help).
+    return { platform, status: "unknown", source: "cloaked", reliable };
+  }
+  return { platform, status: await probeHttp(platform, normalized), source: "http", reliable };
 }
 
 // Run an array of async thunks with a fixed concurrency cap (no external dep).

@@ -105,10 +105,10 @@ function res(status: number) {
 }
 
 describe("probePlatform: Bluesky (authoritative)", () => {
-  it("maps a resolved handle (200) to taken", async () => {
+  it("maps a resolved handle (200) to taken + reliable", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(res(200)));
     const r = await probePlatform("acme", "bluesky");
-    expect(r).toEqual({ platform: "bluesky", status: "taken", source: "bluesky" });
+    expect(r).toEqual({ platform: "bluesky", status: "taken", source: "bluesky", reliable: true });
   });
 
   it("maps unresolvable (400) to available", async () => {
@@ -123,10 +123,13 @@ describe("probePlatform: Bluesky (authoritative)", () => {
   });
 });
 
-describe("probePlatform: http signal (everyone else)", () => {
-  it("404 → available, 200 → taken, 429/3xx → unknown", async () => {
+describe("probePlatform: reliable http signal (YouTube / X)", () => {
+  it("404 → available, 200 → taken, 429/3xx → unknown — all reliable", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(res(404)));
-    expect((await probePlatform("acme", "x")).status).toBe("available");
+    let r = await probePlatform("acme", "x");
+    expect(r.status).toBe("available");
+    expect(r.source).toBe("http");
+    expect(r.reliable).toBe(true);
 
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(res(200)));
     expect((await probePlatform("acme", "x")).status).toBe("taken");
@@ -137,7 +140,41 @@ describe("probePlatform: http signal (everyone else)", () => {
 
   it("a network error / timeout → unknown (never throws)", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("aborted")));
-    expect((await probePlatform("acme", "instagram")).status).toBe("unknown");
+    expect((await probePlatform("acme", "youtube")).status).toBe("unknown");
+  });
+});
+
+describe("probePlatform: TikTok via oembed (reliable)", () => {
+  it("oembed 200 → taken, 400 → available", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(res(200)));
+    let r = await probePlatform("tiktok", "tiktok");
+    expect(r).toEqual({ platform: "tiktok", status: "taken", source: "tiktok", reliable: true });
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(res(400)));
+    r = await probePlatform("tiktok", "tiktok");
+    expect(r.status).toBe("available");
+  });
+
+  it("hits the oembed endpoint (not the profile HTML)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(res(200));
+    vi.stubGlobal("fetch", fetchMock);
+    await probePlatform("acme", "tiktok");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("tiktok.com/oembed");
+  });
+});
+
+describe("probePlatform: cloaked platforms never emit a false signal", () => {
+  it("Instagram/Threads/Facebook/LinkedIn → unknown, source 'cloaked', NOT reliable, NO fetch", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(res(200)); // even if it 200s
+    vi.stubGlobal("fetch", fetchMock);
+    for (const p of ["instagram", "threads", "facebook", "linkedin"] as const) {
+      const r = await probePlatform("acmebrand", p);
+      expect(r.status).toBe("unknown");
+      expect(r.source).toBe("cloaked");
+      expect(r.reliable).toBe(false);
+    }
+    // Cloaked platforms make NO outbound request (a probe can't help).
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -147,7 +184,7 @@ describe("probePlatform: invalid format is never probed", () => {
     vi.stubGlobal("fetch", fetchMock);
     // 16 chars + dot — invalid for X.
     const r = await probePlatform("way.too.long.handle", "x");
-    expect(r).toEqual({ platform: "x", status: "invalid", source: "format" });
+    expect(r).toEqual({ platform: "x", status: "invalid", source: "format", reliable: false });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

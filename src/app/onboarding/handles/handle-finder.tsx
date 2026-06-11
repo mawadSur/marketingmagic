@@ -71,9 +71,11 @@ export function HandleFinder() {
       {active.rows.length ? (
         <div className="space-y-4">
           <p className="text-xs text-muted-foreground">
-            Green = looks available, red = looks taken, grey = couldn&apos;t tell. For everything
-            except Bluesky this is a best-effort signal — always confirm on the platform via{" "}
-            <span className="font-medium">Claim →</span>.
+            <span className="font-medium text-emerald-600 dark:text-emerald-400">Available</span> /{" "}
+            <span className="font-medium text-destructive">Taken</span> are verified on Bluesky,
+            TikTok, YouTube and X. Instagram, Threads, Facebook and LinkedIn hide this from
+            outside checks, so we show <span className="font-medium">Check →</span> — one tap
+            confirms it on the platform.
           </p>
           {active.rows.map((row) => (
             <HandleCard key={row.handle} row={row} />
@@ -95,11 +97,18 @@ function HandleCard({ row }: { row: HandleRow }) {
       <ul className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
         {row.availability.map((a) => {
           const spec = PLATFORMS[a.platform];
-          const t = tone(a.status);
-          // Where the user goes to claim: signup/profile for available; the live
-          // profile for taken (so they can see who has it).
+          // A cloaked platform reports status 'unknown' with reliable=false — we
+          // can't check it from outside, so render a neutral "Check it yourself"
+          // cell, never a misleading amber "Unknown". Reliable results keep their
+          // green/red/grey tone.
+          const t = a.reliable ? tone(a.status) : CHECK_TONE;
+          // Where the user goes: signup/profile for available; live profile for a
+          // verified "taken" (see who has it); the claim/signup page otherwise.
           const href =
-            a.status === "taken" ? spec.profileUrl(row.handle) : spec.claimUrl(row.handle);
+            a.reliable && a.status === "taken"
+              ? spec.profileUrl(row.handle)
+              : spec.claimUrl(row.handle);
+          const linkLabel = a.reliable && a.status === "taken" ? "View" : "Check";
           return (
             <li
               key={a.platform}
@@ -116,9 +125,13 @@ function HandleCard({ row }: { row: HandleRow }) {
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-0.5 rounded text-[10px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                  title={a.status === "taken" ? "View who has it" : `Claim @${row.handle} on ${spec.label}`}
+                  title={
+                    linkLabel === "View"
+                      ? "View who has it"
+                      : `Check & claim @${row.handle} on ${spec.label}`
+                  }
                 >
-                  {a.status === "taken" ? "View" : "Claim"}
+                  {linkLabel}
                   <ExternalLink className="h-2.5 w-2.5" aria-hidden />
                 </a>
               ) : null}
@@ -129,6 +142,17 @@ function HandleCard({ row }: { row: HandleRow }) {
     </div>
   );
 }
+
+// Neutral cell for cloaked platforms (Instagram/Threads/Facebook/LinkedIn) that
+// hide availability from outside checks. Not a failure — an honest "tap to find
+// out", visually distinct from the verified green/red and the amber "couldn't tell".
+const CHECK_TONE = {
+  label: "Check it",
+  Icon: ExternalLink,
+  border: "border-sky-500/40",
+  bg: "bg-sky-500/5",
+  text: "text-sky-600 dark:text-sky-400",
+} as const;
 
 function tone(status: AvailabilityStatus) {
   switch (status) {
