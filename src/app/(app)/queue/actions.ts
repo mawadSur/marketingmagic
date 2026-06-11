@@ -125,6 +125,58 @@ export async function approveAllVariantsAction(
   return { error: null, approved: pendingIds.length };
 }
 
+// Hormozi slice #3/#4 — approve every pending_approval draft that shares the
+// given variation_group_id (migration 060). Same bulk-approve mechanic as
+// approveAllVariantsAction, but keyed by the batch tag the variation runner
+// stamps instead of idea_id (variation drafts carry no idea_id). Lets the
+// creator green-light a whole "30 filmable variations" batch in one click.
+export async function approveAllVariationsAction(
+  variationGroupId: string,
+): Promise<ActionResult & { approved: number }> {
+  if (!uuid.safeParse(variationGroupId).success) {
+    return { error: "Bad variation group id.", approved: 0 };
+  }
+
+  const ws = await getActiveWorkspaceOrRedirect();
+  const user = await getAuthedUserOrRedirect();
+  const supabase = await supabaseServer();
+
+  // Load the batch, workspace-scoped (RLS belt-and-suspenders, same as the
+  // idea-variant path).
+  const { data: variations, error: loadErr } = await supabase
+    .from("posts")
+    .select("id, status")
+    .eq("workspace_id", ws.id)
+    .eq("variation_group_id", variationGroupId);
+  if (loadErr) return { error: loadErr.message, approved: 0 };
+  if (!variations || variations.length === 0) {
+    return { error: "Variation batch not found in this workspace.", approved: 0 };
+  }
+
+  const pendingIds = variations.filter((v) => v.status === "pending_approval").map((v) => v.id);
+  if (pendingIds.length === 0) {
+    return { error: null, approved: 0 };
+  }
+
+  const now = new Date().toISOString();
+  const { error: updateErr } = await supabase
+    .from("posts")
+    .update({ status: "scheduled", approved_at: now })
+    .in("id", pendingIds);
+  if (updateErr) return { error: updateErr.message, approved: 0 };
+
+  const approvals = pendingIds.map((postId) => ({
+    post_id: postId,
+    user_id: user.id,
+    action: "approved" as const,
+    diff: null,
+  }));
+  await supabase.from("approvals").insert(approvals);
+
+  revalidatePath("/queue");
+  return { error: null, approved: pendingIds.length };
+}
+
 // Rejection reasons mirror the CHECK constraint in migration 006 and the
 // radio options in queue-row.tsx. Kept in lockstep with the RejectionReason
 // type in src/lib/db/types.ts.

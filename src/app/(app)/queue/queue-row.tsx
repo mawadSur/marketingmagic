@@ -11,6 +11,7 @@ import type { RejectionReason } from "@/lib/db/types";
 import { maxCharsFor } from "@/lib/channels/registry";
 import {
   approveAllVariantsAction,
+  approveAllVariationsAction,
   approvePostAction,
   clearPostImageAction,
   editPostAction,
@@ -842,6 +843,110 @@ export function QueueIdeaRow({
       {open ? (
         <ul className="divide-y rounded-md border bg-muted/20">
           {variants.map((v) => (
+            <QueueRow
+              key={v.id}
+              post={v}
+              hashtagRow={hashtagSlots?.get(v.id)}
+              tagRow={tagSlots?.get(v.id)}
+            />
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  );
+}
+
+// Hormozi slice #4 — a "Generate 30 variations" batch (one source post spun
+// into a hook×body matrix). The drafts share a variation_group_id (migration
+// 060) but carry NO idea_id, so the queue groups them here into one collapsible
+// row instead of flooding pending-approval with 30 loose drafts.
+//
+// Mirrors QueueIdeaRow, but: (1) keyed by the batch tag, (2) bulk-approves via
+// approveAllVariationsAction, (3) DEFAULTS COLLAPSED — a 30-draft burst is
+// exploratory, so the creator opens it deliberately rather than scrolling past
+// 30 expanded editors.
+export function QueueVariationRow({
+  groupId,
+  variations,
+  hashtagSlots,
+  tagSlots,
+}: {
+  groupId: string;
+  variations: PostRow[];
+  hashtagSlots?: Map<string, React.ReactNode>;
+  tagSlots?: Map<string, React.ReactNode>;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [busy, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const pendingCount = variations.filter((v) => v.status === "pending_approval").length;
+  const scheduledCount = variations.filter((v) => v.status === "scheduled").length;
+  // Every variation in a batch shares the source's channel + theme.
+  const channel = variations[0]?.channel ?? null;
+  const theme = variations.find((v) => v.theme)?.theme ?? null;
+  const earliestAt = variations
+    .map((v) => v.scheduled_at)
+    .filter((t): t is string => !!t)
+    .sort()[0] ?? null;
+
+  function approveAll() {
+    start(async () => {
+      const r = await approveAllVariationsAction(groupId);
+      if (r.error) {
+        setError(r.error);
+        setNotice(null);
+        return;
+      }
+      setError(null);
+      setNotice(
+        r.approved > 0
+          ? `Approved ${r.approved} variation${r.approved === 1 ? "" : "s"}.`
+          : "No pending variations left to approve.",
+      );
+      router.refresh();
+    });
+  }
+
+  return (
+    <li className="space-y-2 px-4 py-4 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex flex-wrap items-center gap-2 text-left text-xs text-muted-foreground hover:text-foreground"
+          aria-expanded={open}
+        >
+          <span aria-hidden className="inline-block w-3 select-none tabular-nums">
+            {open ? "▾" : "▸"}
+          </span>
+          <Wand2 className="h-3.5 w-3.5 text-primary" aria-hidden />
+          <span className="font-medium text-foreground">
+            {variations.length} filmable variation{variations.length === 1 ? "" : "s"}
+          </span>
+          {channel ? <ChannelBadge channel={channel} /> : null}
+          {theme ? <span>#{theme}</span> : null}
+          {earliestAt ? <span className="tabular-nums">{formatLocal(earliestAt)}</span> : null}
+        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {pendingCount > 0 ? <Badge variant="warning">{pendingCount} pending</Badge> : null}
+          {scheduledCount > 0 ? <Badge variant="success">{scheduledCount} scheduled</Badge> : null}
+          {pendingCount > 0 ? (
+            <Button size="sm" disabled={busy} onClick={approveAll}>
+              {busy ? "Approving…" : `Approve all${pendingCount > 1 ? ` (${pendingCount})` : ""}`}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+
+      {error ? <p className="text-xs text-destructive">{error}</p> : null}
+      {notice ? <p className="text-xs text-muted-foreground">{notice}</p> : null}
+
+      {open ? (
+        <ul className="divide-y rounded-md border bg-muted/20">
+          {variations.map((v) => (
             <QueueRow
               key={v.id}
               post={v}

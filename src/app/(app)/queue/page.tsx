@@ -2,7 +2,8 @@ import Link from "next/link";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
 import { EmptyState } from "@/components/ui/empty-state";
-import { QueueIdeaRow, QueueRow, type QueueMediaItem } from "./queue-row";
+import { QueueIdeaRow, QueueRow, QueueVariationRow, type QueueMediaItem } from "./queue-row";
+import { groupQueueRows, type QueueDisplayRow } from "./queue-grouping";
 import { QueueTabs } from "./queue-tabs";
 import { HashtagPillRow } from "@/components/hashtag-pill-row";
 import { TagChipRow } from "@/components/tag-chip-row";
@@ -11,7 +12,7 @@ import { extractHashtags } from "@/lib/hashtags/extract";
 import { getChannelHashtagPolicy } from "@/lib/hashtags/rules";
 import type { ChannelId } from "@/lib/channels/registry";
 import type { HashtagSuggestion } from "@/lib/hashtags/schema";
-import { ThreadBuilderRow, type ThreadTweetRow } from "@/components/thread-builder-ui";
+import { ThreadBuilderRow } from "@/components/thread-builder-ui";
 import { readThreadMeta } from "@/lib/threads/schema";
 
 export const dynamic = "force-dynamic";
@@ -39,30 +40,9 @@ interface PostQueryRow {
   external_id: string | null;
   failure_reason: string | null;
   tags: string[] | null;
-}
-
-interface QueueDisplayRow {
-  id: string;
-  text: string;
-  theme: string | null;
-  scheduled_at: string | null;
-  status: string;
-  channel: string;
-  media: QueueMediaItem[];
-  image_prompt: string | null;
-  mediaPublicUrl: string | null;
-  voice_score: number | null;
-  low_confidence: boolean;
-  idea_id: string | null;
-  external_id: string | null;
-  failure_reason: string | null;
-  generation_metadata: unknown;
-  // Migration 052: structured auto-tag set (posts.tags). Drives TagChipRow.
-  tags: string[];
-  // Phase 6B — set when this row is the parent of an active experiment
-  // or is itself a variant inside one. Drives both the badge and the
-  // suppression of the "Run Quick Experiment" CTA (no recursion).
-  experiment_status: "parent" | "variant" | null;
+  // Hormozi slice #4 — batch tag stamped on a "30 filmable variations" run
+  // (migration 060). Variation drafts carry no idea_id; this groups the batch.
+  variation_group_id: string | null;
 }
 
 export default async function QueuePage() {
@@ -71,7 +51,7 @@ export default async function QueuePage() {
   const { data: posts } = await supabase
     .from("posts")
     .select(
-      "id, text, theme, scheduled_at, status, channel, social_account_id, media, generation_metadata, voice_score, low_confidence, idea_id, external_id, failure_reason, tags",
+      "id, text, theme, scheduled_at, status, channel, social_account_id, media, generation_metadata, voice_score, low_confidence, idea_id, external_id, failure_reason, tags, variation_group_id",
     )
     .eq("workspace_id", ws.id)
     .in("status", ["pending_approval", "scheduled"])
@@ -90,7 +70,7 @@ export default async function QueuePage() {
     const { data: extras } = await supabase
       .from("posts")
       .select(
-        "id, text, theme, scheduled_at, status, channel, social_account_id, media, generation_metadata, voice_score, low_confidence, idea_id, external_id, failure_reason, tags",
+        "id, text, theme, scheduled_at, status, channel, social_account_id, media, generation_metadata, voice_score, low_confidence, idea_id, external_id, failure_reason, tags, variation_group_id",
       )
       .eq("workspace_id", ws.id)
       .in("idea_id", activeIdeaIds)
@@ -168,6 +148,7 @@ export default async function QueuePage() {
       generation_metadata: p.generation_metadata,
       tags: Array.isArray(p.tags) ? p.tags : [],
       experiment_status: experimentStatus,
+      variation_group_id: p.variation_group_id,
     };
   });
 
@@ -348,79 +329,16 @@ export default async function QueuePage() {
 }
 
 /**
- * Group rows by idea_id. Rows with idea_id=null render as standalone
- * QueueRow (legacy / single-channel posts). Rows that share an idea_id
- * render as a single QueueIdeaRow with their variants nested inside.
- *
- * Sort order respects the upstream `order by scheduled_at` — the first
- * variant of each idea anchors the idea's position in the list.
+ * Render the grouped queue. The grouping DECISION (idea / thread / variation
+ * batch / standalone) lives in groupQueueRows (./queue-grouping, pure +
+ * unit-tested); this function only maps each group to its row component.
  */
 function renderGrouped(
   rows: QueueDisplayRow[],
   hashtagSlots: Map<string, React.ReactNode> | null,
   tagSlots: Map<string, React.ReactNode> | null,
 ): React.ReactNode {
-  type Group =
-    | { kind: "single"; row: QueueDisplayRow; sortKey: string }
-    | { kind: "idea"; ideaId: string; variants: QueueDisplayRow[]; sortKey: string }
-    | { kind: "thread"; ideaId: string; tweets: ThreadTweetRow[]; theme: string | null; sortKey: string };
-
-  const byIdea = new Map<string, QueueDisplayRow[]>();
-  const standalone: Array<{ row: QueueDisplayRow; sortKey: string }> = [];
-
-  for (const r of rows) {
-    if (r.idea_id) {
-      const arr = byIdea.get(r.idea_id) ?? [];
-      arr.push(r);
-      byIdea.set(r.idea_id, arr);
-    } else {
-      standalone.push({ row: r, sortKey: sortKeyOf(r) });
-    }
-  }
-
-  const groups: Group[] = [];
-  for (const s of standalone) {
-    groups.push({ kind: "single", row: s.row, sortKey: s.sortKey });
-  }
-  for (const [ideaId, variants] of byIdea.entries()) {
-    // Phase 6.8: thread detection. Every row carries thread meta and
-    // sits on channel='x' ⇒ this is a thread, not a cross-channel idea.
-    const allThread = variants.every(
-      (v) => v.channel === "x" && readThreadMeta(v.generation_metadata) !== null,
-    );
-    if (allThread && variants.length >= 2) {
-      const tweets: ThreadTweetRow[] = variants
-        .map((v) => {
-          const m = readThreadMeta(v.generation_metadata)!;
-          return {
-            id: v.id,
-            text: v.text,
-            status: v.status,
-            scheduled_at: v.scheduled_at,
-            external_id: v.external_id,
-            failure_reason: v.failure_reason,
-            tweet_index: m.tweet_index,
-            total_tweets: m.total_tweets,
-            role: m.role,
-          };
-        })
-        .sort((a, b) => a.tweet_index - b.tweet_index);
-      const earliest = variants.map(sortKeyOf).sort()[0] ?? "";
-      const theme = variants.find((v) => v.theme)?.theme ?? null;
-      groups.push({ kind: "thread", ideaId, tweets, theme, sortKey: earliest });
-      continue;
-    }
-    // Single-variant ideas degrade to a plain row — collapsing the header
-    // would just be visual noise when there's nothing to compare against.
-    if (variants.length === 1) {
-      groups.push({ kind: "single", row: variants[0], sortKey: sortKeyOf(variants[0]) });
-      continue;
-    }
-    const earliest = variants.map(sortKeyOf).sort()[0] ?? "";
-    groups.push({ kind: "idea", ideaId, variants, sortKey: earliest });
-  }
-
-  groups.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  const groups = groupQueueRows(rows);
 
   return groups.map((g) => {
     if (g.kind === "thread") {
@@ -444,6 +362,17 @@ function renderGrouped(
         />
       );
     }
+    if (g.kind === "variation") {
+      return (
+        <QueueVariationRow
+          key={`variation-${g.groupId}`}
+          groupId={g.groupId}
+          variations={g.variations}
+          hashtagSlots={hashtagSlots ?? undefined}
+          tagSlots={tagSlots ?? undefined}
+        />
+      );
+    }
     return (
       <QueueRow
         key={g.row.id}
@@ -453,12 +382,6 @@ function renderGrouped(
       />
     );
   });
-}
-
-function sortKeyOf(r: QueueDisplayRow): string {
-  // Fallback to "z" prefix so rows without a scheduled_at land at the end
-  // rather than at the top via empty-string sort.
-  return r.scheduled_at ?? `zzz-${r.id}`;
 }
 
 function publicUrlFor(storagePath: string): string {
