@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { Check } from "lucide-react";
+import { Check, X, Sparkles } from "lucide-react";
 import { TIERS, aiCreditsLabel, type PlanId } from "@/lib/billing/tiers";
 import { Logo } from "@/components/ui/logo";
 
@@ -139,6 +139,9 @@ export default function PricingPage() {
         </p>
       </section>
 
+      {/* ─── Us vs. typical schedulers ───────────────────────────────────── */}
+      <ComparisonBox />
+
       {/* ─── Footer ──────────────────────────────────────────────────────── */}
       <footer className="mt-auto border-t">
         <div className="container flex flex-col items-center justify-between gap-4 py-8 text-sm text-muted-foreground sm:flex-row">
@@ -170,5 +173,149 @@ function Feature({ children }: { children: React.ReactNode }) {
       <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
       <span>{children}</span>
     </li>
+  );
+}
+
+// ─── Us vs. typical schedulers ──────────────────────────────────────────────
+// The "true value" story: most tools stop at scheduling — you still write every
+// post, export video from somewhere else, and stare at vanity dashboards. The
+// rows below map 1:1 to our real differentiators (see the homepage pillars +
+// docs/designs/postiz-competitive-roadmap.md): unlimited AI writing, built-in
+// video, the Bayesian learning loop, voice profile, hybrid autopilot, and one
+// bill for every brand. "Typical schedulers" is deliberately generic — an
+// honest stand-in for Buffer/Hootsuite/Later-style tools, no fabricated claims
+// about a named competitor.
+const COMPARE: ReadonlyArray<{
+  feature: string;
+  them: { has: boolean; note: string };
+  us: { note: string };
+}> = [
+  {
+    feature: "Schedule across every channel",
+    them: { has: true, note: "Often billed per channel" },
+    us: { note: "All 8, one queue" },
+  },
+  {
+    feature: "Writes the content for you",
+    them: { has: false, note: "You write every post" },
+    us: { note: "Unlimited on-brand AI writing" },
+  },
+  {
+    feature: "AI short-form video, built in",
+    them: { has: false, note: "Separate tool + export dance" },
+    us: { note: "Same approve-and-go flow" },
+  },
+  {
+    feature: "Learns what actually works",
+    them: { has: false, note: "Vanity dashboards only" },
+    us: { note: "Bayesian theme-winner loop" },
+  },
+  {
+    feature: "A voice that sounds like you",
+    them: { has: false, note: "Generic templates" },
+    us: { note: "Voice profile that evolves" },
+  },
+  {
+    feature: "Hands-off autopilot",
+    them: { has: false, note: "Manual, every single time" },
+    us: { note: "Hybrid approval — you stay in control" },
+  },
+  {
+    feature: "Every brand on one bill",
+    them: { has: false, note: "Pay per seat / per brand" },
+    us: { note: "One subscription covers all" },
+  },
+];
+
+function ComparisonBox() {
+  return (
+    <section className="container pb-16 sm:pb-20">
+      <div className="mx-auto max-w-4xl">
+        <div className="mb-8 text-center">
+          <p className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+            The true value
+          </p>
+          <h2 className="mt-2 text-balance text-2xl font-bold tracking-tight sm:text-3xl">
+            Most tools just <span className="text-muted-foreground">schedule</span> posts.
+          </h2>
+          <p className="mx-auto mt-3 max-w-xl text-pretty text-sm text-muted-foreground sm:text-base">
+            marketingmagic writes them, ships the video, and learns what works — so your
+            monthly spend buys <span className="font-medium text-foreground">growth</span>,
+            not another calendar.
+          </p>
+        </div>
+
+        <div className="relative overflow-hidden rounded-2xl border bg-muted/10">
+          <div
+            aria-hidden
+            className="brand-glow pointer-events-none absolute inset-x-0 top-0 -z-10 h-40"
+          />
+
+          {/* Column headers */}
+          <div className="grid grid-cols-2 gap-px border-b bg-border/60 text-sm font-semibold sm:grid-cols-[1.6fr_1fr_1fr]">
+            <div className="hidden bg-muted/10 px-5 py-4 sm:block" aria-hidden />
+            <div className="bg-muted/10 px-4 py-4 text-center text-muted-foreground sm:px-5 sm:text-left">
+              Typical schedulers
+            </div>
+            <div className="flex items-center justify-center gap-1.5 bg-background px-4 py-4 sm:px-5 sm:justify-start">
+              <Sparkles className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+              <span className="brand-gradient-text font-bold">marketingmagic</span>
+            </div>
+          </div>
+
+          {/* Rows */}
+          <dl className="divide-y divide-border">
+            {COMPARE.map((row) => (
+              <div
+                key={row.feature}
+                className="grid grid-cols-2 items-stretch gap-px bg-border/60 sm:grid-cols-[1.6fr_1fr_1fr]"
+              >
+                <dt className="col-span-2 bg-muted/10 px-4 pb-1 pt-4 text-sm font-medium sm:col-span-1 sm:py-5 sm:px-5">
+                  {row.feature}
+                </dt>
+                <dd className="flex items-start gap-2 bg-muted/10 px-4 pb-4 pt-1 text-sm text-muted-foreground sm:py-5 sm:px-5 sm:pt-5">
+                  {row.them.has ? (
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  ) : (
+                    <X className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground/50" aria-hidden />
+                  )}
+                  <span>
+                    <span className="sr-only">
+                      {row.them.has ? "Typical schedulers: yes — " : "Typical schedulers: no — "}
+                    </span>
+                    {row.them.note}
+                  </span>
+                </dd>
+                <dd className="flex items-start gap-2 bg-primary/[0.04] px-4 pb-4 pt-1 text-sm font-medium text-foreground sm:py-5 sm:px-5 sm:pt-5">
+                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
+                  <span>
+                    <span className="sr-only">marketingmagic: yes — </span>
+                    {row.us.note}
+                  </span>
+                </dd>
+              </div>
+            ))}
+          </dl>
+
+          {/* Footer CTA */}
+          <div className="flex flex-col items-center gap-3 border-t bg-background px-5 py-6 text-center sm:flex-row sm:justify-between sm:text-left">
+            <p className="text-sm text-muted-foreground">
+              Unlimited writing, AI video, and a calendar that gets smarter every week.
+            </p>
+            <Link
+              href="/signup"
+              className="inline-flex h-10 shrink-0 items-center justify-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              Start free
+            </Link>
+          </div>
+        </div>
+
+        <p className="mt-4 text-center text-xs text-muted-foreground">
+          &ldquo;Typical schedulers&rdquo; reflects common Buffer / Hootsuite / Later-style
+          plans. Features and pricing vary by tool.
+        </p>
+      </div>
+    </section>
   );
 }
