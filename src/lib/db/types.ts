@@ -228,6 +228,40 @@ export type InteractionStatus =
 export interface Database {
   public: {
     Tables: {
+      // Migration 066 — public API keys. The raw secret is never stored; only
+      // its SHA-256 hash. See src/lib/api/keys.ts + src/lib/api/context.ts.
+      api_keys: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          name: string;
+          key_prefix: string;
+          key_hash: string;
+          scopes: string[];
+          created_by: string | null;
+          last_used_at: string | null;
+          revoked_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          name: string;
+          key_prefix: string;
+          key_hash: string;
+          scopes?: string[];
+          created_by?: string | null;
+          last_used_at?: string | null;
+          revoked_at?: string | null;
+        };
+        Update: Partial<{
+          name: string;
+          scopes: string[];
+          last_used_at: string | null;
+          revoked_at: string | null;
+        }>;
+        Relationships: [];
+      };
       workspaces: {
         Row: {
           id: string;

@@ -16,6 +16,7 @@ const settingsNav = [
   { href: "/settings/brief", label: "Brief" },
   { href: "/settings/video-keys", label: "Video keys" },
   { href: "/settings/events", label: "Events" },
+  { href: "/settings/api-keys", label: "API keys" },
   { href: "/integrations", label: "Integrations" },
   { href: "/settings/billing", label: "Billing" },
   { href: "/settings/referrals", label: "Refer & earn" },
