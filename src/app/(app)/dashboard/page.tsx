@@ -12,6 +12,7 @@ import { Badge, ChannelBadge, statusBadgeLabel, statusBadgeVariant } from "@/com
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TrustNudge } from "@/components/trust-nudge";
+import { ActivationCard } from "./activation-card";
 import { ExplainSection } from "./explain-section";
 import { BestWindowsWidget } from "./best-windows-widget";
 import { NeglectedThemesWidget } from "./neglected-themes-widget";
@@ -59,6 +60,14 @@ export default async function DashboardPage() {
           </Link>
         </div>
       </header>
+
+      {/* Slice D — next-best-action activation card. Sits at the very top for
+          un-activated workspaces (never published) and points to the single
+          next step (connect → generate → publish). Self-hides once the
+          workspace has shipped its first post, so the normal dashboard shows. */}
+      <Suspense fallback={null}>
+        <ActivationCard workspaceId={ws.id} />
+      </Suspense>
 
       <Suspense fallback={null}>
         <TrustNudge workspaceId={ws.id} />
