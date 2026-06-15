@@ -9,6 +9,7 @@ import { resolvePlanForWorkspace } from "@/lib/billing/entitlements";
 import { displayHandle } from "@/lib/channels/registry";
 import { ChannelBadge, statusBadgeVariant, Badge, statusBadgeLabel } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import { FirstPlanCta } from "./first-plan-cta";
 
 export const dynamic = "force-dynamic";
 
@@ -114,6 +115,17 @@ export default async function ChannelsPage({
   ]);
   const hasBrief = Boolean(briefRes.data);
   const hasPlan = Boolean(planRes.data);
+
+  // "Connect → fill your queue" gate. A user who connects a channel HERE (in
+  // settings, not the onboarding wizard) has a live place to post but an empty
+  // queue and no nudge to generate it — the channel→draft cliff. Show a
+  // prominent CTA at the top when at least one channel is actually CONNECTED
+  // (not just connecting/errored) AND no posting_plan exists yet. The moment a
+  // plan exists we drop the card. We scope to status='connected' (vs the list's
+  // broader "not disconnected") so the CTA only fires once there's somewhere
+  // real to publish.
+  const hasConnectedChannel = (accounts ?? []).some((a) => a.status === "connected");
+  const showFirstPlanCta = hasConnectedChannel && !hasPlan;
   // The next incomplete onboarding step, or null when fully set up. We only
   // surface this once at least one channel is connected (somewhere to post).
   const nextStep: { href: string; title: string; body: string; cta: string } | null =
@@ -125,8 +137,13 @@ export default async function ChannelsPage({
             "Add a short brief — what you do, who you serve, and how you sound — so we can draft posts in your voice. Paste your site and we'll fill most of it in.",
           cta: "Add your business info",
         }
-      : hasAny && hasBrief && !hasPlan
+      : hasAny && hasBrief && !hasPlan && !showFirstPlanCta
         ? {
+            // Reached only when a brief exists + no plan but no channel is
+            // actually CONNECTED yet (e.g. a connect is mid-flight/errored).
+            // When a channel IS connected, the top-of-page "fill your queue"
+            // CTA supersedes this — same destination, stronger nudge — so we
+            // don't stack two cards pointing at step=3.
             href: "/onboarding/wizard?step=3",
             title: "Next: plan your first week",
             body:
@@ -144,6 +161,12 @@ export default async function ChannelsPage({
           Connected social accounts. Credentials live server-side only — never exposed to the browser.
         </p>
       </header>
+
+      {/* Connect → fill your queue. Top-of-page CTA for users who connected a
+          channel here in settings (outside the onboarding wizard) and have an
+          empty queue — links straight to the existing plan generator. Hidden
+          once any posting_plan exists. */}
+      {showFirstPlanCta ? <FirstPlanCta /> : null}
 
       {/* OAuth callbacks (X, LinkedIn, IG, Threads…) bounce back here with
           ?connected=… or ?error=…. Surface them so users aren't silently
