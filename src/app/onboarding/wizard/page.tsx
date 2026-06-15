@@ -106,7 +106,9 @@ export default async function OnboardingWizardPage({ searchParams }: WizardPageP
           step={3}
           title="Almost — we need a brief first"
           subtitle="The brief teaches the planner what to write. Takes a minute."
-          skipHref="/dashboard"
+          // Gentle redirect back to the missing step, not a dump on an empty
+          // dashboard: this user is ready to plan, they just skipped the brief.
+          skipHref="/onboarding/wizard?step=1"
           skipLabel="I'll do this later"
         >
           <BackToStepBlock
@@ -122,7 +124,9 @@ export default async function OnboardingWizardPage({ searchParams }: WizardPageP
           step={3}
           title="One more thing — connect a channel"
           subtitle="We need somewhere to post before we can plan posts."
-          skipHref="/dashboard"
+          // Gentle redirect back to the missing step, not a dump on an empty
+          // dashboard: this user is ready to plan, they just skipped connecting.
+          skipHref="/onboarding/wizard?step=2"
           skipLabel="I'll do this later"
         >
           <BackToStepBlock
@@ -138,8 +142,11 @@ export default async function OnboardingWizardPage({ searchParams }: WizardPageP
         step={3}
         title="Let's plan your first week"
         subtitle="We'll draft posts using your brief. Nothing publishes without your approval."
-        skipHref="/dashboard"
-        skipLabel="Skip — I'll plan later"
+        // No skip: this user has a brief AND a channel — they're ready to plan.
+        // Skipping here drops a ready user into an empty product (the North-Star
+        // event is a PUBLISHED post; an empty dashboard is the drop-off). The
+        // only forward path is generating the plan (Step3Plan's generate action).
+        skipHref={null}
       >
         <Step3Plan accounts={accounts} />
       </WizardShell>
