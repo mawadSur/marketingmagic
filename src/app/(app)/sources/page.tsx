@@ -58,6 +58,26 @@ export default async function SourcesPage() {
         </Link>
       </header>
 
+      {/* Build-in-public — the wedge's headline flow. Paste raw build updates and
+          get a week of first-person, X-led posts without finding a "source". */}
+      <Link
+        href="/sources/build-in-public"
+        className="group flex flex-col gap-3 rounded-xl border border-primary/30 bg-gradient-to-br from-primary/10 to-transparent p-5 transition-colors hover:border-primary/50 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <div className="space-y-1">
+          <p className="label-eyebrow text-primary">Building in public?</p>
+          <p className="font-medium">Turn what you shipped into a week of posts</p>
+          <p className="max-w-2xl text-sm text-muted-foreground">
+            Paste your changelog, launch notes, or a quick brain-dump — get first-person,
+            X-led build-in-public drafts in your voice. No URL or transcript needed.
+          </p>
+        </div>
+        <span className="inline-flex shrink-0 items-center gap-1.5 text-sm font-medium text-primary">
+          Turn my build into posts
+          <span aria-hidden className="transition-transform group-hover:translate-x-0.5">→</span>
+        </span>
+      </Link>
+
       {sources.length === 0 ? (
         <EmptyState
           icon="doc"
