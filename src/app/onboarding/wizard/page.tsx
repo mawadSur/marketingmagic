@@ -67,7 +67,12 @@ export default async function OnboardingWizardPage({ searchParams }: WizardPageP
         step={2}
         title="Where do you want to post?"
         subtitle="Connect one channel to get started. You can always add more later."
-        skipHref="/onboarding/wizard?step=3"
+        // No skip: connecting a channel is the activation gate — you can't publish
+        // without one, and a "skip" here dead-ends users in an empty queue (it was
+        // the single biggest funnel drop-off). The step itself offers an honest
+        // path for users without accounts yet ("Find me handles"). The in-step
+        // "Continue to plan" button stays disabled until ≥1 channel is connected.
+        skipHref={null}
       >
         <Step2Channels
           connectedChannels={connectedChannels}
@@ -153,6 +158,18 @@ export default async function OnboardingWizardPage({ searchParams }: WizardPageP
     .maybeSingle();
   if (!anyPlan) redirect("/onboarding/wizard?step=3");
 
+  // The activation aha isn't "a plan exists" — it's a post that's actually LIVE.
+  // Pull the first ready-to-publish draft so the done screen can ship it in one
+  // click (publishNowAction) instead of punting the user to /queue and a cron.
+  const { data: firstDraft } = await supabase
+    .from("posts")
+    .select("id, channel, text")
+    .eq("workspace_id", ws.id)
+    .eq("status", "pending_approval")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
   return (
     <WizardShell
       step={4}
@@ -160,7 +177,13 @@ export default async function OnboardingWizardPage({ searchParams }: WizardPageP
       subtitle="That's the boring part done. Now the fun part."
       skipHref={null}
     >
-      <Step4Done />
+      <Step4Done
+        firstDraft={
+          firstDraft
+            ? { id: firstDraft.id as string, channel: firstDraft.channel as string, text: firstDraft.text as string }
+            : null
+        }
+      />
     </WizardShell>
   );
 }

@@ -1,11 +1,32 @@
 import Link from "next/link";
 import { PartyPopper } from "lucide-react";
+import { PublishFirstPost, type FirstDraft } from "./publish-first-post";
 
 /**
- * Step 4: celebratory completion screen. Reached either by direct link
- * after plan generation or via the wizard URL with ?step=4.
+ * Step 4: completion screen. The activation goal is a post that's actually
+ * LIVE — not just "a plan exists" — so when there's a ready draft we let the
+ * user publish their first post in one click here (closing the days-long gap
+ * the old /queue-only handoff created). With no draft to ship, fall back to the
+ * queue/dashboard links.
  */
-export function Step4Done() {
+export function Step4Done({ firstDraft }: { firstDraft: FirstDraft | null }) {
+  if (firstDraft) {
+    return (
+      <div className="space-y-8">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <PartyPopper className="h-7 w-7" aria-hidden />
+          </div>
+          <p className="mx-auto max-w-md text-sm text-muted-foreground">
+            Your week of posts is drafted. Ship the first one now to see the whole
+            loop work — then the rest are waiting in your queue.
+          </p>
+        </div>
+        <PublishFirstPost draft={firstDraft} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8">
       <div className="flex flex-col items-center gap-4 rounded-lg border bg-muted/30 p-8 text-center">
