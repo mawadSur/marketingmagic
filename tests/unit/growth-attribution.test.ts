@@ -16,7 +16,7 @@ vi.mock("@/lib/billing/entitlements", () => ({
 }));
 
 import {
-  ATTRIBUTION_LINE,
+  attributionLine,
   appendAttributionLine,
   applyAttribution,
   shouldAppendAttribution,
@@ -81,7 +81,7 @@ describe("applyAttribution: returns text with/without the line", () => {
   it("appends the line on a qualifying hobby workspace", async () => {
     planRef.value = "hobby";
     const out = await applyAttribution(fakeSvc(true), "ws", "Hello world");
-    expect(out).toBe(`Hello world\n\n${ATTRIBUTION_LINE}`);
+    expect(out).toBe(`Hello world\n\n${attributionLine()}`);
   });
 
   it("leaves text untouched when not qualifying", async () => {
@@ -92,8 +92,12 @@ describe("applyAttribution: returns text with/without the line", () => {
 });
 
 describe("appendAttributionLine: pure + idempotent", () => {
-  it("appends a separated footer", () => {
-    expect(appendAttributionLine("post body")).toBe(`post body\n\n${ATTRIBUTION_LINE}`);
+  it("appends a separated footer that includes the linked site URL", () => {
+    const out = appendAttributionLine("post body");
+    expect(out).toBe(`post body\n\n${attributionLine()}`);
+    // The appended footer carries a clickable URL with the attribution ref so
+    // the PLG loop actually mints leads (renders as plain text on socials).
+    expect(out).toContain("?ref=post");
   });
 
   it("does not double-append when the line is already present", () => {
@@ -102,6 +106,6 @@ describe("appendAttributionLine: pure + idempotent", () => {
   });
 
   it("trims trailing whitespace before appending", () => {
-    expect(appendAttributionLine("post body   \n")).toBe(`post body\n\n${ATTRIBUTION_LINE}`);
+    expect(appendAttributionLine("post body   \n")).toBe(`post body\n\n${attributionLine()}`);
   });
 });

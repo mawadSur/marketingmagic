@@ -14,10 +14,29 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolvePlanForWorkspace } from "@/lib/billing/entitlements";
+import { siteUrl } from "@/lib/env";
 
-// The line itself. Leading blank line separates it from the post body. Kept
-// short + lowercase-brand so it reads as a humble footer, not an ad.
-export const ATTRIBUTION_LINE = "Made with marketingmagic";
+// The brand prefix. Kept short + lowercase-brand so it reads as a humble
+// footer, not an ad.
+export const ATTRIBUTION_PREFIX = "Made with marketingmagic";
+
+// Attribution ref param so we can measure how many leads the PLG loop mints.
+// Plain `?ref=post` reads cleanly in the bare-URL rendering and is enough to
+// segment attribution traffic in analytics.
+const ATTRIBUTION_REF = "ref=post";
+
+/**
+ * The full attribution line, including a clickable site URL with the ref param,
+ * e.g. `Made with marketingmagic — https://app.example.com/?ref=post`.
+ *
+ * Computed lazily (not a module const) because siteUrl() reads runtime env —
+ * deferring keeps it correct across dev/preview/prod without depending on env
+ * being present at import time. Posts render as PLAIN TEXT on social platforms,
+ * so the bare URL (no markdown/html) is intentional and reads well as text.
+ */
+export function attributionLine(): string {
+  return `${ATTRIBUTION_PREFIX} — ${siteUrl()}/?${ATTRIBUTION_REF}`;
+}
 
 /**
  * Decide whether the attribution line should be appended for this workspace.
@@ -57,9 +76,14 @@ export async function applyAttribution(
 /**
  * Pure text transform (no DB): append the attribution line unless it's already
  * present at the end. Exposed for unit tests + reuse.
+ *
+ * Idempotency is keyed on the stable brand prefix (not the full URL line) so a
+ * retry never double-appends even if siteUrl() were to resolve differently
+ * between the original publish and the retry.
  */
 export function appendAttributionLine(text: string): string {
   const trimmed = text.replace(/\s+$/, "");
-  if (trimmed.endsWith(ATTRIBUTION_LINE)) return trimmed;
-  return `${trimmed}\n\n${ATTRIBUTION_LINE}`;
+  const lastLine = trimmed.slice(trimmed.lastIndexOf("\n") + 1);
+  if (lastLine.startsWith(ATTRIBUTION_PREFIX)) return trimmed;
+  return `${trimmed}\n\n${attributionLine()}`;
 }
