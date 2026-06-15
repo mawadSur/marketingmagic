@@ -7,7 +7,7 @@ import {
   REFERRAL_BONUS_POSTS,
 } from "@/lib/growth/referrals";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { CopyInviteLink, AttributionToggle } from "./referral-controls";
+import { CopyInviteLink, ShareModule, AttributionToggle } from "./referral-controls";
 
 export const dynamic = "force-dynamic";
 
@@ -32,21 +32,23 @@ export default async function ReferralsPage() {
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">Refer &amp; earn</h1>
         <p className="text-sm text-muted-foreground">
-          Share your invite link. Every workspace that signs up through it and
-          ships their first post earns you {REFERRAL_BONUS_POSTS} bonus posts a
-          month, forever.
+          Building in public? Share your link. Every friend who signs up and
+          ships their first post gets a free week — and earns you{" "}
+          {REFERRAL_BONUS_POSTS} bonus posts a month, forever.
         </p>
       </header>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Your invite link</CardTitle>
+          <CardTitle className="text-base">Share your invite</CardTitle>
           <CardDescription>
-            Anyone who creates a workspace through this link is attributed to you.
+            You both win: +{REFERRAL_BONUS_POSTS} bonus posts a month for you,
+            a free week for every founder who joins through your link.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <CopyInviteLink url={inviteUrl} />
+          <ShareModule url={inviteUrl} />
         </CardContent>
       </Card>
 
