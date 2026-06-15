@@ -16,22 +16,12 @@
 
 import { headers } from "next/headers";
 import { z } from "zod";
-import { checkHandleCached, type CachedAvailability } from "@/lib/handles/check";
+import { checkHandleCached } from "@/lib/handles/check";
 import { normalizeHandle, PLATFORM_ORDER } from "@/lib/handles/platforms";
 import { recordAttempt, clientIpFromHeaders } from "@/lib/preview/rate-limit";
-
-export type CheckHandleState = {
-  error: string | null;
-  // The handle we actually checked (normalised), so the result can echo it.
-  handle: string | null;
-  availability: CachedAvailability[];
-};
-
-export const initialCheckState: CheckHandleState = {
-  error: null,
-  handle: null,
-  availability: [],
-};
+// Type + initial state live in ./state — a "use server" file may only export
+// async functions, so the const/type cannot be defined here.
+import type { CheckHandleState } from "./state";
 
 // One name, sane length. The lib normalises + format-gates per platform after
 // this, so we only need a coarse bound here to reject obvious abuse/garbage.

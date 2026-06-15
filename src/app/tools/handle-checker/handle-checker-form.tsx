@@ -16,11 +16,8 @@ import {
 } from "lucide-react";
 import { PLATFORMS } from "@/lib/handles/platforms";
 import type { AvailabilityStatus, PlatformAvailability } from "@/lib/handles/availability";
-import {
-  checkPublicHandleAction,
-  initialCheckState,
-  type CheckHandleState,
-} from "./actions";
+import { checkPublicHandleAction } from "./actions";
+import { initialCheckState, type CheckHandleState } from "./state";
 
 // The interactive heart of the public tool: a single input → availability grid.
 // No auth, no LLM — the AI name-ideas feature is teased (locked card) with a CTA
