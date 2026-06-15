@@ -40,9 +40,9 @@ const SPARKLES = [
 ] as const;
 
 export const metadata = {
-  title: "marketingmagic — the social growth engine that learns what works",
+  title: "marketingmagic — build in public without becoming a full-time poster",
   description:
-    "Most tools just schedule posts. marketingmagic drafts on-brand content, ships AI short-form video, and learns which themes actually drive engagement — then doubles down. You stay in control.",
+    "You're shipping product, not posting. marketingmagic turns your build into consistent, on-brand content and AI short-form video across X and every channel, learns what actually lands, and runs itself. You just approve.",
 };
 
 // Hero proof-strip stats. Illustrative product framing, not customer metrics.
@@ -58,19 +58,19 @@ const PILLARS = [
     icon: TrendingUp,
     eyebrow: "The difference",
     title: "It learns what works",
-    body: "Every post is measured. A Bayesian model finds the themes that actually move engagement for your audience — and quietly retires the ones that don't. Your calendar gets smarter every week.",
+    body: "Every post is measured. A Bayesian model finds which of your build-in-public threads — shipping updates, lessons, wins — actually move engagement, and quietly retires the ones that don't. Your feed gets smarter every week.",
   },
   {
     icon: Clapperboard,
     eyebrow: "Built in",
     title: "AI short-form video",
-    body: "Turn a topic into a captioned short — bring your own keys — then publish it everywhere through the same approve-and-go flow as your posts. No separate tool, no export dance.",
+    body: "Turn a feature you just shipped into a captioned short — bring your own keys — then publish it everywhere through the same approve-and-go flow as your posts. No separate tool, no export dance.",
   },
   {
     icon: ShieldCheck,
     eyebrow: "On your terms",
-    title: "Hybrid-approval autopilot",
-    body: "Approve in one tap, or let themes you trust post on their own once they've proven themselves. Automatic when you want it, never when you don't.",
+    title: "Posts itself, on your terms",
+    body: "Approve in one tap between commits, or let the threads you trust post on their own once they've proven out. Automatic when you're heads-down building, never when you don't want it.",
   },
 ] as const;
 
@@ -87,20 +87,20 @@ const STEPS = [
   {
     icon: Wand2,
     n: "01",
-    title: "Describe your brand once",
-    body: "Paste your site or write a short brief. We learn your voice, audience, and what you sell.",
+    title: "Point it at your product",
+    body: "Paste your site or write a one-line brief. It learns your voice, who you're building for, and what you ship.",
   },
   {
     icon: CalendarRange,
     n: "02",
-    title: "Get a full plan",
-    body: "A complete, on-voice content calendar across every channel — drafted for you, not generic filler.",
+    title: "Get a full week, drafted",
+    body: "A complete, on-voice build-in-public calendar — leading on X, ready for every channel. Drafted for you, not generic filler.",
   },
   {
     icon: Repeat,
     n: "03",
-    title: "Approve, then improve",
-    body: "Review what you like; let the rest publish. The loop measures results and reshapes next week's plan.",
+    title: "Approve, then go build",
+    body: "Skim what you like; let the rest publish while you ship. The loop measures results and reshapes next week's plan.",
   },
 ] as const;
 
@@ -132,37 +132,37 @@ const SOCIAL_STATS = [
 const PROOF = [
   {
     quote:
-      "It stopped me from guessing. I can see which themes earn attention and which ones I should drop — the plan basically tunes itself.",
-    name: "Founder",
+      "I was shipping daily and posting never. Now my build shows up on X without me stopping to write — and I can see which updates actually land.",
+    name: "Solo founder",
+    role: "Building in public",
+  },
+  {
+    quote:
+      "The approval flow is the whole thing. I trust it with the threads that have proven out, and I still gate everything else between commits.",
+    name: "Indie hacker",
     role: "Early-stage SaaS",
   },
   {
     quote:
-      "The approval flow is the whole thing. I trust it with the posts that have proven out, and I still gate everything else.",
-    name: "Marketing lead",
-    role: "DTC brand",
+      "Turning a feature I just shipped into a short-form video — in the same place I plan posts — saved me an entire tool and a freelancer.",
+    name: "Technical founder",
+    role: "Bootstrapped product",
   },
   {
     quote:
-      "Generating the short-form video in the same place I plan posts saved me an entire tool and a freelancer.",
-    name: "Solo creator",
-    role: "Newsletter + social",
+      "I went from a blank feed every Monday to a full week of build-in-public posts drafted in my voice. I skim and approve over coffee.",
+    name: "Maker",
+    role: "Shipping a side project",
   },
   {
     quote:
-      "I went from a blank calendar every Monday to a full week drafted in my voice. I just skim and approve over coffee.",
-    name: "Agency owner",
-    role: "Social-first studio",
-  },
-  {
-    quote:
-      "One handle, one queue, eight platforms. The format adapts per channel so I'm not rewriting the same post five times.",
-    name: "Community lead",
+      "One handle, one queue, eight platforms — X first. The format adapts per channel so I'm not rewriting the same shipping update five times.",
+    name: "Founder",
     role: "Developer tool",
   },
   {
     quote:
-      "The weekly 'what we learned and changed' digest is the part I didn't know I needed. It's like a strategist that never sleeps.",
+      "The weekly 'what we learned and changed' digest is the part I didn't know I needed. It's like having a growth person while I'm heads-down on the product.",
     name: "Indie maker",
     role: "Bootstrapped SaaS",
   },
@@ -178,7 +178,7 @@ const PRICING_HIGHLIGHT: PlanId = "founder";
 const FAQS = [
   {
     q: "How is this different from a scheduler like Buffer or Hootsuite?",
-    a: "Schedulers post and forget. marketingmagic measures every post, ranks the content themes that actually earn engagement for your audience, and feeds the winners back into next week's plan. The calendar gets smarter on its own.",
+    a: "Schedulers post and forget — and they still expect you to write everything. marketingmagic turns your build into the posts for you, measures each one, ranks the threads that actually earn engagement, and feeds the winners back into next week's plan. It gets smarter on its own while you stay heads-down on the product.",
   },
   {
     q: "Will it post without my approval?",
@@ -266,17 +266,18 @@ export default function HomePage() {
           <div className="flex flex-col items-center gap-7 text-center lg:items-start lg:text-left">
             <div className="badge-glow inline-flex items-center gap-2 rounded-full border bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground backdrop-blur">
               <Sparkles className="h-3.5 w-3.5" style={{ color: "hsl(var(--brand-grad-start))" }} aria-hidden />
-              A growth engine, not another scheduler
+              Build in public, without becoming a full-time poster
             </div>
 
             <h1 className="max-w-4xl text-balance text-4xl font-bold leading-[1.05] tracking-tight sm:text-6xl">
-              Stop scheduling posts.{" "}
-              <span className="brand-gradient-text">Start compounding</span> what works.
+              You're shipping product,{" "}
+              <span className="brand-gradient-text">not posting.</span> So let it post.
             </h1>
 
             <p className="max-w-xl text-pretty text-base text-muted-foreground sm:text-lg">
-              marketingmagic drafts on-brand posts, ships AI short-form video, and learns which
-              themes actually drive engagement — then doubles down. You just approve.
+              marketingmagic turns your build into consistent, on-brand posts and AI short-form
+              video — on X and every channel — learns what actually lands, and runs itself. You just
+              approve between commits.
             </p>
 
             <div className="flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">
@@ -350,13 +351,13 @@ export default function HomePage() {
           <div className="reveal space-y-5">
             <p className="label-eyebrow">Why it&apos;s different</p>
             <h2 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-              Your account, getting smarter every week.
+              Your audience, growing while you build.
             </h2>
             <p className="text-pretty text-muted-foreground">
               Schedulers post and forget. marketingmagic treats every post as a signal. A
-              Bayesian model ranks your content themes by the engagement they actually earn,
-              flags the confident winners, and feeds them straight back into next week&apos;s
-              plan — so you spend your budget on what&apos;s proven, not what you hope.
+              Bayesian model ranks your build-in-public threads by the engagement they actually
+              earn, flags the confident winners, and feeds them straight back into next
+              week&apos;s plan — so your limited time goes to what&apos;s proven, not what you hope.
             </p>
             <ul className="space-y-3 pt-2">
               {[
@@ -431,7 +432,7 @@ export default function HomePage() {
           <div className="reveal mx-auto max-w-2xl text-center">
             <p className="label-eyebrow">What you get</p>
             <h2 className="mt-2 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-              Plan, publish, and improve — in one flow.
+              Ship the product. It handles the posting.
             </h2>
           </div>
           <div className="mt-12 grid gap-5 lg:grid-cols-3">
@@ -525,8 +526,8 @@ export default function HomePage() {
               Short-form video, generated and published in the same place.
             </h2>
             <p className="relative z-10 max-w-lg text-pretty text-sm text-white/90 sm:text-base">
-              Turn a topic into a captioned short with your own keys — then send it to every
-              channel through the same approve-and-go flow as your posts.
+              Turn a feature you just shipped into a captioned short with your own keys — then send
+              it to X and every channel through the same approve-and-go flow as your posts.
             </p>
             <Link
               href="/signup"
@@ -545,7 +546,7 @@ export default function HomePage() {
           <div className="mx-auto max-w-2xl text-center">
             <p className="label-eyebrow">How it works</p>
             <h2 className="mt-2 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-              Set up once. Stay in front of your audience.
+              Set it up once. Then just keep shipping.
             </h2>
           </div>
           <ol className="mx-auto mt-12 grid max-w-5xl gap-5 sm:grid-cols-3">
@@ -577,11 +578,11 @@ export default function HomePage() {
           <div className="reveal mx-auto max-w-2xl text-center">
             <p className="label-eyebrow">See it in action</p>
             <h2 className="mt-2 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-              Watch a week of content build itself.
+              Watch a week of build-in-public posts write themselves.
             </h2>
             <p className="mt-3 text-pretty text-muted-foreground">
-              A short walkthrough: describe your brand once, get a full plan, approve what you
-              like — and watch the loop double down on what works.
+              A short walkthrough: point it at your product, get a full week drafted, approve what
+              you like — and watch the loop double down on what your audience actually wants.
             </p>
           </div>
           <div className="reveal mt-12">
@@ -598,9 +599,9 @@ export default function HomePage() {
       <section className="border-b">
         <div className="container py-20 sm:py-28">
           <div className="mx-auto max-w-2xl text-center">
-            <p className="label-eyebrow">Why teams pick it</p>
+            <p className="label-eyebrow">Why founders pick it</p>
             <h2 className="mt-2 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-              Built for people who&apos;d rather grow than post.
+              Built for founders who&apos;d rather ship than post.
             </h2>
           </div>
 
@@ -766,11 +767,12 @@ export default function HomePage() {
             Why we built this
           </h2>
           <p className="mt-4 text-pretty text-base leading-relaxed text-muted-foreground">
-            Most social tools stop at scheduling — they post and forget. We kept watching good
-            content get buried next to guesses, with no system to tell them apart. marketingmagic
-            is the loop we wanted: it drafts in your voice, ships across eight channels, measures
-            what each post actually earns, and pours your time into the themes that prove out. You
-            stay in control of every post; it just stops you from repeating what doesn&apos;t work.
+            We&apos;re builders too. We kept shipping product and never posting — the marketing was
+            always the thing that slipped. Most social tools don&apos;t help: they hand you a blank
+            scheduler and walk away. marketingmagic is the loop we wanted: it drafts your build in
+            your voice, leads on X and ships across all eight channels, measures what each post
+            actually earns, and pours your scarce time into what proves out. You stay in control of
+            every post; it just keeps you visible while you build.
           </p>
           <p className="mt-6 text-sm font-medium">— The marketingmagic team</p>
         </div>
@@ -806,12 +808,12 @@ export default function HomePage() {
         </div>
         <div className="reveal container flex flex-col items-center gap-6 py-24 text-center">
           <h2 className="max-w-2xl text-balance text-3xl font-bold tracking-tight sm:text-5xl">
-            Put your growth on autopilot — and{" "}
-            <span className="brand-gradient-text">keep your hand on the wheel.</span>
+            Keep building. Let your audience{" "}
+            <span className="brand-gradient-text">grow on autopilot.</span>
           </h2>
           <p className="max-w-md text-pretty text-muted-foreground">
-            See what a week of on-brand, data-tuned content looks like for your business. No
-            signup, 30 seconds.
+            See what a week of build-in-public content looks like for your product — leading on X.
+            No signup, 30 seconds.
           </p>
           <div className="flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">
             <Link
