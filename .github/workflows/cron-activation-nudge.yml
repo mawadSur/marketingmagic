@@ -1,0 +1,57 @@
+name: cron / activation-nudge
+
+# Daily "connected but never published" lifecycle nudge. 15:00 UTC = 10:00
+# America/New_York during EST and 11:00 during EDT — late-morning Eastern,
+# staggered an hour after the approval digest (14:00 UTC) so the two crons
+# don't pile onto the same minute. Route auth-gated by Bearer CRON_SECRET,
+# same as the other cron pings.
+#
+# Idempotency is window-based, NOT flag-based: the route nudges only workspaces
+# whose first channel connected 48–72h ago and that have never published. That
+# 24h window lines up with this daily schedule so each workspace qualifies on
+# ~one run. A MISSED run permanently skips that day's cohort (see route comment).
+
+on:
+  schedule:
+    - cron: "0 15 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: cron-activation-nudge
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Send activation nudges (connected but never published)
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$SITE_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "::error::Missing SITE_URL or CRON_SECRET repo secret."
+            exit 1
+          fi
+          RESPONSE_FILE="$(mktemp)"
+          HTTP_CODE="$(curl --silent --show-error \
+               --max-time 120 \
+               -o "$RESPONSE_FILE" \
+               -w '%{http_code}' \
+               -H "Authorization: Bearer $CRON_SECRET" \
+               -X POST \
+               "$SITE_URL/api/cron/activation-nudge")"
+          echo "HTTP status: $HTTP_CODE"
+          echo "::group::Response body"
+          jq . "$RESPONSE_FILE" 2>/dev/null || cat "$RESPONSE_FILE"
+          echo
+          echo "::endgroup::"
+          SUMMARY="$(jq -c 'to_entries | map(select(.value | type == "number")) | from_entries' "$RESPONSE_FILE" 2>/dev/null)"
+          if [ -n "$SUMMARY" ] && [ "$SUMMARY" != "{}" ]; then
+            echo "::notice title=cron summary::$SUMMARY"
+          fi
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "::error::cron route returned HTTP $HTTP_CODE"
+            exit 1
+          fi
