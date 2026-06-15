@@ -839,6 +839,9 @@ export default function HomePage() {
             <Link href="/pricing" className="transition-colors hover:text-foreground">
               Pricing
             </Link>
+            <Link href="/tools" className="transition-colors hover:text-foreground">
+              Free tools
+            </Link>
             <Link href="/privacy" className="transition-colors hover:text-foreground">
               Privacy
             </Link>
