@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { Database } from "@/lib/db/types";
 import { switchWorkspaceAction } from "@/app/(app)/workspace-actions";
+import { TopProgressBar } from "@/components/top-progress-bar";
 
 type Workspace = Database["public"]["Tables"]["workspaces"]["Row"];
 
@@ -32,6 +33,7 @@ export function WorkspaceSwitcher({
 
   return (
     <div className="flex items-center gap-2">
+      <TopProgressBar active={pending} />
       <div className="relative">
         <select
           aria-label="Select workspace"

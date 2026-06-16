@@ -460,3 +460,23 @@
     transform: none;
   }
 }
+
+/* ─── Workspace-switch progress bar ─────────────────────────────────────────
+   Indeterminate top loading bar shown while a workspace switch is in flight
+   (the switchWorkspaceAction + router.refresh round-trip). A 25%-wide segment
+   sweeps left→right; see components/top-progress-bar.tsx. */
+@keyframes mm-progress {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+.mm-progress-bar {
+  animation: mm-progress 1.1s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* No sweep — a static full-width bar still conveys the loading state. */
+  .mm-progress-bar {
+    animation: none;
+    width: 100%;
+    transform: none;
+  }
+}

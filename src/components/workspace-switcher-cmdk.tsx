@@ -15,6 +15,7 @@ import {
   switchWorkspaceAction,
   toggleWorkspacePinAction,
 } from "@/app/(app)/workspace-actions";
+import { TopProgressBar } from "@/components/top-progress-bar";
 import { cn } from "@/lib/utils";
 
 type Workspace = Database["public"]["Tables"]["workspaces"]["Row"];
@@ -210,7 +211,12 @@ export function WorkspaceSwitcherCmdK({
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
+    <>
+      {/* Persists through the switch even though `pick` closes the dialog first —
+          this component lives in the persistent app header, so `pending` stays
+          true across switchWorkspaceAction + the push/refresh. */}
+      <TopProgressBar active={pending} />
+      <Dialog.Root open={open} onOpenChange={setOpen}>
       <Dialog.Portal>
         <Dialog.Overlay
           className={cn(
@@ -356,7 +362,8 @@ export function WorkspaceSwitcherCmdK({
           </div>
         </Dialog.Content>
       </Dialog.Portal>
-    </Dialog.Root>
+      </Dialog.Root>
+    </>
   );
 }
 
