@@ -18,6 +18,7 @@ import { PLATFORMS } from "@/lib/handles/platforms";
 import type { AvailabilityStatus, PlatformAvailability } from "@/lib/handles/availability";
 import { checkPublicHandleAction } from "./actions";
 import { initialCheckState, type CheckHandleState } from "./state";
+import { HandleClaimAction } from "@/components/handle-claim-action";
 
 // The interactive heart of the public tool: a single input → availability grid.
 // No auth, no LLM — the AI name-ideas feature is teased (locked card) with a CTA
@@ -103,8 +104,10 @@ function ResultGrid({
         <span className="font-medium text-emerald-600 dark:text-emerald-400">Available</span> /{" "}
         <span className="font-medium text-destructive">Taken</span> are verified on Bluesky,
         TikTok, YouTube and X. Instagram, Threads, Facebook and LinkedIn hide this from outside
-        checks, so we show <span className="font-medium text-sky-600 dark:text-sky-400">Check →</span>{" "}
-        — one tap confirms it on the platform. Results are a best-effort signal, not a guarantee.
+        checks, so we show <span className="font-medium text-sky-600 dark:text-sky-400">Claim →</span>{" "}
+        to confirm on the platform. <span className="font-medium text-primary">Claim →</span> opens
+        the platform&apos;s signup page and copies your handle so you just paste it. Results are a
+        best-effort signal, not a guarantee.
       </p>
     </div>
   );
@@ -117,9 +120,6 @@ function PlatformCell({ a, handle }: { a: PlatformAvailability; handle: string }
   // results keep their green/red/grey tone. (Same honesty contract as the
   // in-app finder.)
   const t = a.reliable ? tone(a.status) : CHECK_TONE;
-  const href =
-    a.reliable && a.status === "taken" ? spec.profileUrl(handle) : spec.claimUrl(handle);
-  const linkLabel = a.reliable && a.status === "taken" ? "View" : "Check";
 
   return (
     <li
@@ -130,22 +130,13 @@ function PlatformCell({ a, handle }: { a: PlatformAvailability; handle: string }
         <span className="block text-sm font-medium">{spec.label}</span>
         <span className={`block text-[11px] ${t.text}`}>{t.label}</span>
       </span>
-      {a.status !== "invalid" ? (
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-0.5 rounded text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-          title={
-            linkLabel === "View"
-              ? `View who has @${handle} on ${spec.label}`
-              : `Check & claim @${handle} on ${spec.label}`
-          }
-        >
-          {linkLabel}
-          <ExternalLink className="h-2.5 w-2.5" aria-hidden />
-        </a>
-      ) : null}
+      <HandleClaimAction
+        platform={a.platform}
+        handle={handle}
+        status={a.status}
+        reliable={a.reliable}
+        size="sm"
+      />
     </li>
   );
 }

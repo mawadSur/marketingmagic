@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { Sparkles, Check, X, HelpCircle, Ban, ExternalLink, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { HandleClaimAction } from "@/components/handle-claim-action";
 import { PLATFORMS } from "@/lib/handles/platforms";
 import type { AvailabilityStatus } from "@/lib/handles/availability";
 import {
@@ -102,13 +103,6 @@ function HandleCard({ row }: { row: HandleRow }) {
           // cell, never a misleading amber "Unknown". Reliable results keep their
           // green/red/grey tone.
           const t = a.reliable ? tone(a.status) : CHECK_TONE;
-          // Where the user goes: signup/profile for available; live profile for a
-          // verified "taken" (see who has it); the claim/signup page otherwise.
-          const href =
-            a.reliable && a.status === "taken"
-              ? spec.profileUrl(row.handle)
-              : spec.claimUrl(row.handle);
-          const linkLabel = a.reliable && a.status === "taken" ? "View" : "Check";
           return (
             <li
               key={a.platform}
@@ -119,22 +113,13 @@ function HandleCard({ row }: { row: HandleRow }) {
                 <span className="block text-xs font-medium">{spec.label}</span>
                 <span className={`block text-[10px] ${t.text}`}>{t.label}</span>
               </span>
-              {a.status !== "invalid" ? (
-                <a
-                  href={href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-0.5 rounded text-[10px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                  title={
-                    linkLabel === "View"
-                      ? "View who has it"
-                      : `Check & claim @${row.handle} on ${spec.label}`
-                  }
-                >
-                  {linkLabel}
-                  <ExternalLink className="h-2.5 w-2.5" aria-hidden />
-                </a>
-              ) : null}
+              <HandleClaimAction
+                platform={a.platform}
+                handle={row.handle}
+                status={a.status}
+                reliable={a.reliable}
+                size="xs"
+              />
             </li>
           );
         })}
