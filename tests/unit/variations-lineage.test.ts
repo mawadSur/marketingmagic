@@ -16,6 +16,15 @@ const insertSpy = vi.fn();
 vi.mock("@/lib/supabase/service", () => ({
   supabaseService: () => ({
     from: () => ({
+      // Migration 067 idempotency read: runVariationGeneration first pulls the
+      // existing content_hash set for this parent's prior variation rows. No
+      // priors exist in this test, so resolve an empty list — all 4 variations
+      // are new and get inserted.
+      select: () => ({
+        eq: () => ({
+          eq: () => Promise.resolve({ data: [], error: null }),
+        }),
+      }),
       insert: (payload: unknown[]) => {
         insertSpy(payload);
         return {

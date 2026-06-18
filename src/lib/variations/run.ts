@@ -16,6 +16,7 @@
 import { supabaseService } from "@/lib/supabase/service";
 import type { Database, Json } from "@/lib/db/types";
 import { maxCharsFor } from "@/lib/channels/registry";
+import { hashContent } from "@/lib/dedup/similarity";
 import {
   generateVariationMatrix,
   type VariationMatrixOptions,
@@ -73,43 +74,103 @@ export async function runVariationGeneration(
   const variationGroupId = crypto.randomUUID();
   const maxChars = maxCharsFor(inputs.sourcePost.channel);
 
-  const postPayload = variations.map((v) => {
+  const svc = supabaseService();
+
+  // Step 2a — idempotency guard. Re-running "spin 30 variations" on the same
+  // source post used to mint a brand-new variation_group_id every time and blind-
+  // insert another 30 rows — so two runs left ~60 near-identical drafts in the
+  // queue. We dedup on the NORMALIZED content hash (similarity.hashContent),
+  // which collapses casing / links / tags / spacing, so a re-roll that lands on
+  // the same wording as a prior variant of this parent is recognised and skipped.
+  //
+  // Scope is intentionally the PARENT, not the whole workspace: this guard exists
+  // to stop a particular source post from accreting duplicate spins. (The broader
+  // workspace-wide dedup gate — gate.dedupePosts — is a separate, optional layer;
+  // the per-parent hash idempotency is the must-have here.) We only pull
+  // content_hash for that parent's existing variation rows, so it's one cheap read.
+  const existingHashes = new Set<string>();
+  {
+    const { data: prior } = await svc
+      .from("posts")
+      .select("content_hash")
+      .eq("workspace_id", inputs.workspaceId)
+      .eq("parent_post_id", inputs.sourcePost.id);
+    if (prior) {
+      for (const row of prior as Array<{ content_hash: string | null }>) {
+        if (row.content_hash) existingHashes.add(row.content_hash);
+      }
+    }
+    // On a read error `prior` is null and we fall through with an empty set —
+    // fail-open, same posture as the dedup gate: a transient read must never
+    // block a creator from generating, even at the cost of a possible dup.
+  }
+
+  // Build the batch, computing each row's content_hash and skipping any variant
+  // whose hash already exists — either on a prior run of this parent (the read
+  // above) or earlier in THIS batch (an identical generated variant). The
+  // running `existingHashes` set absorbs accepted rows so intra-batch siblings
+  // dedup against each other too. An empty hash (whitespace-only normalised text)
+  // is never a duplicate key and is left for the per-row insert/text guards.
+  const postPayload = variations.flatMap((v) => {
     // Truncate rather than drop if a composed script overran the channel cap —
     // the row column also enforces it; losing the tail beats losing the draft.
     const text = v.full_text.length > maxChars ? v.full_text.slice(0, maxChars - 1) + "…" : v.full_text;
-    return {
-      workspace_id: inputs.workspaceId,
-      social_account_id: inputs.sourcePost.social_account_id,
-      channel: inputs.sourcePost.channel,
-      text,
-      theme: inputs.sourcePost.theme,
-      // Variations land UNSCHEDULED in pending_approval — the creator reviews +
-      // schedules each in the queue (same as atomized drafts). Trust-mode
-      // auto-publish is bypassed: a 30-draft burst is exploratory, eyeball-first.
-      status: "pending_approval" as const,
-      // Lineage (migration 060): trace every draft to its source + batch.
-      parent_post_id: inputs.sourcePost.id,
-      variation_group_id: variationGroupId,
-      generation_metadata: {
-        source: "variation",
+    const contentHash = hashContent(text);
+
+    // Skip duplicates: a non-empty hash already seen for this parent (prior run)
+    // or earlier in this batch. This is what kills "run 30 variations twice → 60".
+    if (contentHash !== "" && existingHashes.has(contentHash)) return [];
+    if (contentHash !== "") existingHashes.add(contentHash);
+
+    return [
+      {
+        workspace_id: inputs.workspaceId,
+        social_account_id: inputs.sourcePost.social_account_id,
+        channel: inputs.sourcePost.channel,
+        text,
+        // Stamp the normalized content hash on every row (all insert paths do)
+        // so the workspace-wide dedup gate can match this draft via the fast path.
+        content_hash: contentHash,
+        theme: inputs.sourcePost.theme,
+        // Variations land UNSCHEDULED in pending_approval — the creator reviews +
+        // schedules each in the queue (same as atomized drafts). Trust-mode
+        // auto-publish is bypassed: a 30-draft burst is exploratory, eyeball-first.
+        status: "pending_approval" as const,
+        // Lineage (migration 060): trace every draft to its source + batch.
         parent_post_id: inputs.sourcePost.id,
         variation_group_id: variationGroupId,
-        hook_index: v.hook_index,
-        body_index: v.body_index,
-        hook_spoken: v.hook.spoken,
-        hook_visual: v.hook.visual,
-        cta_overlay: v.body.cta_overlay,
-      } as unknown as Json,
-    };
+        generation_metadata: {
+          source: "variation",
+          parent_post_id: inputs.sourcePost.id,
+          variation_group_id: variationGroupId,
+          hook_index: v.hook_index,
+          body_index: v.body_index,
+          hook_spoken: v.hook.spoken,
+          hook_visual: v.hook.visual,
+          cta_overlay: v.body.cta_overlay,
+        } as unknown as Json,
+      },
+    ];
   });
 
   if (postPayload.length === 0) {
-    // assembleVariations only returns empty if the matrix was empty, which the
-    // schema's minItems forbids — but guard anyway so we never insert nothing.
+    // Two ways to land here: the matrix was empty (schema minItems forbids it,
+    // but guard anyway), OR every generated variant was a duplicate of one that
+    // already exists for this parent. In the latter case there's nothing new to
+    // insert — return a zero-created result instead of throwing, so a redundant
+    // re-roll is a quiet no-op rather than an error the creator has to puzzle over.
+    if (variations.length > 0) {
+      return {
+        variationGroupId,
+        created: 0,
+        hookCount,
+        bodyCount,
+        usage,
+      };
+    }
     throw new Error("Variation generation produced no drafts.");
   }
 
-  const svc = supabaseService();
   const { data: inserted, error } = await svc
     .from("posts")
     .insert(postPayload)

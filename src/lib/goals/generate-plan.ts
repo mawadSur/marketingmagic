@@ -21,6 +21,8 @@ import type {
   ThemeSignal,
   ThemeWinnerSignal,
   RejectionSignal,
+  RecentContentSignal,
+  PostExemplar,
 } from "@/lib/plan/prompt";
 import type { SavedPattern } from "@/lib/explain/playbook";
 import type { ChannelId } from "@/lib/channels/registry";
@@ -54,6 +56,13 @@ export interface GeneratePostsFromGoalInputs {
   // to PlanGenInputs. Best-effort upstream — undefined when the user didn't
   // opt in or research failed.
   competitorInsights?: CompetitorInsight[];
+  // Phase 8 (dedup wedge): the workspace's already-queued/posted content and
+  // its best/worst individual posts. Forwarded straight through to
+  // PlanGenInputs so a goal-anchored plan steers away from angles already in
+  // the queue and toward the shapes that land for this brand. Best-effort
+  // upstream — undefined/empty just renders the prompt blocks empty.
+  recentContent?: RecentContentSignal[];
+  postExemplars?: PostExemplar[];
 }
 
 // Renders a "## Content goal" block injected into the planner prompt.
@@ -132,6 +141,8 @@ export async function generatePostsFromGoal(
     savedPatterns: inputs.savedPatterns,
     themeWinners: inputs.themeWinners,
     competitorInsights: inputs.competitorInsights,
+    recentContent: inputs.recentContent,
+    postExemplars: inputs.postExemplars,
     retryNote,
   };
   return generatePlan(planInputs);

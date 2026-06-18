@@ -6,6 +6,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { channelSpec, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
 import { nextRecommendedSlot } from "@/lib/channels/best-times";
+import { hashContent } from "@/lib/dedup/similarity";
 
 // ─────────────────────────────────────────────────────────────
 // createDraftPostAction — single-post compose
@@ -78,6 +79,9 @@ export async function createDraftPostAction(input: {
       social_account_id: account.id,
       channel,
       text: textParsed.data,
+      // Stamp the content hash so the dedup gate's exact-match path can catch a
+      // future re-queue of this exact post (and never auto-publish a dup).
+      content_hash: hashContent(textParsed.data),
       status: "pending_approval",
       scheduled_at: suggestedSlot,
       generation_metadata: { source: "compose" },

@@ -11,6 +11,9 @@ import { channelSpec, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/re
 import { nextRecommendedSlot } from "@/lib/channels/best-times";
 import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementPostsGenerated } from "@/lib/billing/usage";
+import { dedupePosts } from "@/lib/dedup/gate";
+import { hashContent } from "@/lib/dedup/similarity";
+import { collectRecentContent } from "@/lib/plan/recent-content";
 
 // /sources/[id] — "Atomize" server action (Bet 2 — Atomization Engine).
 //
@@ -96,9 +99,23 @@ export async function atomizeSourceAction(
     throw err;
   }
 
+  // Best-effort: tell the atomizer what's already queued / recently posted so it
+  // steers AWAY from angles we already cover, BEFORE its output ever reaches the
+  // dedup gate below. Purely advisory — a read failure here must never block
+  // atomization, so we swallow errors and fall back to an empty list (the prompt
+  // block then renders nothing). The gate is the real guarantee; this just
+  // reduces how often it has to fire.
+  let avoidRecent: string[] = [];
+  try {
+    const recent = await collectRecentContent(ws.id);
+    avoidRecent = recent.map((r) => r.snippet);
+  } catch (err) {
+    console.warn("Atomize: failed to load recent-content context (continuing):", err);
+  }
+
   let result;
   try {
-    result = await atomize({ brief: briefRes.data, source, channels, atomTarget });
+    result = await atomize({ brief: briefRes.data, source, channels, atomTarget, avoidRecent });
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Atomization failed.", created: null };
   }
@@ -165,7 +182,13 @@ export async function atomizeSourceAction(
   // origin by ~1 day, so nextRecommendedSlot spreads them across upcoming
   // recommended windows. The user still reviews + can retime in the queue.
   let slotCursor = new Date();
-  const postsPayload = flatVariants.flatMap((p) => {
+  // Annotate the element type as the posts Insert row so the dedup gate below
+  // can mutate status / low_confidence / generation_metadata / content_hash with
+  // the correct (wide) field types rather than the narrow shapes inferred from
+  // the object literal. (Inline import() type — this is a "use server" file, so
+  // we avoid introducing a top-level exported type alias.)
+  type PostInsert = import("@/lib/db/types").Database["public"]["Tables"]["posts"]["Insert"];
+  const postsPayload = flatVariants.flatMap((p): PostInsert[] => {
     const acct = accountByChannel.get(p.channel);
     if (!acct) {
       skipped.push(p.channel);
@@ -199,7 +222,12 @@ export async function atomizeSourceAction(
         // continuous calendar, but a one-shot atomization is an exploratory
         // burst the user should eyeball before it ships.
         scheduled_at: suggestedSlot,
-        status: "pending_approval" as const,
+        status: "pending_approval",
+        // ALWAYS stamp a stable content hash on every inserted row (all paths),
+        // so future dedup reads can hash-match this post directly. The dedup
+        // gate below may additionally flag this row, but the hash is written
+        // unconditionally.
+        content_hash: hashContent(text),
         voice_score: voiceScore,
         low_confidence: lowConfidence,
         idea_id: p.idea_id,
@@ -223,6 +251,75 @@ export async function atomizeSourceAction(
       error: "Claude produced only posts for channels you haven't connected.",
       created: null,
     };
+  }
+
+  // ── Content dedup gate ────────────────────────────────────────────────────
+  // Before these atoms hit the posts table, run the whole batch through the
+  // dedup gate. One DB read loads the workspace's recent+queued corpus; the gate
+  // judges each row against it AND against earlier-accepted rows in this same
+  // batch — so two atoms decomposed from ONE source that duplicate each other
+  // (or that re-state something already queued) are both caught. The gate is
+  // channel-agnostic: the same caption on X and Instagram is still a dup.
+  //
+  // We dedup on the FINAL text that will actually be written (post-truncation),
+  // and always stamp content_hash on every row. On any "exact"/"near" hit we
+  // apply the uniform DEDUP-ON-HIT POLICY: a duplicate can never auto-publish
+  // (these are already pending_approval, but we re-assert it), it's flagged
+  // low_confidence so the queue surfaces it, and we record what it collided with
+  // in generation_metadata.dedup so a reviewer can see why.
+  //
+  // Fail-open: dedupePosts already returns [] on a read error. If for any reason
+  // the verdict count doesn't line up with the payload, we skip the gate rather
+  // than mis-flag rows — content_hash is still written below regardless.
+  let dedupResults: Awaited<ReturnType<typeof dedupePosts>> = [];
+  try {
+    dedupResults = await dedupePosts(
+      ws.id,
+      postsPayload.map((p) => ({ text: p.text, channel: p.channel as ChannelId })),
+    );
+  } catch (err) {
+    console.warn("Atomize: dedup gate failed (writing without dedup flags):", err);
+    dedupResults = [];
+  }
+  const dedupByIndex = new Map(dedupResults.map((r) => [r.index, r]));
+
+  // content_hash is already stamped on every row when the payload is built
+  // above (always, per policy). Here we only layer the DEDUP-ON-HIT flags on the
+  // rows the gate flagged.
+  let dedupFlagged = 0;
+  for (let i = 0; i < postsPayload.length; i++) {
+    const row = postsPayload[i]!;
+    const verdict = dedupByIndex.get(i);
+    if (verdict && (verdict.verdict === "exact" || verdict.verdict === "near")) {
+      dedupFlagged += 1;
+      // A duplicate can NEVER auto-publish. Atomized drafts are already
+      // pending_approval, but re-assert it so the policy holds even if that
+      // upstream default ever changes.
+      row.status = "pending_approval";
+      row.low_confidence = true;
+      // Preserve the existing rationale/source metadata and add the dedup
+      // provenance. We built generation_metadata as a plain object above, but the
+      // column is typed as the broad Json union, so guard the spread to object
+      // values only (never spread a primitive Json).
+      const existingMeta =
+        row.generation_metadata && typeof row.generation_metadata === "object" && !Array.isArray(row.generation_metadata)
+          ? row.generation_metadata
+          : {};
+      row.generation_metadata = {
+        ...existingMeta,
+        dedup: {
+          kind: verdict.verdict,
+          score: verdict.match?.score ?? null,
+          match_id: verdict.match?.existingId ?? null,
+          match_snippet: verdict.match?.existingText
+            ? verdict.match.existingText.replace(/\s+/g, " ").trim().slice(0, 140)
+            : null,
+        },
+      };
+    }
+  }
+  if (dedupFlagged > 0) {
+    console.warn(`Atomize: ${dedupFlagged} of ${postsPayload.length} drafts flagged as duplicates.`);
   }
 
   const { error: postsErr } = await svc.from("posts").insert(postsPayload);

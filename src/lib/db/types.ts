@@ -815,6 +815,12 @@ export interface Database {
           // for non-variation posts.
           parent_post_id: string | null;
           variation_group_id: string | null;
+          // Migration 067: SHA-256 hex of the normalized post text (content
+          // de-duplication, src/lib/dedup/similarity.ts → hashContent). The
+          // indexed key for channel-agnostic exact-duplicate detection. NULL
+          // for legacy rows that predate the column; every new insert path
+          // writes a non-null hash.
+          content_hash: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -841,6 +847,8 @@ export interface Database {
           // Migration 060: variation lineage (see Row).
           parent_post_id?: string | null;
           variation_group_id?: string | null;
+          // Migration 067: content de-dup hash (see Row).
+          content_hash?: string | null;
         };
         Update: Partial<{
           text: string;
@@ -860,6 +868,8 @@ export interface Database {
           source_id: string | null;
           goal_id: string | null;
           tags: string[];
+          // Migration 067: content de-dup hash (see Row).
+          content_hash: string | null;
         }>;
         Relationships: [];
       };

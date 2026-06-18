@@ -14,6 +14,8 @@ import type { ChannelId } from "@/lib/channels/registry";
 import type { HashtagSuggestion } from "@/lib/hashtags/schema";
 import { ThreadBuilderRow } from "@/components/thread-builder-ui";
 import { readThreadMeta } from "@/lib/threads/schema";
+import { loadWorkspacePerformance } from "@/lib/feedback/post-performance";
+import type { QueueDedup, QueuePerf } from "./queue-grouping";
 
 export const dynamic = "force-dynamic";
 // publishNowAction (queue/actions.ts) dispatches inline — image/text publish
@@ -102,8 +104,28 @@ export default async function QueuePage() {
   const allPostIds = deduped.map((p) => p.id);
   const experimentVariantPostIds = new Set<string>();
   const experimentParentPostIds = new Set<string>();
+  // T4.1 — per-post performance, scored against the full workspace corpus.
+  // Most queue rows are pending/scheduled (never scored → "pending"); the
+  // rows that DO score are the posted thread-completion siblings pulled in
+  // above. We load the whole workspace map once (the corpus must be full to
+  // judge a post against everything, not just the queue) in parallel with
+  // the experiment lookups, then read the verdict per row below.
+  let performance: Awaited<ReturnType<typeof loadWorkspacePerformance>> = new Map();
+  // Only the posted rows in the queue (thread-completion siblings) can ever
+  // show a performance chip — pending/scheduled rows always score "pending".
+  // Filter the RETURNED map to those ids (the corpus stays the full workspace,
+  // so each post is still judged against everything). When none are posted we
+  // skip the read entirely.
+  //
+  // Honest-chip gate: require external_id too. A row can be marked "posted"
+  // without ever reaching the platform (no external_id) — those never settled a
+  // real metric, so they must not sprout a perf chip. Restricting the requested
+  // ids here keeps the perf map free of un-published rows at the source.
+  const postedQueueIds = deduped
+    .filter((p) => p.status === "posted" && p.external_id != null)
+    .map((p) => p.id);
   if (allPostIds.length > 0) {
-    const [variantRes, parentRes] = await Promise.all([
+    const [variantRes, parentRes, perfMap] = await Promise.all([
       supabase
         .from("post_variants")
         .select("parent_post_id")
@@ -113,6 +135,14 @@ export default async function QueuePage() {
         .select("parent_post_id, status")
         .in("parent_post_id", allPostIds)
         .neq("status", "cancelled"),
+      // Best-effort: a failed read returns an empty map → no perf chips.
+      postedQueueIds.length > 0
+        ? loadWorkspacePerformance(ws.id, { postIds: postedQueueIds }).catch(
+            () => new Map() as Awaited<ReturnType<typeof loadWorkspacePerformance>>,
+          )
+        : Promise.resolve(
+            new Map() as Awaited<ReturnType<typeof loadWorkspacePerformance>>,
+          ),
     ]);
     for (const row of variantRes.data ?? []) {
       if (row.parent_post_id) experimentVariantPostIds.add(row.parent_post_id);
@@ -120,6 +150,7 @@ export default async function QueuePage() {
     for (const row of parentRes.data ?? []) {
       if (row.parent_post_id) experimentParentPostIds.add(row.parent_post_id);
     }
+    performance = perfMap;
   }
 
   const rows: QueueDisplayRow[] = deduped.map((p) => {
@@ -129,6 +160,8 @@ export default async function QueuePage() {
     if (experimentVariantPostIds.has(p.id)) experimentStatus = "variant";
     else if (experimentParentPostIds.has(p.id)) experimentStatus = "parent";
     return {
+      perf: perfFor(performance.get(p.id)),
+      dedup: dedupFor(p.generation_metadata),
       id: p.id,
       text: p.text,
       theme: p.theme,
@@ -387,6 +420,31 @@ function renderGrouped(
 function publicUrlFor(storagePath: string): string {
   const base = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "") ?? "";
   return `${base}/storage/v1/object/public/post-media/${storagePath}`;
+}
+
+// T4.1 — distil a scored PostPerformance into the tiny serializable shape the
+// row chip needs. We deliberately drop "pending" verdicts (and absent rows) to
+// null so the client renders nothing until a post's metrics have settled and
+// we have a real ratio to show.
+function perfFor(
+  perf: ReturnType<Awaited<ReturnType<typeof loadWorkspacePerformance>>["get"]>,
+): QueuePerf | null {
+  if (!perf || perf.verdict === "pending") return null;
+  return { ratio: perf.ratio, verdict: perf.verdict };
+}
+
+// T4.1 — read the dedup-on-hit stamp the insert paths write into
+// generation_metadata.dedup ({ kind, score, match_id, match_snippet }). We only
+// surface kind + score + match_snippet to the chip; match_id stays server-side.
+function dedupFor(generationMetadata: unknown): QueueDedup | null {
+  if (!generationMetadata || typeof generationMetadata !== "object") return null;
+  const raw = (generationMetadata as { dedup?: unknown }).dedup;
+  if (!raw || typeof raw !== "object") return null;
+  const d = raw as { kind?: unknown; score?: unknown; match_snippet?: unknown };
+  if (d.kind !== "exact" && d.kind !== "near") return null;
+  const score = typeof d.score === "number" && Number.isFinite(d.score) ? d.score : 0;
+  const snippet = typeof d.match_snippet === "string" ? d.match_snippet : "";
+  return { kind: d.kind, score, match_snippet: snippet };
 }
 
 function Section({

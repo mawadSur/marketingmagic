@@ -24,6 +24,7 @@ import type { Database } from "@/lib/db/types";
 import { xReply, loadFreshXCredentials, type XCredentials } from "@/lib/social/x";
 import { linkedinReply, type LinkedInCredentials } from "@/lib/social/linkedin";
 import { blueskyReply, type BlueskyCredentials } from "@/lib/social/bluesky";
+import { hashContent } from "@/lib/dedup/similarity";
 
 type ServiceClient = SupabaseClient<Database>;
 type SocialAccountRow = Database["public"]["Tables"]["social_accounts"]["Row"];
@@ -73,6 +74,10 @@ export async function sendReplyViaChannel(
       social_account_id: account.id,
       channel: account.channel,
       text: replyText,
+      // Migration 067: every posts insert stamps a content_hash so this row
+      // participates in the dedup corpus via the indexed exact-match fast path
+      // (status 'posted' is an ACTIVE_STATUS, so reply rows are corpus members).
+      content_hash: hashContent(replyText),
       status: "posted",
       generation_metadata: {
         kind: "reply",

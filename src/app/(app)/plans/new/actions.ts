@@ -7,10 +7,13 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseService } from "@/lib/supabase/service";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { generatePlan, type PlanGenResult } from "@/lib/plan/generate";
-import { collectThemeSignals } from "@/lib/plan/signals";
+import { collectThemeSignals, collectPostExemplars } from "@/lib/plan/signals";
+import { collectRecentContent } from "@/lib/plan/recent-content";
 import { collectRejectionSignals } from "@/lib/plan/rejection-signals";
 import { loadRecentPatterns } from "@/lib/explain/playbook";
 import { loadThemeWinners } from "@/lib/analytics/themes";
+import { dedupePosts, type DedupResult } from "@/lib/dedup/gate";
+import { hashContent } from "@/lib/dedup/similarity";
 import { recommendHashtagsForChannels } from "@/lib/hashtags/recommend";
 import { gatherCompetitorInsights } from "@/lib/plan/competitor-insights-gather";
 import { backfillHashtagsForPosts } from "@/lib/hashtags/backfill";
@@ -144,8 +147,24 @@ export async function generatePlanAction(
   // Phase 6.10: per-channel hashtag suggestions, drawn from this
   // workspace's own tag history (free, no LLM call). The generator
   // weaves them in as soft hints; the /queue chip row is the binding UI.
+  // Phase 8 (dedup wedge): two new planner signals ride alongside the rest.
+  //   - recentContent: the workspace's own recently-posted + still-queued posts,
+  //     so Claude can SEE what's already there and add new angles instead of
+  //     re-generating the same handful every week (the soft, generative half of
+  //     dedup — the hard gate below catches anything that slips through).
+  //   - postExemplars: the few best + worst individual posts (decay-weighted),
+  //     so Claude studies the shapes that land for THIS brand and avoids the
+  //     shapes that flop.
   const channelsToScan = Array.from(new Set(channelMix.map((c) => c.channel)));
-  const [themeSignals, rejections, savedPatterns, hashtagSuggestions, themeWinners] = await Promise.all([
+  const [
+    themeSignals,
+    rejections,
+    savedPatterns,
+    hashtagSuggestions,
+    themeWinners,
+    recentContent,
+    postExemplars,
+  ] = await Promise.all([
     collectThemeSignals(ws.id),
     collectRejectionSignals(ws.id),
     loadRecentPatterns(ws.id),
@@ -154,6 +173,8 @@ export async function generatePlanAction(
     // workspace baseline on the upside. Surfaced as a "themes that have
     // been working" block in the system prompt. Universal — not Founder-tier.
     loadThemeWinners(ws.id, 5),
+    collectRecentContent(ws.id),
+    collectPostExemplars(ws.id),
   ]);
   const { winners, losers, parent_plan_id } = themeSignals;
 
@@ -215,6 +236,8 @@ export async function generatePlanAction(
         hashtagSuggestions,
         themeWinners,
         competitorInsights,
+        recentContent,
+        postExemplars,
       });
 
       const avgVoice = averageVoiceScore(attemptResult);
@@ -282,26 +305,30 @@ export async function generatePlanAction(
     idea_label: string | null;
     voice_score?: number;
   };
-  let flatVariants: FlatVariant[];
-  if (result.plan.ideas) {
-    flatVariants = result.plan.ideas.flatMap((idea) => {
-      const ideaId = crypto.randomUUID();
-      return idea.variants
-        .filter((v) => !v.skip)
-        .map((v) => ({
-          channel: v.channel,
-          text: v.text,
-          theme: idea.theme,
-          suggested_scheduled_at: idea.suggested_scheduled_at,
-          rationale: v.rationale,
-          image_prompt: v.image_prompt,
-          idea_id: ideaId,
-          idea_label: idea.idea_label,
-          voice_score: v.voice_score,
-        }));
-    });
-  } else {
-    flatVariants = (result.plan.posts ?? []).map((p) => ({
+  // Flatten a plan's ideas[] / legacy posts[] into the per-row variant shape.
+  // Factored out of the inline build below so the dedup exact-hit path can
+  // re-flatten a regenerated plan with identical semantics (idea grouping,
+  // skip handling, per-variant voice scores) instead of duplicating it.
+  const flattenVariants = (plan: PlanGenResult["plan"]): FlatVariant[] => {
+    if (plan.ideas) {
+      return plan.ideas.flatMap((idea) => {
+        const ideaId = crypto.randomUUID();
+        return idea.variants
+          .filter((v) => !v.skip)
+          .map((v) => ({
+            channel: v.channel,
+            text: v.text,
+            theme: idea.theme,
+            suggested_scheduled_at: idea.suggested_scheduled_at,
+            rationale: v.rationale,
+            image_prompt: v.image_prompt,
+            idea_id: ideaId,
+            idea_label: idea.idea_label,
+            voice_score: v.voice_score,
+          }));
+      });
+    }
+    return (plan.posts ?? []).map((p) => ({
       channel: p.channel,
       text: p.text,
       theme: p.theme,
@@ -312,7 +339,93 @@ export async function generatePlanAction(
       idea_label: null,
       voice_score: p.voice_score,
     }));
+  };
+
+  let flatVariants: FlatVariant[] = flattenVariants(result.plan);
+
+  // ── Content dedup gate (Phase 8 — dedup wedge) ───────────────────────────
+  //
+  // Before we build the posts payload we check this batch of variants against
+  // the workspace's recent + queued corpus AND against each other. The gate is
+  // channel-AGNOSTIC: the same caption on X and on IG is still a duplicate.
+  //
+  // Two-tier handling, driven by the DEDUP-ON-HIT policy:
+  //   - "near"  : flag the row — pending_approval + low_confidence + a dedup
+  //               note in generation_metadata — so a human looks before it
+  //               ships. We never auto-publish a near-dup.
+  //   - "exact" : same as near, BUT first we give Claude one chance to fix it.
+  //               An exact collision means the planner literally re-emitted a
+  //               post the workspace already has. We append a retryNote naming
+  //               the problem and regenerate ONCE via the existing best-of-3
+  //               harness, then re-run the gate. Only the exact hits that
+  //               SURVIVE the regen get flagged-and-kept.
+  //
+  // This path can AUTO-PUBLISH on trusted channels, so the gate runs fail-SAFE:
+  // a read failure inside dedupePosts flags every candidate as "near", routing
+  // it to pending_approval — a possible duplicate can never silently auto-publish
+  // during a DB blip (the cost is a manual-review nudge, not a blocked plan).
+  let dedupResults: DedupResult[] = await dedupePosts(
+    ws.id,
+    flatVariants.map((v) => ({ text: v.text, channel: v.channel as ChannelId })),
+    { failSafe: true },
+  );
+
+  // If ANY variant is an exact re-emit of existing content, regenerate once.
+  // We only do this for "exact" (not "near"): a near-dup is a judgement call a
+  // human should make, but an exact collision is unambiguous waste of a slot,
+  // and the retry harness already exists to nudge Claude toward better output.
+  if (dedupResults.some((r) => r.verdict === "exact")) {
+    try {
+      const dedupRetryNote =
+        "Some posts in your previous attempt were IDENTICAL to content this " +
+        "workspace has already posted or already has queued — an exact repeat " +
+        "wastes the slot. Produce genuinely DIFFERENT ideas and angles this " +
+        "pass: do not re-emit any post that matches something already in the " +
+        "queue or recently posted. Bring new hooks, new examples, new themes.";
+      const regen = await generatePlan({
+        brief: briefRes.data,
+        channelMix,
+        weeks: parsed.data.weeks,
+        startDate,
+        winners,
+        losers,
+        rejections,
+        savedPatterns,
+        retryNote: dedupRetryNote,
+        hashtagSuggestions,
+        themeWinners,
+        competitorInsights,
+        recentContent,
+        postExemplars,
+      });
+      const regenVariants = flattenVariants(regen.plan);
+      const regenDedup = await dedupePosts(
+        ws.id,
+        regenVariants.map((v) => ({ text: v.text, channel: v.channel as ChannelId })),
+        { failSafe: true },
+      );
+      // Keep the regenerated set only if it's no worse on exact dups than the
+      // first — otherwise the original best-of-3 voice winner stands and we
+      // simply flag whatever exact hits remain.
+      const exactBefore = dedupResults.filter((r) => r.verdict === "exact").length;
+      const exactAfter = regenDedup.filter((r) => r.verdict === "exact").length;
+      if (exactAfter <= exactBefore) {
+        result = regen;
+        flatVariants = regenVariants;
+        dedupResults = regenDedup;
+      }
+    } catch (err) {
+      // A regen failure must never block the plan — keep the first attempt and
+      // fall through to flagging its exact hits below.
+      console.warn("Dedup exact-hit regeneration failed; flagging duplicates:", err);
+    }
   }
+
+  // Index-aligned dedup verdict for each flatVariant, for the payload build to
+  // apply the DEDUP-ON-HIT policy per row. dedupePosts preserves input order
+  // and returns one result per candidate, so position lines up with flatVariants.
+  const dedupByIdx = new Map<number, DedupResult>();
+  for (const r of dedupResults) dedupByIdx.set(r.index, r);
 
   // Phase 6.5 — Smart Timing integration.
   //
@@ -549,7 +662,27 @@ export async function generatePlanAction(
       socialAccountId: acct.id,
       channel: acct.channel,
     });
-    const effectiveTrusted = trusted && !wantsVideo && !wantsUgc;
+    // DEDUP-ON-HIT policy. A candidate the gate flagged as "exact" or "near"
+    // (the exact ones already survived one regeneration above) is forced to
+    // pending_approval — a duplicate can NEVER auto-publish, even on a trusted
+    // channel — and marked low_confidence so the queue surfaces it for review.
+    // The match details ride along in generation_metadata.dedup for the UI.
+    const dedup = dedupByIdx.get(idx);
+    const isDup = dedup !== undefined && dedup.verdict !== "ok";
+    const dedupMeta =
+      dedup && dedup.verdict !== "ok" && dedup.match
+        ? {
+            kind: dedup.verdict,
+            score: dedup.match.score,
+            match_id: dedup.match.existingId,
+            match_snippet: dedup.match.existingText.slice(0, 140),
+          }
+        : null;
+
+    // Videos already force review; a dedup hit forces it too. low_confidence is
+    // OR'd so a duplicate is always flagged regardless of its voice score.
+    const lowConfidenceFinal = lowConfidence || isDup;
+    const effectiveTrusted = trusted && !wantsVideo && !wantsUgc && !isDup;
     videoMeta.push({
       wantsVideo,
       socialAccountId: acct.id,
@@ -582,7 +715,10 @@ export async function generatePlanAction(
           | "scheduled"
           | "pending_approval",
         voice_score: voiceScore,
-        low_confidence: lowConfidence,
+        low_confidence: lowConfidenceFinal,
+        // Always stamp the content hash (computed from the truncated text we
+        // actually store) so this row is dedup-able by every future insert-path.
+        content_hash: hashContent(text),
         idea_id: p.idea_id,
         generation_metadata: {
           rationale: p.rationale,
@@ -591,6 +727,7 @@ export async function generatePlanAction(
           image_prompt: p.image_prompt ?? null,
           idea_label: p.idea_label,
           timing_source: timingSource,
+          dedup: dedupMeta,
         },
       },
     ];

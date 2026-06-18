@@ -33,6 +33,30 @@ export interface QueueDisplayRow {
   // Hormozi slice #4 — variation batch tag (migration 060). Non-null on
   // "Generate 30 variations" drafts; groups them into one collapsible row.
   variation_group_id: string | null;
+  // T4.1 — serializable performance + dedup signals for the row chips. Both
+  // are plain data (no ReactNode) so they cross the server/client boundary
+  // cleanly, exactly like voice_score / low_confidence above. `perf` is only
+  // set for posted rows we could actually score to a non-pending verdict;
+  // `dedup` mirrors generation_metadata.dedup when a near/exact match flagged
+  // this draft at insert time.
+  perf?: QueuePerf | null;
+  dedup?: QueueDedup | null;
+}
+
+// A row's performance chip data, distilled from PostPerformance to just what
+// the chip renders. Kept tiny + serializable.
+export interface QueuePerf {
+  ratio: number | null;
+  verdict: "winner" | "strong" | "average" | "underperformer";
+}
+
+// The dedup-on-hit stamp written into generation_metadata.dedup by the insert
+// paths (see migration 067 + the dedup gate). Surfaced as the "Similar to a
+// recent post" warning chip.
+export interface QueueDedup {
+  kind: "exact" | "near";
+  score: number;
+  match_snippet: string;
 }
 
 // One render unit in the queue, post-grouping. `sortKey` orders units against

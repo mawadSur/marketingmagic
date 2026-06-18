@@ -71,6 +71,12 @@ interface PostRow {
   // an active experiment). Suppresses the "Run Quick Experiment"
   // button so we don't recursively spawn experiments-of-experiments.
   experiment_status?: "parent" | "variant" | null;
+  // T4.1 — serializable performance + dedup signals. `perf` is non-null only
+  // for posted rows with a settled (non-pending) verdict; `dedup` is set when
+  // this draft was flagged as a near/exact duplicate at insert time. Both are
+  // plain data so they cross the server/client boundary like voice_score does.
+  perf?: { ratio: number | null; verdict: "winner" | "strong" | "average" | "underperformer" } | null;
+  dedup?: { kind: "exact" | "near"; score: number; match_snippet: string } | null;
 }
 
 // Phase 6.10: server-rendered hashtag chip row, passed in as a slot so
@@ -82,6 +88,44 @@ interface PostRow {
 export interface QueueRowSlots {
   hashtagRow?: React.ReactNode;
   tagRow?: React.ReactNode;
+}
+
+// T4.1 — compact performance chip. Only rendered for POSTED rows that scored
+// to a non-pending verdict (the server already nulls `perf` otherwise). Winners
+// read emerald, underperformers amber, strong/average stay neutral so the eye
+// is drawn to the extremes. e.g. "1.8× · winner" / "0.4× · underperforming".
+const PERF_VERDICT_LABEL: Record<NonNullable<PostRow["perf"]>["verdict"], string> = {
+  winner: "winner",
+  strong: "strong",
+  average: "average",
+  underperformer: "underperforming",
+};
+
+function PerfChip({ perf, status }: { perf: NonNullable<PostRow["perf"]>; status: string }) {
+  // Defensive: contract says posted-only, non-pending. `perf` is already null
+  // for pending verdicts, but guard the status here too so a stray non-posted
+  // row never sprouts a performance chip.
+  if (status !== "posted") return null;
+  const tone =
+    perf.verdict === "winner"
+      ? "border-emerald-500/40 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400"
+      : perf.verdict === "underperformer"
+        ? "border-amber-500/40 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400"
+        : "border-border bg-muted/40 text-muted-foreground";
+  const ratioLabel = perf.ratio != null ? `${perf.ratio.toFixed(1)}× · ` : "";
+  return (
+    <span
+      title={
+        perf.ratio != null
+          ? `${perf.ratio.toFixed(2)}× the recent baseline engagement rate`
+          : "Scored against your recent posts"
+      }
+      className={`rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${tone}`}
+    >
+      {ratioLabel}
+      {PERF_VERDICT_LABEL[perf.verdict]}
+    </span>
+  );
 }
 
 const REJECTION_REASONS: Array<{ value: RejectionReason; label: string; helper: string }> = [
@@ -332,6 +376,21 @@ export function QueueRow({
           )}
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
+          {/* T4.1 — performance chip (posted rows, settled verdict only). */}
+          {post.perf ? <PerfChip perf={post.perf} status={post.status} /> : null}
+          {/* T4.1 — dedup warning chip. Present whenever this draft was flagged
+              as a near/exact duplicate at insert time; tooltip shows the matched
+              snippet + similarity score. Reuses the amber low-confidence look. */}
+          {post.dedup ? (
+            <span
+              title={`Similar to a recent post (${Math.round(
+                post.dedup.score * 100,
+              )}% match)${post.dedup.match_snippet ? `: "${post.dedup.match_snippet}"` : ""}`}
+              className="rounded-md border border-amber-500/40 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-950/30 dark:text-amber-400"
+            >
+              Similar to a recent post
+            </span>
+          ) : null}
           {post.low_confidence ? (
             <span
               title={

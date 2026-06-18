@@ -34,6 +34,12 @@ export interface AtomizeInputs {
   // Soft target for how many atoms to produce. The model may produce fewer if
   // the source is thin or more if it's dense, but this anchors the ask.
   atomTarget: number;
+  // Optional "don't repeat these" context — short snippets of what the
+  // workspace already has queued or recently posted (newest first). Lets the
+  // atomizer steer AWAY from angles already covered before its output ever hits
+  // the dedup gate. Best-effort; absent/empty → the block renders nothing and
+  // the gate alone (atomize-actions) catches collisions after the fact.
+  avoidRecent?: string[];
 }
 
 // Compact voice-profile rendering. Mirrors the planner's voiceProfileBlock but
@@ -106,6 +112,21 @@ function sourceBlock(src: SourceContext): string {
   return lines.join("\n") + "\n";
 }
 
+// "Already in the queue / recently posted — don't repeat these" block. Renders
+// nothing when there's no recent content, so a fresh workspace's prompt is
+// unchanged. Snippets are pre-clamped upstream (collectRecentContent slices to
+// ~140 chars); we cap the count here purely to keep the system prompt compact.
+function avoidRecentBlock(snippets?: string[]): string {
+  if (!snippets || snippets.length === 0) return "";
+  const lines: string[] = [
+    "## Already in your queue or recently posted — do NOT recreate these",
+    "These angles are already covered. Pull DIFFERENT points out of the source — a stat, story, " +
+      "or take these don't already say. Never re-state one of these in new words.",
+  ];
+  for (const s of snippets.slice(0, 24)) lines.push(`- "${s}"`);
+  return lines.join("\n") + "\n";
+}
+
 export function atomizeSystemPrompt(inputs: AtomizeInputs): string {
   const { brief } = inputs;
   const voiceProfile = brief.voice_profile as VoiceProfile | null;
@@ -134,6 +155,7 @@ export function atomizeSystemPrompt(inputs: AtomizeInputs): string {
       : "",
     voiceProfile ? voiceProfileBlock(voiceProfile) : "",
     sourceBlock(inputs.source),
+    avoidRecentBlock(inputs.avoidRecent),
     "## Channel constraints",
     ...channels.map((c) => `- ${CHANNELS[c].label}: ${CHANNELS[c].promptConstraint}`),
     "",

@@ -22,6 +22,7 @@ import { applyAttribution } from "@/lib/growth/attribution";
 import { vestReferralOnFirstPost } from "@/lib/growth/referrals";
 import { isRetryableError } from "@/lib/social/errors";
 import { readThreadMeta } from "@/lib/threads/schema";
+import { hashContent } from "@/lib/dedup/similarity";
 
 type ActionResult = { error: string | null };
 type GenerateImageResult = { error: string | null; publicUrl: string | null };
@@ -294,9 +295,12 @@ export async function editPostAction(postId: string, text: string): Promise<Acti
   }
   if (post.text === parsed.data) return { error: null };
 
+  // Refresh content_hash alongside the text — a stale hash would let a true
+  // exact-dup of the edited body slip past the dedup gate's exact-match path
+  // (and, in trust mode, straight to auto-publish).
   const { error: updateErr } = await supabase
     .from("posts")
-    .update({ text: parsed.data })
+    .update({ text: parsed.data, content_hash: hashContent(parsed.data) })
     .eq("id", postId);
   if (updateErr) return { error: updateErr.message };
 
@@ -685,7 +689,7 @@ export async function setPostHashtagsAction(
 
   const { error: updateErr } = await supabase
     .from("posts")
-    .update({ text: finalText })
+    .update({ text: finalText, content_hash: hashContent(finalText) })
     .eq("id", postId);
   if (updateErr) return { error: updateErr.message };
 
@@ -773,7 +777,7 @@ export async function setPostTagsAction(
 
   const { error: updateErr } = await supabase
     .from("posts")
-    .update({ tags: normalized, text: finalText })
+    .update({ tags: normalized, text: finalText, content_hash: hashContent(finalText) })
     .eq("id", postId);
   if (updateErr) return { error: updateErr.message, tags: [] };
 

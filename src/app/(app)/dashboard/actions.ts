@@ -5,8 +5,9 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseService } from "@/lib/supabase/service";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { generatePlan, type PlanGenResult } from "@/lib/plan/generate";
-import { collectThemeSignals } from "@/lib/plan/signals";
+import { collectThemeSignals, collectPostExemplars } from "@/lib/plan/signals";
 import { collectRejectionSignals } from "@/lib/plan/rejection-signals";
+import { collectRecentContent } from "@/lib/plan/recent-content";
 import { loadRecentPatterns } from "@/lib/explain/playbook";
 import { loadThemeWinners } from "@/lib/analytics/themes";
 import { channelSpec, ENABLED_CHANNELS, type ChannelId } from "@/lib/channels/registry";
@@ -14,6 +15,8 @@ import type { Channel } from "@/lib/db/types";
 import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementPostsGenerated } from "@/lib/billing/usage";
 import { getOptimalWindows, nextOptimalSlotIso } from "@/lib/timing/analyze";
+import { dedupePosts } from "@/lib/dedup/gate";
+import { hashContent } from "@/lib/dedup/similarity";
 
 // Phase 6.9 — one-click regen action for the Neglected Themes widget.
 //
@@ -105,11 +108,27 @@ export async function regenerateThemeAction(
   // synthesize an extra retryNote that locks the model to the requested
   // theme. We don't add a new schema field — the existing retryNote pipe
   // is the cheapest carrier for this one-shot instruction.
-  const [themeSignals, rejections, savedPatterns, themeWinners] = await Promise.all([
+  //
+  // recentContent + postExemplars are the dedup-wedge additions: the
+  // workspace's already-queued/posted content (so a single-theme regen
+  // doesn't just re-emit angles already sitting in the queue) and the
+  // best/worst individual posts to shape toward / away from. Both are
+  // best-effort — they default to [] on empty and the prompt blocks render
+  // nothing, so the planner behaves exactly as before when there's no history.
+  const [
+    themeSignals,
+    rejections,
+    savedPatterns,
+    themeWinners,
+    recentContent,
+    postExemplars,
+  ] = await Promise.all([
     collectThemeSignals(ws.id),
     collectRejectionSignals(ws.id),
     loadRecentPatterns(ws.id),
     loadThemeWinners(ws.id, 5),
+    collectRecentContent(ws.id),
+    collectPostExemplars(ws.id),
   ]);
   const { winners, losers, parent_plan_id } = themeSignals;
 
@@ -130,6 +149,8 @@ export async function regenerateThemeAction(
       rejections,
       savedPatterns,
       themeWinners,
+      recentContent,
+      postExemplars,
       retryNote: themeNote,
     });
   } catch (err) {
@@ -262,7 +283,9 @@ export async function regenerateThemeAction(
     voice_score: number | null;
     low_confidence: boolean;
     idea_id: string | null;
-    generation_metadata: import("@/lib/db/types").Json;
+    content_hash: string;
+    // Mutable: the dedup gate may flag a row below and stamp dedup info here.
+    generation_metadata: Record<string, unknown>;
   }> = [];
 
   for (const v of limitedVariants) {
@@ -292,6 +315,10 @@ export async function regenerateThemeAction(
       voice_score: voiceScore,
       low_confidence: lowConfidence,
       idea_id: v.idea_id,
+      // Always stamp the content hash of the text we actually store (post-
+      // truncation) so the dedup gate's exact-match path works on this row
+      // forever — including for future regens that compare against it.
+      content_hash: hashContent(text),
       generation_metadata: {
         rationale: v.rationale,
         cache_read_input_tokens: result.usage.cache_read_input_tokens ?? 0,
@@ -313,7 +340,53 @@ export async function regenerateThemeAction(
     };
   }
 
-  const { error: insertErr } = await svc.from("posts").insert(postsPayload);
+  // Content dedup gate (Phase 8). Check every row about to be inserted against
+  // the workspace's recent + queued corpus AND against each other (intra-batch),
+  // channel-agnostic. The gate is loaded once for the whole batch. dedupePosts
+  // returns one verdict per candidate, indexed in payload order — so result
+  // index N maps to postsPayload[N].
+  //
+  // DEDUP-ON-HIT POLICY: a row whose verdict is "exact" or "near" is forced to
+  // pending_approval (already the only status this action ever writes, so a
+  // regen dup can NEVER auto-publish), marked low_confidence, and stamped with a
+  // generation_metadata.dedup record so the queue UI / reviewer can see why it
+  // was flagged. This is the base policy — the plans/new path additionally
+  // regenerates once on exact hits, but a themed regen already requires a human
+  // glance, so flagging is the right floor here.
+  try {
+    const dedupResults = await dedupePosts(
+      ws.id,
+      postsPayload.map((p) => ({ text: p.text, channel: p.channel as ChannelId })),
+    );
+    for (const r of dedupResults) {
+      if (r.verdict === "ok") continue;
+      const row = postsPayload[r.index];
+      if (!row) continue;
+      row.low_confidence = true;
+      row.generation_metadata = {
+        ...row.generation_metadata,
+        dedup: {
+          kind: r.verdict,
+          score: r.match?.score ?? null,
+          match_id: r.match?.existingId ?? null,
+          match_snippet: r.match?.existingText
+            ? r.match.existingText.replace(/\s+/g, " ").trim().slice(0, 140)
+            : null,
+        },
+      };
+    }
+  } catch (err) {
+    // Fail-open: the dedup gate is a guardrail, not a hard dependency. If it
+    // throws we still write the posts (all already pending_approval) rather than
+    // block the regen entirely.
+    console.warn("Theme regen dedup gate failed (proceeding):", err);
+  }
+
+  const insertPayload = postsPayload.map((p) => ({
+    ...p,
+    generation_metadata: p.generation_metadata as import("@/lib/db/types").Json,
+  }));
+  const { error: insertErr } = await svc.from("posts").insert(insertPayload);
   if (insertErr) {
     await svc.from("posting_plans").delete().eq("id", planRow.id);
     return { error: insertErr.message, planId: null, postsCreated: 0 };

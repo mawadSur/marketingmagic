@@ -85,6 +85,18 @@ export interface PlanGenInputs {
   // unchanged from current behaviour. The research pass is best-effort —
   // failure produces undefined here, never throws into the planner.
   competitorInsights?: CompetitorInsight[];
+  // Phase 8 (dedup wedge): a window of the workspace's own recently-posted
+  // and still-queued content, newest first. Surfaced so the planner knows
+  // what already exists and stops re-generating the same angles. Collected
+  // by src/lib/plan/recent-content.ts (last 45d, ~24 newest). When
+  // undefined or empty, the block is skipped.
+  recentContent?: RecentContentSignal[];
+  // Phase 8: the workspace's best and worst *individual* posts, scored per
+  // post (not per theme) against a decay-weighted baseline. Lets the
+  // planner lean toward proven shapes and away from flops. Collected by
+  // collectPostExemplars() in src/lib/plan/signals.ts. When undefined or
+  // empty, the block is skipped.
+  postExemplars?: PostExemplar[];
 }
 
 // Phase 6A — single row of the "themes that have been working" block.
@@ -98,6 +110,32 @@ export interface ThemeWinnerSignal {
   ci_high: number;
   posts: number;
   lift: number;
+}
+
+// Phase 8 (dedup wedge) — one already-queued-or-posted piece of content,
+// projected for the prompt so Claude can avoid repeating itself. The
+// planner has historically had no idea what's already sitting in the
+// queue, so it would happily re-generate the same five "budgeting tips"
+// posts week after week. `snippet` is a short slice of the post text
+// (the collector clamps it to ~140 chars); `status` tells Claude whether
+// the post already went out or is still waiting in the queue.
+export interface RecentContentSignal {
+  theme: string | null;
+  status: "posted" | "scheduled" | "pending_approval";
+  snippet: string;
+}
+
+// Phase 8 — a single individual-post exemplar (not a theme aggregate).
+// `verdict` is the per-post score from src/lib/feedback/post-performance.ts:
+// winners ran well above this workspace's decay-weighted baseline,
+// underperformers well below it. `ratio` is engagement_rate / baseline
+// (e.g. 2.1 = 2.1× baseline). The text is surfaced verbatim so Claude can
+// study the *shape* of what worked — never to copy the words.
+export interface PostExemplar {
+  verdict: "winner" | "underperformer";
+  theme: string | null;
+  ratio: number;
+  text: string;
 }
 
 // Renders a "Preferred patterns from your saved playbook" block. Each line
@@ -141,6 +179,113 @@ function themeWinnersBlock(winners: ThemeWinnerSignal[] | undefined): string {
     lines.push(
       `- ${w.tag} — posterior ${pct(w.posterior_mean)} engagement (${w.lift.toFixed(2)}× baseline, CI ${pct(w.ci_low)}–${pct(w.ci_high)}, ${w.posts} post${w.posts === 1 ? "" : "s"})`,
     );
+  }
+  return lines.join("\n") + "\n";
+}
+
+// AI-generated snippet/text/theme values are user-editable and get
+// interpolated raw into the system prompt. A body containing a newline
+// followed by "## " would inject a fake heading, and an embedded double-
+// quote would break the "..." wrapping we render around snippets. This
+// neutralizes all three: collapse every run of whitespace (incl. newlines)
+// to a single space, strip leading markdown markers, and remove embedded
+// double-quotes so the value renders as one inert line.
+function sanitizePromptText(s: string): string {
+  return s
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^#+\s*/, "")
+    .replace(/^[-*]\s+/, "")
+    .replace(/"/g, "")
+    .trim();
+}
+
+// Normalize a snippet/text for cross-block dedupe matching: lowercase and
+// collapse all whitespace to single spaces so a recentContent snippet that is
+// a clamped prefix of (or otherwise contained in) an exemplar can be matched
+// robustly via substring containment in either direction.
+function normalizeForDedupe(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+// Phase 8 (dedup wedge): render the "already in your queue or recently
+// posted" block. This is the planner's memory of what it (or the user)
+// has already produced — without it the generator re-writes the same
+// handful of angles every week. We lead with a per-theme tally so Claude
+// can see at a glance which themes are already saturated, then list the
+// newest items so it can avoid colliding with specific posts. The three
+// hard rules are the heart of the dedup wedge: new angles only, don't
+// pile onto an already-queued theme, and prefer a fresh angle (or, when
+// the brief allows, a different theme) over rephrasing what's queued.
+export function recentContentBlock(items: RecentContentSignal[] | undefined): string {
+  if (!items || items.length === 0) return "";
+  const lines: string[] = [
+    "## Already in your queue or recently posted — DO NOT REPEAT THESE",
+  ];
+
+  // Per-theme tally, ordered most-saturated first (e.g. "budgeting ×5,
+  // hiring ×2"). Untagged items are bucketed under "(untagged)" so the
+  // count still reflects the real volume.
+  const counts = new Map<string, number>();
+  for (const it of items) {
+    const key = it.theme ? sanitizePromptText(it.theme) : "(untagged)";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const tally = Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([theme, n]) => `${theme} ×${n}`)
+    .join(", ");
+  if (tally) lines.push(`Already covered: ${tally}`);
+
+  lines.push("");
+  // Up to 24 newest items (the collector already orders newest-first and
+  // caps the list, but we clamp again defensively).
+  for (const it of items.slice(0, 24)) {
+    const theme = it.theme ? sanitizePromptText(it.theme) : "(untagged)";
+    lines.push(`- [${it.status}] ${theme} — "${sanitizePromptText(it.snippet)}"`);
+  }
+
+  lines.push("");
+  lines.push("Hard rules for this block:");
+  lines.push(
+    "- Only add genuinely NEW angles. If an idea overlaps one above, drop it or attack the topic from a different direction.",
+  );
+  lines.push(
+    "- Don't over-index a theme that's already queued heavily — if a theme appears 4+ times above, prefer a fresh theme over piling on another post.",
+  );
+  lines.push(
+    "- When a theme is saturated, prefer finding a genuinely NEW ANGLE within it (or varying the format) over rephrasing something already in the queue. Only switch to a different theme if the brief allows it.",
+  );
+  return lines.join("\n") + "\n";
+}
+
+// Phase 8: render the "your best and worst individual posts" block. Unlike
+// themeWinnersBlock (which aggregates by theme), this surfaces specific
+// posts scored per-post against a decay-weighted baseline. Winners teach
+// the planner the *shape* that lands for this brand; underperformers show
+// the shape to steer clear of. We are emphatic that this is about energy
+// and structure, never the words — copying the text verbatim would defeat
+// the dedup wedge this batch ships alongside.
+export function postExemplarsBlock(items: PostExemplar[] | undefined): string {
+  if (!items || items.length === 0) return "";
+  const winners = items.filter((e) => e.verdict === "winner");
+  const losers = items.filter((e) => e.verdict === "underperformer");
+  const lines: string[] = ["## Your best and worst individual posts"];
+  if (winners.length > 0) {
+    lines.push("");
+    lines.push(
+      "These landed well above baseline — write more posts shaped like these — same energy, NOT the same words:",
+    );
+    for (const w of winners) {
+      lines.push(`- [${w.ratio.toFixed(1)}× baseline] "${sanitizePromptText(w.text)}"`);
+    }
+  }
+  if (losers.length > 0) {
+    lines.push("");
+    lines.push("These fell well below baseline — avoid this shape/angle:");
+    for (const l of losers) {
+      lines.push(`- [${l.ratio.toFixed(1)}× baseline] "${sanitizePromptText(l.text)}"`);
+    }
   }
   return lines.join("\n") + "\n";
 }
@@ -303,6 +448,25 @@ export function planSystemPrompt(inputs: PlanGenInputs): string {
   const voiceProfile = brief.voice_profile as VoiceProfile | null;
   const activeChannels = Array.from(new Set(inputs.channelMix.map((c) => c.channel)));
 
+  // Cross-block dedupe: recentContent (45d, includes posted) and postExemplars
+  // (28d winners, also posted) overlap, so the same winning post can land in
+  // BOTH "DO NOT REPEAT THESE" and "write more like these" — contradictory.
+  // Drop any recentContent item whose snippet is contained in (or contains)
+  // an exemplar's text once both are normalized; exemplars win because their
+  // block teaches the planner the shape to emulate.
+  const exemplarNorms = (inputs.postExemplars ?? []).map((e) =>
+    normalizeForDedupe(e.text),
+  );
+  const recentContent = exemplarNorms.length
+    ? (inputs.recentContent ?? []).filter((it) => {
+        const snip = normalizeForDedupe(it.snippet);
+        if (!snip) return true;
+        return !exemplarNorms.some(
+          (ex) => ex.includes(snip) || snip.includes(ex),
+        );
+      })
+    : inputs.recentContent;
+
   return [
     "You are the planning brain of marketingmagic, a marketing-automation tool.",
     "Your job: produce a posting plan that sounds like the brand wrote it themselves.",
@@ -329,7 +493,9 @@ export function planSystemPrompt(inputs: PlanGenInputs): string {
       : "",
     voiceProfile ? voiceProfileBlock(voiceProfile) : "",
     savedPatternsBlock(inputs.savedPatterns),
+    recentContentBlock(recentContent),
     themeWinnersBlock(inputs.themeWinners),
+    postExemplarsBlock(inputs.postExemplars),
     competitorInsightsBlock(inputs.competitorInsights),
     sourceBlock(inputs.source),
     recommendedHashtagsBlock(inputs.hashtagSuggestions, activeChannels),

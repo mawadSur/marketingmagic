@@ -8,11 +8,14 @@ import { supabaseService } from "@/lib/supabase/service";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { generatePostsFromGoal } from "@/lib/goals/generate-plan";
 import { proposeStrategyResultSchema, type GoalStrategy } from "@/lib/goals/schema";
-import { collectThemeSignals } from "@/lib/plan/signals";
+import { collectThemeSignals, collectPostExemplars } from "@/lib/plan/signals";
 import { collectRejectionSignals } from "@/lib/plan/rejection-signals";
+import { collectRecentContent } from "@/lib/plan/recent-content";
 import { loadRecentPatterns } from "@/lib/explain/playbook";
 import { loadThemeWinners } from "@/lib/analytics/themes";
 import { gatherCompetitorInsights } from "@/lib/plan/competitor-insights-gather";
+import { dedupePosts } from "@/lib/dedup/gate";
+import { hashContent } from "@/lib/dedup/similarity";
 import {
   channelSpec,
   ENABLED_CHANNELS,
@@ -169,11 +172,26 @@ export async function generatePostsAction(
     throw err;
   }
 
-  const [themeSignals, rejections, savedPatterns, themeWinners] = await Promise.all([
+  // recentContent + postExemplars are the dedup-wedge additions: the
+  // workspace's already-queued/posted content (so a goal-anchored plan
+  // doesn't re-emit angles already sitting in the queue) and the best/worst
+  // individual posts to shape toward / away from. Both are best-effort —
+  // they default to [] on empty and the prompt blocks render nothing, so the
+  // planner behaves exactly as before when there's no history.
+  const [
+    themeSignals,
+    rejections,
+    savedPatterns,
+    themeWinners,
+    recentContent,
+    postExemplars,
+  ] = await Promise.all([
     collectThemeSignals(ws.id),
     collectRejectionSignals(ws.id),
     loadRecentPatterns(ws.id),
     loadThemeWinners(ws.id, 5),
+    collectRecentContent(ws.id),
+    collectPostExemplars(ws.id),
   ]);
 
   const competitorInsights = await gatherCompetitorInsights({
@@ -201,6 +219,8 @@ export async function generatePostsAction(
       savedPatterns,
       themeWinners,
       competitorInsights,
+      recentContent,
+      postExemplars,
     });
   } catch (err) {
     return {
@@ -298,7 +318,7 @@ export async function generatePostsAction(
         workspace_id: ws.id,
         plan_id: planRow.id,
         social_account_id: acct.id,
-        channel: acct.channel,
+        channel: acct.channel as ChannelId,
         text,
         theme: p.theme,
         scheduled_at: p.suggested_scheduled_at,
@@ -312,6 +332,10 @@ export async function generatePostsAction(
         // any post that wasn't generated through this path — the future
         // progress dashboard treats NULL as "not goal-attributed".
         goal_id: goalId,
+        // Phase 8 (dedup wedge): stamp the stable content hash on EVERY row
+        // (all insert-paths do this) so future dedup passes get the fast
+        // exact-match lane. Computed off the truncated text we actually store.
+        content_hash: hashContent(text),
         generation_metadata: {
           rationale: p.rationale,
           cache_read_input_tokens: result.usage.cache_read_input_tokens ?? 0,
@@ -319,7 +343,7 @@ export async function generatePostsAction(
           image_prompt: p.image_prompt ?? null,
           idea_label: p.idea_label,
           goal_id: goalId,
-        },
+        } as Json,
       },
     ];
   });
@@ -330,6 +354,40 @@ export async function generatePostsAction(
       error: "Claude generated only posts for channels you haven't connected.",
       planId: null,
     };
+  }
+
+  // Phase 8 (dedup wedge): gate the batch against the workspace's recent
+  // corpus AND against itself before insert. dedupePosts is channel-agnostic
+  // (same caption on X and IG is still a dup) and indexed by position, so we
+  // feed it the payload rows in order and patch each hit in place.
+  //
+  // DEDUP-ON-HIT POLICY (uniform across every insert-path): any exact/near hit
+  // is forced to pending_approval (a duplicate can NEVER auto-publish, even on
+  // a trusted channel), flagged low_confidence, and annotated with the match.
+  // No regenerate loop here — the goal generator is one-shot, so flagging is
+  // sufficient; the user glances before a near-dup ships. This path can
+  // auto-publish on trusted channels, so the gate runs fail-SAFE: a corpus read
+  // failure flags every candidate as "near" → pending_approval, so a possible
+  // duplicate can never silently auto-publish during a DB blip.
+  const dedupVerdicts = await dedupePosts(
+    ws.id,
+    postsPayload.map((row) => ({ text: row.text, channel: row.channel })),
+    { failSafe: true },
+  );
+  for (const verdict of dedupVerdicts) {
+    if (verdict.verdict === "ok") continue;
+    const row = postsPayload[verdict.index];
+    if (!row) continue;
+    row.status = "pending_approval";
+    row.low_confidence = true;
+    const meta = (row.generation_metadata ?? {}) as Record<string, unknown>;
+    meta.dedup = {
+      kind: verdict.verdict,
+      score: verdict.match?.score ?? null,
+      match_id: verdict.match?.existingId ?? null,
+      match_snippet: verdict.match?.existingText.slice(0, 140) ?? null,
+    };
+    row.generation_metadata = meta as Json;
   }
 
   const { error: postsErr } = await svc.from("posts").insert(postsPayload);

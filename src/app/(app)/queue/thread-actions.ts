@@ -13,6 +13,7 @@ import { supabaseService } from "@/lib/supabase/service";
 import { getActiveWorkspaceOrRedirect, getAuthedUserOrRedirect } from "@/lib/workspace";
 import { regenerateHook } from "@/lib/threads/generate";
 import { readThreadMeta, X_TWEET_MAX, HOOK_MAX } from "@/lib/threads/schema";
+import { hashContent } from "@/lib/dedup/similarity";
 import type { VoiceProfile, Database } from "@/lib/db/types";
 import type { ThreadStructure } from "@/lib/threads/schema";
 
@@ -96,9 +97,11 @@ export async function editThreadTweetAction(
   }
   if (post.text === parsed.data) return { error: null };
 
+  // Refresh content_hash with the new tweet body so the dedup gate's exact-
+  // match path stays accurate for this row.
   const { error: updateErr } = await supabase
     .from("posts")
-    .update({ text: parsed.data })
+    .update({ text: parsed.data, content_hash: hashContent(parsed.data) })
     .eq("id", postId);
   if (updateErr) return { error: updateErr.message };
 
@@ -212,7 +215,7 @@ export async function regenerateHookAction(ideaId: string): Promise<HookRegenRes
   const user = await getAuthedUserOrRedirect();
   const { error: updateErr } = await supabase
     .from("posts")
-    .update({ text: result.text })
+    .update({ text: result.text, content_hash: hashContent(result.text) })
     .eq("id", hookRow.id);
   if (updateErr) return { error: updateErr.message, newText: null };
 
