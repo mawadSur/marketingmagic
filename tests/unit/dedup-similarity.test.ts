@@ -6,6 +6,9 @@ import {
   jaccard,
   similarity,
   isNearDuplicate,
+  compileText,
+  similarityCompiled,
+  isNearDuplicateCompiled,
   NEAR_DUP_THRESHOLD,
 } from "@/lib/dedup/similarity";
 
@@ -174,5 +177,39 @@ describe("isNearDuplicate", () => {
     const a = "budgeting tips for new founders who want to save money every single month";
     const b = "how to hire your first employee without blowing your entire startup runway";
     expect(isNearDuplicate(a, b)).toBe(false);
+  });
+});
+
+describe("precompiled helpers match their raw counterparts exactly", () => {
+  // The gate's perf path swaps similarity()/isNearDuplicate() for the compiled
+  // variants. They MUST agree bit-for-bit on every input class, or dedup verdicts
+  // would silently drift. Cover: identical, link-only-diff, paraphrase, distinct,
+  // short pairs (the length-aware branch), empty-normalising, and self-pairs.
+  const SAMPLES = [
+    "Big news today: we just shipped dark mode. Try it now!",
+    "Big news today: we just shipped dark mode. Try it now! https://mm.co/x",
+    "Here is the one budgeting tip that completely changed how I run my small business every single month",
+    "Here is the one budgeting tip that completely changed how I run my small business every month",
+    "Five hiring mistakes that quietly killed our first startup team",
+    "Sale!",
+    "Sale",
+    "here is the secret to growth",
+    "here is the secret to failure",
+    "🚀🚀🚀",
+    "#growth @bob https://example.com",
+    "",
+    "a b",
+    "one two three four five",
+  ];
+
+  it("similarityCompiled === similarity and isNearDuplicateCompiled === isNearDuplicate for all pairs", () => {
+    for (const a of SAMPLES) {
+      const ca = compileText(a);
+      for (const b of SAMPLES) {
+        const cb = compileText(b);
+        expect(similarityCompiled(ca, cb)).toBe(similarity(a, b));
+        expect(isNearDuplicateCompiled(ca, cb)).toBe(isNearDuplicate(a, b));
+      }
+    }
   });
 });

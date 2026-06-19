@@ -21,7 +21,27 @@ type Tables = Record<string, Row[]>;
 interface Filter {
   col: string;
   val: unknown;
-  op: "eq" | "is";
+  op: "eq" | "is" | "in" | "gt";
+}
+
+// Shared row matcher so .apply() (reads) and the update side-effect agree on
+// exactly how each filter op behaves.
+function rowMatches(r: Row, filters: Filter[]): boolean {
+  return filters.every((f) => {
+    const cell = r[f.col];
+    switch (f.op) {
+      case "is":
+        return (cell ?? null) === f.val;
+      case "in":
+        return Array.isArray(f.val) && (f.val as unknown[]).includes(cell);
+      case "gt":
+        // ISO date / numeric / string ordering — matches PostgREST's .gt() for
+        // the columns these tests filter on (created_at).
+        return cell != null && f.val != null && (cell as number | string) > (f.val as number | string);
+      default:
+        return cell === f.val;
+    }
+  });
 }
 
 // Parse a PostgREST-style column list ("a, b, c") into field names. "*" or empty
@@ -74,6 +94,14 @@ class Query {
     this.filters.push({ col, val, op: "is" });
     return this;
   }
+  in(col: string, vals: unknown[]) {
+    this.filters.push({ col, val: vals, op: "in" });
+    return this;
+  }
+  gt(col: string, val: unknown) {
+    this.filters.push({ col, val, op: "gt" });
+    return this;
+  }
   order(col: string, opts?: { ascending?: boolean }) {
     this.orderCol = col;
     this.orderAsc = opts?.ascending ?? true;
@@ -90,11 +118,7 @@ class Query {
   }
 
   private apply(): Row[] {
-    let out = this.rows().filter((r) =>
-      this.filters.every((f) =>
-        f.op === "is" ? (r[f.col] ?? null) === f.val : r[f.col] === f.val,
-      ),
-    );
+    let out = this.rows().filter((r) => rowMatches(r, this.filters));
     if (this.orderCol) {
       const c = this.orderCol;
       out = [...out].sort((a, b) => {
@@ -187,10 +211,7 @@ export function makeFakeService(seed: Tables) {
             undefined,
             (p, filters) => {
               for (const r of db[table]!) {
-                const match = filters.every((f) =>
-                  f.op === "is" ? (r[f.col] ?? null) === f.val : r[f.col] === f.val,
-                );
-                if (match) Object.assign(r, p);
+                if (rowMatches(r, filters)) Object.assign(r, p);
               }
             },
             "update",

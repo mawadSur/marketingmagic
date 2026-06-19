@@ -18,6 +18,7 @@ import {
 } from "@/lib/channels/registry";
 import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementPostsGenerated } from "@/lib/billing/usage";
+import { gateBatchForDedup } from "@/lib/dedup/gate";
 import type { Json } from "@/lib/db/types";
 
 // /sources/[id] — "Generate cluster" server action.
@@ -283,7 +284,9 @@ export async function generateClusterAction(
     };
   }
 
-  const { error: postsErr } = await svc.from("posts").insert(postsPayload);
+  const gatedPayload = await gateBatchForDedup(ws.id, postsPayload);
+
+  const { error: postsErr } = await svc.from("posts").insert(gatedPayload);
   if (postsErr) {
     await svc.from("posting_plans").delete().eq("id", planRow.id);
     return { error: postsErr.message, planId: null };

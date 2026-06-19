@@ -32,11 +32,13 @@
 
 import { supabaseService } from "@/lib/supabase/service";
 import type { ChannelId } from "@/lib/channels/registry";
-import type { PostStatus } from "@/lib/db/types";
+import type { Json, PostStatus } from "@/lib/db/types";
 import {
   hashContent,
-  similarity,
-  isNearDuplicate,
+  compileText,
+  similarityCompiled,
+  isNearDuplicateCompiled,
+  type CompiledText,
   type DupMatch,
 } from "@/lib/dedup/similarity";
 
@@ -124,6 +126,28 @@ export interface DedupCandidate {
   channel: ChannelId;
 }
 
+// The compact match descriptor every insert-path stashes in
+// generation_metadata.dedup when the gate flags a post, so the queue UI can show
+// what it collided with. Returns null for an "ok" verdict (no metadata to stamp).
+// A `type` (not interface) so it carries an implicit index signature and stays
+// assignable to Json when spread into a generation_metadata payload.
+export type DedupMeta = {
+  kind: "exact" | "near";
+  score: number;
+  match_id: string;
+  match_snippet: string;
+};
+
+export function dedupMetaFromResult(r: DedupResult | undefined): DedupMeta | null {
+  if (!r || r.verdict === "ok" || !r.match) return null;
+  return {
+    kind: r.verdict,
+    score: r.match.score,
+    match_id: r.match.existingId,
+    match_snippet: r.match.existingText.slice(0, 140),
+  };
+}
+
 // The gate's verdict for one candidate, by position in the input array.
 //   - "ok"    — write it (it also joins the running set for later candidates).
 //   - "exact" — content-hash collision; `match` points at the prior/earlier hit.
@@ -141,6 +165,7 @@ interface CorpusEntry {
   id: string;
   text: string;
   hash: string; // always populated (recomputed from text when the row had none)
+  compiled: CompiledText; // normalised text + trigrams, computed once per entry
 }
 
 /**
@@ -209,24 +234,58 @@ export async function dedupePosts(
   // Seed the running comparison set from the corpus (empty when the read failed
   // under fail-OPEN). Recompute a hash from text whenever the stored content_hash
   // is missing (older rows), so the exact-match path is reliable regardless of
-  // when a row was written.
+  // when a row was written. compileText() caches each entry's normalised text +
+  // trigrams ONCE so the near-dup loop never re-derives them per candidate.
   const entries: CorpusEntry[] = (corpus ?? []).map((p) => ({
     id: p.id,
     text: p.text,
     hash: p.content_hash && p.content_hash !== "" ? p.content_hash : hashContent(p.text),
+    compiled: compileText(p.text),
   }));
+
+  // Unbounded EXACT existence check. The windowed corpus above caps the (costly)
+  // near-dup scan at DEFAULT_DAYS, but an exact content-hash collision is a
+  // re-post at ANY age — and posts_workspace_content_hash_idx makes the equality
+  // lookup cheap. Pull the historical rows whose hash matches a candidate (any
+  // age, active statuses) so an evergreen caption re-queued months later is still
+  // caught. Best-effort: a failure here just falls back to the windowed result
+  // (never blocks), and matching by the row's OWN content_hash means an over-
+  // broad read can't manufacture a false positive.
+  const candidateHashes = [
+    ...new Set(candidates.map((c) => hashContent(c.text)).filter((h) => h !== "")),
+  ];
+  const exactByHash = new Map<string, { id: string; text: string }>();
+  if (candidateHashes.length > 0) {
+    const { data: hits } = await supabaseService()
+      .from("posts")
+      .select("id, text, content_hash")
+      .eq("workspace_id", workspaceId)
+      .in("status", ACTIVE_STATUSES)
+      .in("content_hash", candidateHashes)
+      .limit(200);
+    for (const hit of (hits ?? []) as { id: string; text: string; content_hash: string | null }[]) {
+      if (hit.content_hash && !exactByHash.has(hit.content_hash)) {
+        exactByHash.set(hit.content_hash, { id: hit.id, text: hit.text });
+      }
+    }
+  }
 
   const results: DedupResult[] = [];
 
   for (let index = 0; index < candidates.length; index++) {
     const text = candidates[index]!.text;
     const candidateHash = hashContent(text);
+    const candidateCompiled = compileText(text);
 
-    // 1. Exact: a content-hash collision. Skip entries with an empty hash so an
-    //    empty candidate can't "match" an empty entry.
-    let exact: CorpusEntry | undefined;
+    // 1. Exact: a content-hash collision against an in-window entry (incl. earlier
+    //    accepted candidates in THIS batch) OR an out-of-window historical post.
+    //    Skip empty hashes so an empty candidate can't "match" an empty entry.
+    let exact: { id: string; text: string } | undefined;
     if (candidateHash !== "") {
-      exact = entries.find((e) => e.hash !== "" && e.hash === candidateHash);
+      const windowed = entries.find((e) => e.hash !== "" && e.hash === candidateHash);
+      exact = windowed
+        ? { id: windowed.id, text: windowed.text }
+        : exactByHash.get(candidateHash);
     }
     if (exact) {
       results.push({
@@ -245,15 +304,15 @@ export async function dedupePosts(
     }
 
     // 2. Near: highest-scoring entry that actually qualifies as a near-dup.
-    //    isNearDuplicate() is the length-aware classifier — for short posts it
-    //    demands a minimum absolute shared-trigram overlap on top of clearing
-    //    the Jaccard threshold, so we must score against THAT (not a bare
-    //    similarity >= threshold) and report the best entry that passes it.
+    //    isNearDuplicateCompiled() is the length-aware classifier — for short
+    //    posts it demands a minimum absolute shared-trigram overlap on top of
+    //    clearing the Jaccard threshold, so we must score against THAT (not a
+    //    bare similarity >= threshold) and report the best entry that passes it.
     let best: CorpusEntry | undefined;
     let bestScore = 0;
     for (const e of entries) {
-      if (!isNearDuplicate(text, e.text)) continue;
-      const score = similarity(text, e.text);
+      if (!isNearDuplicateCompiled(candidateCompiled, e.compiled)) continue;
+      const score = similarityCompiled(candidateCompiled, e.compiled);
       if (score > bestScore) {
         bestScore = score;
         best = e;
@@ -277,10 +336,71 @@ export async function dedupePosts(
 
     // 3. Ok: genuinely new. It joins the running set so later candidates dedup
     //    against it (intra-batch). We give it a synthetic id so a downstream
-    //    match against it is still attributable to "this batch, item N".
+    //    match against it is still attributable to "this batch, item N", and
+    //    reuse its already-computed hash + compiled form.
     results.push({ index, verdict: "ok" });
-    entries.push({ id: `candidate:${index}`, text, hash: candidateHash });
+    entries.push({ id: `candidate:${index}`, text, hash: candidateHash, compiled: candidateCompiled });
   }
 
   return results;
+}
+
+// The minimal shape gateBatchForDedup needs from a posts INSERT payload. Callers
+// pass their full row objects; the generic preserves every extra field.
+export interface GateablePost {
+  text: string;
+  channel: string;
+  status?: PostStatus | null;
+  low_confidence?: boolean | null;
+  generation_metadata?: Json | null;
+}
+
+/**
+ * Gate a batch of about-to-be-inserted posts through the dedup engine and return
+ * the SAME rows, adjusted so a duplicate can never auto-publish:
+ *   - every row gets content_hash = hashContent(text) (so it's dedup-able later),
+ *   - a row the gate flags (exact/near) is forced from 'scheduled' down to
+ *     'pending_approval', marked low_confidence, and tagged with the match in
+ *     generation_metadata.dedup,
+ *   - generation_metadata.auto_scheduled is re-derived from the final status.
+ *
+ * Runs fail-SAFE: a corpus read blip flags the whole batch for review rather than
+ * letting a possible duplicate slip out on a trusted channel. This is the single
+ * choke-point the batch generators (sources, build-in-public, voice-memo) call
+ * right before `insert(posts)`, so all of them gate identically.
+ */
+export async function gateBatchForDedup<T extends GateablePost>(
+  workspaceId: string,
+  posts: T[],
+): Promise<T[]> {
+  if (posts.length === 0) return posts;
+
+  const results = await dedupePosts(
+    workspaceId,
+    posts.map((p) => ({ text: p.text, channel: p.channel as ChannelId })),
+    { failSafe: true },
+  );
+  const byIdx = new Map(results.map((r) => [r.index, r]));
+
+  return posts.map((post, idx) => {
+    const result = byIdx.get(idx);
+    const isDup = result !== undefined && result.verdict !== "ok";
+    const dedupMeta = dedupMetaFromResult(result);
+    // A duplicate never auto-publishes: drop 'scheduled' to review, keep any
+    // other status (an already-human-gated row) as-is.
+    const status =
+      isDup && post.status === "scheduled" ? "pending_approval" : post.status;
+
+    return {
+      ...post,
+      status,
+      low_confidence: Boolean(post.low_confidence) || isDup,
+      content_hash: hashContent(post.text),
+      generation_metadata: {
+        ...((post.generation_metadata as Record<string, Json> | null) ?? {}),
+        auto_scheduled: status === "scheduled",
+        ...(dedupMeta ? { dedup: dedupMeta } : {}),
+      },
+    } as T;
+  });
 }

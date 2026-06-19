@@ -1,8 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Channel, PostStatus } from "@/lib/db/types";
+import type { ChannelId } from "@/lib/channels/registry";
 import { supabaseService } from "@/lib/supabase/service";
 import { overLimitAccountIds } from "@/lib/billing/limits";
 import { notFound, channelNotConnected, channelOverLimit } from "@/lib/api/errors";
+import { dedupePosts, dedupMetaFromResult } from "@/lib/dedup/gate";
+import { hashContent } from "@/lib/dedup/similarity";
 
 // ─── ApiContext — the workspace-scoped data facade ──────────────────────────
 //
@@ -112,6 +115,13 @@ export class WorkspaceApi implements ApiContext {
    * row with status 'scheduled' and lets the existing post-scheduled cron (5-min
    * cadence, with its idempotency ledger + retry) ship it. The API reuses the
    * whole battle-tested publish path for free.
+   *
+   * Dedup parity with the in-app + webhook insert-paths: an exact/near repeat of
+   * the workspace's recent or queued content is forced to 'pending_approval'
+   * (never silently auto-published via the API) and tagged with the match. The
+   * gate runs fail-SAFE — a corpus read blip flags the post for review rather
+   * than letting a possible duplicate through — and we always stamp content_hash
+   * so this row is dedup-able by every future insert-path.
    */
   async createPost(input: NewPostInput) {
     const account = await this.resolveAccountForChannel(input.channel, input.socialAccountId);
@@ -128,6 +138,14 @@ export class WorkspaceApi implements ApiContext {
         ? new Date(input.scheduledAt).toISOString()
         : new Date().toISOString();
 
+    const [verdict] = await dedupePosts(
+      this.workspaceId,
+      [{ text: input.text, channel: input.channel as ChannelId }],
+      { failSafe: true },
+    );
+    const isDup = verdict !== undefined && verdict.verdict !== "ok";
+    const dedupMeta = dedupMetaFromResult(verdict);
+
     const { data, error } = await this.svc
       .from("posts")
       .insert({
@@ -138,8 +156,9 @@ export class WorkspaceApi implements ApiContext {
         media: input.media ?? [],
         theme: input.theme ?? null,
         scheduled_at: scheduledAt,
-        status: "scheduled",
-        generation_metadata: { source: "public_api" },
+        status: isDup ? "pending_approval" : "scheduled",
+        content_hash: hashContent(input.text),
+        generation_metadata: { source: "public_api", ...(dedupMeta ? { dedup: dedupMeta } : {}) },
       })
       .select("id, channel, text, status, scheduled_at, created_at")
       .single();

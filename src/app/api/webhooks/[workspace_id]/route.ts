@@ -2,6 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import crypto from "node:crypto";
 import { supabaseService } from "@/lib/supabase/service";
 import { render } from "@/lib/events/template";
+import { dedupePosts, dedupMetaFromResult } from "@/lib/dedup/gate";
+import { hashContent } from "@/lib/dedup/similarity";
+import type { ChannelId } from "@/lib/channels/registry";
 import type { Channel, Json, PostStatus } from "@/lib/db/types";
 
 // Event ingestion endpoint.
@@ -12,8 +15,11 @@ import type { Channel, Json, PostStatus } from "@/lib/db/types";
 // On valid signature:
 //   1. Insert events row with the raw payload.
 //   2. Lookup enabled event_rules matching event_type.
-//   3. For each rule, render the template, insert a post per channel as pending_approval
-//      (or scheduled if the account's trust_mode is on; see V1-14).
+//   3. For each rule, render the template, run the post through the dedup gate,
+//      and insert one post per channel as pending_approval (or scheduled if the
+//      account's trust_mode is on AND the gate didn't flag it as a duplicate; see
+//      V1-14). A repeating webhook template (e.g. a Zapier rule that renders the
+//      same copy every fire) therefore can't auto-publish duplicates.
 //   4. Mark events.processed_at.
 
 export const runtime = "nodejs";
@@ -94,7 +100,21 @@ export async function POST(
         .maybeSingle();
       if (!account) continue;
 
-      const trusted = account.trust_mode === true;
+      // Dedup + hash on the EXACT text we store (per-channel truncation), so the
+      // stored content_hash matches the stored copy and a repeating template is
+      // caught on its next fire. A hit forces pending_approval — a duplicate
+      // never auto-publishes, even on a trusted channel. failSafe so a corpus
+      // read blip can't let one slip out either.
+      const storedText = text.slice(0, ch === "x" ? 280 : 2000);
+      const [verdict] = await dedupePosts(
+        ws.id,
+        [{ text: storedText, channel: ch as ChannelId }],
+        { failSafe: true },
+      );
+      const isDup = verdict !== undefined && verdict.verdict !== "ok";
+      const dedupMeta = dedupMetaFromResult(verdict);
+
+      const trusted = account.trust_mode === true && !isDup;
       const status: PostStatus = trusted ? "scheduled" : "pending_approval";
       const scheduled_at = trusted
         ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24h preview window
@@ -106,12 +126,17 @@ export async function POST(
           workspace_id: ws.id,
           social_account_id: account.id,
           channel: ch,
-          text: text.slice(0, ch === "x" ? 280 : 2000),
+          text: storedText,
           theme: rule.theme,
           status,
           scheduled_at,
+          content_hash: hashContent(storedText),
           source_event_id: eventRow.id,
-          generation_metadata: { event_type: body.event_type, rule_id: rule.id },
+          generation_metadata: {
+            event_type: body.event_type,
+            rule_id: rule.id,
+            ...(dedupMeta ? { dedup: dedupMeta } : {}),
+          },
         })
         .select("id")
         .single();

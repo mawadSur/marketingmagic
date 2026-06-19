@@ -19,6 +19,7 @@
 
 import { supabaseService } from "@/lib/supabase/service";
 import { channelSpec } from "@/lib/channels/registry";
+import { gateBatchForDedup } from "@/lib/dedup/gate";
 import { incrementPostsGenerated } from "@/lib/billing/usage";
 import type { PlanGenResult } from "@/lib/plan/generate";
 import type { Database, Json } from "@/lib/db/types";
@@ -215,7 +216,9 @@ export async function persistVoiceMemoPlan(
     };
   }
 
-  const { error: postsErr } = await svc.from("posts").insert(posts);
+  const gatedPosts = await gateBatchForDedup(args.workspaceId, posts);
+
+  const { error: postsErr } = await svc.from("posts").insert(gatedPosts);
   if (postsErr) {
     await svc.from("posting_plans").delete().eq("id", planRow.id);
     return { ok: false, error: postsErr.message };

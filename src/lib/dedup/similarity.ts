@@ -160,16 +160,19 @@ export function jaccard(a: Set<string>, b: Set<string>): number {
   return union === 0 ? 0 : intersection / union;
 }
 
-/** Count of trigrams shared by two already-normalised strings (|A ∩ B|). */
-function sharedTrigramCount(na: string, nb: string): number {
-  const a = contentTrigrams(na);
-  const b = contentTrigrams(nb);
+/** Count of trigrams shared by two trigram SETS (|A ∩ B|). */
+function sharedTrigrams(a: Set<string>, b: Set<string>): number {
   let shared = 0;
   const [small, large] = a.size <= b.size ? [a, b] : [b, a];
   for (const g of small) {
     if (large.has(g)) shared += 1;
   }
   return shared;
+}
+
+/** Count of trigrams shared by two already-normalised strings (|A ∩ B|). */
+function sharedTrigramCount(na: string, nb: string): number {
+  return sharedTrigrams(contentTrigrams(na), contentTrigrams(nb));
 }
 
 /**
@@ -239,4 +242,47 @@ export function isNearDuplicate(a: string, b: string): boolean {
 
   // Short pair → demand a minimum absolute shared-trigram count too.
   return sharedTrigramCount(na, nb) >= MIN_SHARED_TRIGRAMS_SHORT;
+}
+
+// ── Precompiled fast-path ─────────────────────────────────────────────────────
+//
+// The gate compares one candidate against a whole corpus (and every accepted
+// candidate against every later one). Re-normalising + re-building trigrams for
+// the same string on every pair is wasted work. CompiledText caches a string's
+// normalised form, word count and trigram set so the gate computes each ONCE.
+// The *Compiled helpers below are behaviour-identical to similarity() /
+// isNearDuplicate() — they just read the cache instead of recomputing.
+
+export interface CompiledText {
+  normalized: string;
+  wordCount: number;
+  trigrams: Set<string>;
+}
+
+/** Compile a raw string once for repeated comparison (one normalise, one split). */
+export function compileText(text: string): CompiledText {
+  const normalized = normalizeContent(text);
+  const words = normalized.split(" ").filter(Boolean);
+  const trigrams = new Set<string>();
+  for (let i = 0; i + 2 < words.length; i++) {
+    trigrams.add(words[i] + WORD_SEP + words[i + 1] + WORD_SEP + words[i + 2]);
+  }
+  return { normalized, wordCount: words.length, trigrams };
+}
+
+/** similarity() over precompiled inputs — identical result, no recomputation. */
+export function similarityCompiled(a: CompiledText, b: CompiledText): number {
+  if (a.normalized === "" || b.normalized === "") return 0;
+  if (a.normalized === b.normalized) return 1;
+  if (a.wordCount < 3 || b.wordCount < 3) return 0;
+  return jaccard(a.trigrams, b.trigrams);
+}
+
+/** isNearDuplicate() over precompiled inputs — identical result, no recomputation. */
+export function isNearDuplicateCompiled(a: CompiledText, b: CompiledText): boolean {
+  const score = similarityCompiled(a, b);
+  if (score < NEAR_DUP_THRESHOLD) return false;
+  const minWords = Math.min(a.wordCount, b.wordCount);
+  if (minWords >= SHORT_POST_WORDS) return true;
+  return sharedTrigrams(a.trigrams, b.trigrams) >= MIN_SHARED_TRIGRAMS_SHORT;
 }
