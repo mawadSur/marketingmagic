@@ -6,6 +6,20 @@ const nextConfig: NextConfig = {
   experimental: {
     serverActions: { bodySizeLimit: "6mb" },
   },
+  async redirects() {
+    return [
+      {
+        // Our LinkedIn OAuth app (and potentially other consoles) registered the
+        // privacy-policy URL as /policy, but the route lives at /privacy. Without
+        // this redirect that URL 404s — which both looks broken on the OAuth
+        // consent screen and is a known cause of LinkedIn graying out product
+        // "Request access". 308 permanent so validators/crawlers follow it.
+        source: "/policy",
+        destination: "/privacy",
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [
       {

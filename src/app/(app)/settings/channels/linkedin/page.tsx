@@ -61,9 +61,11 @@ export default async function ConnectLinkedInPage({
         <h1 className="text-2xl font-semibold tracking-tight">Connect LinkedIn</h1>
         <p className="text-sm text-muted-foreground">
           OAuth 2.0 (Sign In with LinkedIn using OpenID Connect) plus the{" "}
-          <code>w_member_social</code> scope so we can publish posts on your
-          behalf. We never store your LinkedIn password — tokens live
-          server-side and are never exposed to the browser.
+          <code>w_member_social</code> and Community Management{" "}
+          (<code>w_organization_social</code>) scopes so we can publish to your
+          personal profile <em>and</em> any Company Pages you administer. We
+          never store your LinkedIn password — tokens live server-side and are
+          never exposed to the browser.
         </p>
       </header>
 
@@ -101,10 +103,10 @@ export default async function ConnectLinkedInPage({
             </Button>
           </form>
           <p className="text-xs text-muted-foreground">
-            What we&apos;ll access: your name, email, and the ability to
-            publish posts to your personal profile. Company-page posting
-            requires LinkedIn Marketing Developer Program approval and is
-            coming separately.
+            What we&apos;ll access: your name, email, and the ability to publish
+            to your personal profile and any Company Pages you administer. After
+            you authorize, we&apos;ll ask which destination this connection
+            should post to.
           </p>
         </div>
       ) : (
