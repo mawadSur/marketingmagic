@@ -161,6 +161,39 @@ export async function startClipJobs(
     throw new ClipJobError("Source video is not ready yet.");
   }
 
+  // Idempotency guard: a transient client retry can resubmit the same clip
+  // batch. Look up the non-failed (pending/processing/ready) jobs already cut
+  // from this source for this workspace and skip any clip whose label is
+  // already covered — so a benign retry doesn't double-meter the monthly video
+  // quota (the up-front assertion guards the ceiling; this guards re-billing).
+  // Workspace-scoped + uploaded_video_id-scoped; failed jobs are excluded so a
+  // genuine re-cut of a previously-failed label is allowed through.
+  // uploaded_video_id / clip_label aren't in the generated Database types until
+  // they're regenerated for migration 068 — leave .from() raw, narrow below.
+  const { data: existingRaw, error: existingErr } = await svc
+    .from("video_jobs")
+    .select("clip_label")
+    .eq("workspace_id", workspaceId)
+    .eq("uploaded_video_id", uploadedVideoId)
+    .neq("status", "failed");
+  if (existingErr) {
+    throw new ClipJobError(`Failed to load existing clip jobs: ${existingErr.message}`);
+  }
+  const existingLabels = new Set(
+    ((existingRaw ?? []) as Array<{ clip_label: string | null }>)
+      .map((r) => r.clip_label)
+      .filter((l): l is string => typeof l === "string" && l.length > 0),
+  );
+
+  // Only cut + meter the clips whose label isn't already covered by a non-failed
+  // job. A genuinely-new batch keeps every clip; a verbatim resubmit keeps none.
+  const newClips = clips.filter((clip) => !existingLabels.has(clip.label));
+  if (newClips.length === 0) {
+    // Whole batch already in flight / done — nothing to create, nothing to
+    // meter. No MPT task is minted on a pure resubmit, so there's no task id.
+    return { mptTaskId: "", jobs: [] };
+  }
+
   // Mint a short-lived signed GET url so MPT (no Supabase creds) can fetch the
   // private source object itself.
   const { data: signed, error: signErr } = await svc.storage
@@ -179,7 +212,7 @@ export async function startClipJobs(
   const mptClips: MptClipRequest[] = [];
   const jobIds: Array<{ jobId: string; label: string }> = [];
 
-  for (const clip of clips) {
+  for (const clip of newClips) {
     // Only compute/burn captions when asked AND we actually have segments.
     const wantsCaptions = clip.burnCaptions && segments.length > 0;
     const sliced = wantsCaptions ? sliceSegments(segments, clip.startMs, clip.endMs) : [];
@@ -231,9 +264,10 @@ export async function startClipJobs(
     // Fan the single task id across every job + flip them to processing.
     await Promise.all(jobIds.map(({ jobId }) => markProcessing(jobId, taskId)));
 
-    // Meter only once MPT accepted the batch — one unit per clip, matching the
-    // quota assertion above.
-    await incrementVideosGenerated(workspaceId, clips.length);
+    // Meter only once MPT accepted the batch — one unit per NEWLY-created clip.
+    // A resubmit that only adds some clips meters just the new ones, so a
+    // benign retry of an already-cut label never re-bills the monthly quota.
+    await incrementVideosGenerated(workspaceId, newClips.length);
 
     return { mptTaskId: taskId, jobs: jobIds };
   } catch (err) {

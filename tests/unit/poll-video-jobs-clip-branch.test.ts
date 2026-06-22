@@ -181,6 +181,34 @@ describe("user_clip branch", () => {
     expect(body.results[0].status).toBe("failed");
   });
 
+  it("frees the source + task when the LAST sibling clip FAILS (cleanup on the failed path)", async () => {
+    // No sibling still processing → this failed clip is the last to finish, so
+    // the raw source object + MPT task must be freed even though it didn't succeed.
+    siblingProcessingCount = 0;
+    listProcessing.mockResolvedValue([clipJob()]);
+    getTask.mockResolvedValue({ data: { state: -1 } });
+
+    const res = await POST(authedReq());
+    const body = await res.json();
+
+    expect(markFailed).toHaveBeenCalled();
+    expect(deleteTask).toHaveBeenCalledWith("clip-task-9");
+    expect(removeMock).toHaveBeenCalledWith(["ws-1/uv-1/source.mp4"]);
+    expect(body.results[0].status).toBe("failed");
+  });
+
+  it("holds back cleanup on a FAILED clip while a sibling is still processing", async () => {
+    siblingProcessingCount = 1;
+    listProcessing.mockResolvedValue([clipJob()]);
+    getTask.mockResolvedValue({ data: { state: -1 } });
+
+    await POST(authedReq());
+
+    expect(markFailed).toHaveBeenCalled();
+    expect(deleteTask).not.toHaveBeenCalled();
+    expect(removeMock).not.toHaveBeenCalled();
+  });
+
   it("leaves a still-rendering clip job as processing", async () => {
     listProcessing.mockResolvedValue([clipJob()]);
     getTask.mockResolvedValue({ data: { state: 4, progress: 30 } });

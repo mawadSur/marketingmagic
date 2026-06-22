@@ -47,9 +47,17 @@ vi.mock("@/lib/video/mpt-client", () => ({
   createClipTask: (...a: unknown[]) => createClipTask(...a),
 }));
 
-// Supabase service: source row lookup + signed url. Mutable so tests can vary.
+// Supabase service: source row lookup + existing-jobs lookup + signed url.
+// Mutable so tests can vary. `.from()` branches on table — `uploaded_videos`
+// resolves the source row; `video_jobs` resolves the idempotency lookup.
 const sourceRow = {
   data: { id: "uv-1", workspace_id: "ws-1", storage_path: "ws-1/uv-1/source.mp4", status: "ready" },
+  error: null as { message: string } | null,
+};
+// Non-failed jobs already cut from this source — drives the idempotency guard.
+// Empty by default (genuinely-new batch); tests push labels to simulate a retry.
+const existingJobs = {
+  data: [] as Array<{ clip_label: string | null }>,
   error: null as { message: string } | null,
 };
 const signed = {
@@ -58,11 +66,22 @@ const signed = {
 };
 const createSignedUrl = vi.fn(async () => signed);
 const supabaseService = () => ({
-  from: () => ({
-    select: () => ({
-      eq: () => ({ eq: () => ({ maybeSingle: async () => sourceRow }) }),
-    }),
-  }),
+  from: (table: string) => {
+    if (table === "video_jobs") {
+      // select → eq(workspace_id) → eq(uploaded_video_id) → neq(status) → result
+      return {
+        select: () => ({
+          eq: () => ({ eq: () => ({ neq: async () => existingJobs }) }),
+        }),
+      };
+    }
+    // uploaded_videos: select → eq → eq → maybeSingle
+    return {
+      select: () => ({
+        eq: () => ({ eq: () => ({ maybeSingle: async () => sourceRow }) }),
+      }),
+    };
+  },
   storage: { from: () => ({ createSignedUrl }) },
 });
 vi.mock("@/lib/supabase/service", () => ({ supabaseService: () => supabaseService() }));
@@ -87,6 +106,8 @@ beforeEach(() => {
     status: "ready",
   };
   sourceRow.error = null;
+  existingJobs.data = [];
+  existingJobs.error = null;
   signed.data = { signedUrl: "https://supa/source.mp4?sig=abc" };
   signed.error = null;
   createClipTask.mockResolvedValue({ data: { task_id: "clip-task-9" } });
@@ -174,6 +195,65 @@ describe("startClipJobs: happy path", () => {
     // The job's column reflects the effective (false) value, not the request.
     const job = createJob.mock.calls[0][0] as Record<string, unknown>;
     expect(job.burnCaptions).toBe(false);
+  });
+});
+
+describe("startClipJobs: idempotency (resubmit guard)", () => {
+  it("resubmitting an identical batch creates NO new jobs and meters nothing", async () => {
+    // Both labels already have non-failed jobs from the first submit.
+    existingJobs.data = [{ clip_label: "hook" }, { clip_label: "cta" }];
+
+    const res = await startClipJobs("ws-1", "uv-1", {
+      clips: [
+        { label: "hook", startMs: 0, endMs: 4000, burnCaptions: true },
+        { label: "cta", startMs: 12000, endMs: 14000, burnCaptions: false },
+      ],
+      transcriptSegments: SEGMENTS,
+    });
+
+    // Quota still asserted up front for the full request (can't silently exceed).
+    expect(assertWithinVideoQuota).toHaveBeenCalledWith("ws-1", 2);
+    // But nothing new is cut, no MPT task is minted, and NOTHING is metered.
+    expect(createJob).not.toHaveBeenCalled();
+    expect(createClipTask).not.toHaveBeenCalled();
+    expect(markProcessing).not.toHaveBeenCalled();
+    expect(incrementVideosGenerated).not.toHaveBeenCalled();
+    expect(res.jobs).toEqual([]);
+    expect(res.mptTaskId).toBe("");
+  });
+
+  it("a partial resubmit only cuts + meters the NEW clips", async () => {
+    // "hook" already exists; "cta" is new.
+    existingJobs.data = [{ clip_label: "hook" }];
+
+    const res = await startClipJobs("ws-1", "uv-1", {
+      clips: [
+        { label: "hook", startMs: 0, endMs: 4000, burnCaptions: false },
+        { label: "cta", startMs: 12000, endMs: 14000, burnCaptions: false },
+      ],
+    });
+
+    // Only the new "cta" clip is created + sent to MPT.
+    expect(createJob).toHaveBeenCalledTimes(1);
+    expect((createJob.mock.calls[0][0] as Record<string, unknown>).clipLabel).toBe("cta");
+    const clipArg = createClipTask.mock.calls[0][0] as { clips: Array<{ label: string }> };
+    expect(clipArg.clips.map((c) => c.label)).toEqual(["cta"]);
+    // Metered for the newly-created clip count (1), not the full request (2).
+    expect(incrementVideosGenerated).toHaveBeenCalledWith("ws-1", 1);
+    expect(res.jobs).toEqual([{ jobId: "job-1", label: "cta" }]);
+  });
+
+  it("a failed prior label is NOT treated as in-flight (re-cut allowed)", async () => {
+    // The idempotency query excludes failed jobs, so a failed "hook" never
+    // appears in existingJobs → the resubmit re-cuts + meters it.
+    existingJobs.data = [];
+
+    await startClipJobs("ws-1", "uv-1", {
+      clips: [{ label: "hook", startMs: 0, endMs: 4000, burnCaptions: false }],
+    });
+
+    expect(createJob).toHaveBeenCalledTimes(1);
+    expect(incrementVideosGenerated).toHaveBeenCalledWith("ws-1", 1);
   });
 });
 

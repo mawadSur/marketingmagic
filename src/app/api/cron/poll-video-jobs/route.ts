@@ -347,12 +347,15 @@ async function processUserClipJob(
 ): Promise<{ id: string; status: "ready" | "processing" | "failed" | "error"; reason?: string }> {
   if (!job.mpt_task_id) {
     await markFailed(job.id, "clip job has no mpt_task_id");
+    // No task id → nothing to clean (maybeCleanupClipTask no-ops without one).
     return { id: job.id, status: "failed", reason: "missing mpt_task_id" };
   }
 
   // Same stale-guard as the other branches — fail clips that never terminate.
   if (Date.now() - new Date(job.created_at).getTime() > MAX_PROCESSING_MS) {
     await markFailed(job.id, "clip render timed out (no completion from the render worker)");
+    // Terminal: this clip is done (as a failure) — let the last sibling free the task/source.
+    await maybeCleanupClipTask(svc, job).catch(() => {});
     return { id: job.id, status: "failed", reason: "timed out" };
   }
 
@@ -365,6 +368,7 @@ async function processUserClipJob(
 
   if (state === MPT_STATE_FAILED) {
     await markFailed(job.id, "MPT reported clip render failed (state -1)");
+    await maybeCleanupClipTask(svc, job).catch(() => {});
     return { id: job.id, status: "failed", reason: "mpt failed" };
   }
 
@@ -378,12 +382,14 @@ async function processUserClipJob(
   const label = job.clip_label ?? readParamString(job, "label");
   if (!label) {
     await markFailed(job.id, "clip job has no label to locate its output");
+    await maybeCleanupClipTask(svc, job).catch(() => {});
     return { id: job.id, status: "failed", reason: "no label" };
   }
   const wantFile = `${label}.mp4`;
   const match = (videos ?? []).find((v) => fileNameFromVideoPath(v) === wantFile);
   if (!match) {
     await markFailed(job.id, `MPT complete but clip "${label}" missing from videos[]`);
+    await maybeCleanupClipTask(svc, job).catch(() => {});
     return { id: job.id, status: "failed", reason: "clip missing" };
   }
 
@@ -400,6 +406,7 @@ async function processUserClipJob(
   });
   if (upErr) {
     await markFailed(job.id, `storage upload failed: ${upErr.message}`);
+    await maybeCleanupClipTask(svc, job).catch(() => {});
     return { id: job.id, status: "failed", reason: "upload failed" };
   }
 
@@ -408,7 +415,8 @@ async function processUserClipJob(
 
   // Cleanup is shared across sibling clips of the same task: only free the
   // worker's disk + delete the source once NO other job is still processing this
-  // mpt_task_id. Best-effort — a cleanup miss never re-fails a ready job.
+  // mpt_task_id. Whichever sibling finishes last — success OR failure — triggers
+  // it. Best-effort — a cleanup miss never re-fails a ready/failed job.
   await maybeCleanupClipTask(svc, job).catch(() => {});
 
   return { id: job.id, status: "ready" };
@@ -417,7 +425,9 @@ async function processUserClipJob(
 // Free the MPT task disk + delete the raw source video, but ONLY when this is
 // the last clip of the task to finish — sibling clips still `processing` need
 // the task (and would re-download nothing if the source were gone, but the task
-// download endpoint is what they read). Service-role; all best-effort.
+// download endpoint is what they read). Called on BOTH the ready and the
+// terminal-failure paths so the source object + MPT task are freed whichever
+// sibling finishes last (success OR failure). Service-role; all best-effort.
 async function maybeCleanupClipTask(
   svc: ReturnType<typeof supabaseService>,
   job: VideoJobRow,

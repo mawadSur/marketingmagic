@@ -33,7 +33,9 @@ import {
   SOURCE_VIDEO_BUCKET,
   createUploadedVideo,
   getUploadedVideo,
+  markUploadedVideoFailed,
   markUploadedVideoReady,
+  sourceObjectExists,
 } from "@/lib/video/uploads/uploaded-videos";
 
 import { transcribeUploadedVideo } from "@/lib/video/uploads/transcribe-video";
@@ -190,6 +192,22 @@ export async function registerUploadedVideoAction(
   const existing = await getUploadedVideo(ws.id, parsed.data.uploadedVideoId);
   if (!existing) {
     return { ok: false, error: "That upload doesn't belong to this workspace." };
+  }
+
+  // Don't trust the client's word that the bytes landed. A buggy/hostile client
+  // could call register without ever PUTting the file, leaving a 'ready' row over
+  // a missing object. Confirm the source object exists (with bytes) in storage
+  // FIRST; if it doesn't, mark the row failed and tell the user to retry.
+  if (!(await sourceObjectExists(existing.storagePath))) {
+    await markUploadedVideoFailed(
+      ws.id,
+      parsed.data.uploadedVideoId,
+      "Upload bytes not found in storage",
+    ).catch(() => {});
+    return {
+      ok: false,
+      error: "We couldn't find the uploaded video. Please try the upload again.",
+    };
   }
 
   try {

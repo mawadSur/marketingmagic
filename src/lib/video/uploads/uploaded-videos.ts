@@ -144,5 +144,33 @@ export async function markUploadedVideoFailed(
     .eq("workspace_id", workspaceId);
 }
 
+// Confirm the bytes actually landed in the source-video bucket before we trust a
+// client's "upload finished" call. A buggy/hostile client could PUT nothing yet
+// call register, leaving a 'ready' row over a missing object — so register checks
+// this first. `storagePath` is `<workspace_id>/<id>/source.<ext>`; we list the
+// `<workspace_id>/<id>` folder and look for the `source.<ext>` entry with bytes.
+// Returns false on error/missing — never throws (callers gate, not trust).
+export async function sourceObjectExists(storagePath: string): Promise<boolean> {
+  const slash = storagePath.lastIndexOf("/");
+  // No folder segment means it can't be a valid `<ws>/<id>/source.<ext>` path.
+  if (slash <= 0) return false;
+  const folder = storagePath.slice(0, slash);
+  const name = storagePath.slice(slash + 1);
+  try {
+    const svc = supabaseService();
+    const { data, error } = await svc.storage
+      .from(SOURCE_VIDEO_BUCKET)
+      .list(folder, { search: name, limit: 100 });
+    if (error || !data) return false;
+    // `search` is a prefix/contains filter on Supabase's side, so we still match
+    // the exact filename ourselves and require a non-zero byte size.
+    return data.some(
+      (entry) => entry.name === name && (entry.metadata?.size ?? 0) > 0,
+    );
+  } catch {
+    return false;
+  }
+}
+
 // Re-export for callers that build storage paths next to these helpers.
 export { SOURCE_VIDEO_BUCKET };

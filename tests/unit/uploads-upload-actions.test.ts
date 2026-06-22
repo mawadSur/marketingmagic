@@ -19,9 +19,11 @@ const {
   getAuthedUserOrRedirect,
   getActiveWorkspaceOrRedirect,
   createSignedUploadUrl,
+  listSource,
   insertSingle,
   selectMaybeSingle,
   updateSingle,
+  updateFailed,
   revalidatePath,
 } = vi.hoisted(() => ({
   userVideoUploadEnabled: vi.fn(() => true),
@@ -36,6 +38,18 @@ const {
       error: null,
     }),
   ),
+  // storage.from().list() backing sourceObjectExists. Defaults to a match with
+  // bytes so register's storage-confirmation gate passes; tests flip it to empty
+  // to exercise the "bytes never landed" path.
+  listSource: vi.fn(
+    async (): Promise<{
+      data: { name: string; metadata?: { size?: number } | null }[] | null;
+      error: null | { message: string };
+    }> => ({
+      data: [{ name: "source.mp4", metadata: { size: 1234 } }],
+      error: null,
+    }),
+  ),
   insertSingle: vi.fn(async () => ({ data: { id: "vid-1" }, error: null as null | { message: string } })),
   selectMaybeSingle: vi.fn(async () => ({
     data: null as null | Record<string, unknown>,
@@ -45,24 +59,36 @@ const {
     data: { id: "vid-1", status: "ready" },
     error: null as null | { message: string },
   })),
+  // update().eq().eq() terminal used by markUploadedVideoFailed (no .select()).
+  updateFailed: vi.fn(async () => ({ error: null as null | { message: string } })),
   revalidatePath: vi.fn(),
 }));
 
 // A query builder that records inserts and supports the chains the helpers use:
 //   insert().select().single()
 //   select().eq().eq().maybeSingle()
-//   update().eq().eq().select().single()
+//   update().eq().eq().select().single()   (markUploadedVideoReady)
+//   update().eq().eq()                       (markUploadedVideoFailed — awaited)
+//   storage.from().list()                    (sourceObjectExists)
+//
+// The two update chains diverge after `.eq().eq()`: the ready path appends
+// `.select().single()` while the failed path awaits the `.eq().eq()` result
+// directly. So `.eq().eq()` returns a thenable that ALSO carries `.select()`.
 function makeServiceClient() {
+  const updateTerminal = Object.assign(
+    // Make the node awaitable for markUploadedVideoFailed (resolves via updateFailed).
+    { then: (...args: Parameters<Promise<unknown>["then"]>) => updateFailed().then(...args) },
+    // Keep the ready chain working for markUploadedVideoReady.
+    { select: () => ({ single: updateSingle }) },
+  );
   return {
     storage: {
-      from: () => ({ createSignedUploadUrl }),
+      from: () => ({ createSignedUploadUrl, list: listSource }),
     },
     from: () => ({
       insert: () => ({ select: () => ({ single: insertSingle }) }),
       select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: selectMaybeSingle }) }) }),
-      update: () => ({
-        eq: () => ({ eq: () => ({ select: () => ({ single: updateSingle }) }) }),
-      }),
+      update: () => ({ eq: () => ({ eq: () => updateTerminal }) }),
     }),
   };
 }
@@ -90,6 +116,12 @@ beforeEach(() => {
   insertSingle.mockResolvedValue({ data: { id: VID }, error: null });
   selectMaybeSingle.mockResolvedValue({ data: null, error: null });
   updateSingle.mockResolvedValue({ data: { id: VID, status: "ready" }, error: null });
+  updateFailed.mockResolvedValue({ error: null });
+  // Default: the source object is present with bytes so register's gate passes.
+  listSource.mockResolvedValue({
+    data: [{ name: "source.mp4", metadata: { size: 1234 } }],
+    error: null,
+  });
 });
 
 afterEach(() => {
@@ -167,7 +199,12 @@ describe("registerUploadedVideoAction", () => {
 
   it("flips the row to ready with probed metadata on the happy path", async () => {
     selectMaybeSingle.mockResolvedValue({
-      data: { id: VID, workspace_id: WS, status: "uploading", storage_path: "p" },
+      data: {
+        id: VID,
+        workspace_id: WS,
+        status: "uploading",
+        storage_path: `${WS}/${VID}/source.mp4`,
+      },
       error: null,
     });
     const res = await registerUploadedVideoAction(VID, { duration: 12.5, width: 1920, height: 1080 });
@@ -175,6 +212,27 @@ describe("registerUploadedVideoAction", () => {
     if (res.ok) expect(res.uploadedVideoId).toBe(VID);
     expect(updateSingle).toHaveBeenCalledTimes(1);
     expect(revalidatePath).toHaveBeenCalledWith("/video/upload");
+  });
+
+  it("fails (and doesn't go ready) when the bytes never landed in storage", async () => {
+    selectMaybeSingle.mockResolvedValue({
+      data: {
+        id: VID,
+        workspace_id: WS,
+        status: "uploading",
+        storage_path: `${WS}/${VID}/source.mp4`,
+      },
+      error: null,
+    });
+    // No object in the bucket → sourceObjectExists returns false.
+    listSource.mockResolvedValue({ data: [], error: null });
+    const res = await registerUploadedVideoAction(VID, { duration: 12 });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/couldn't find the uploaded video/i);
+    // Never flipped to ready…
+    expect(updateSingle).not.toHaveBeenCalled();
+    // …and the row was marked failed instead.
+    expect(updateFailed).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a non-uuid id at the boundary", async () => {
