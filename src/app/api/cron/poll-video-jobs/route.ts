@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import { serverEnv, mptConfigured, referenceVideoEnabled } from "@/lib/env";
+import { SOURCE_VIDEO_BUCKET } from "@/lib/video/uploads/types";
 import { supabaseService } from "@/lib/supabase/service";
 import {
   getTask,
@@ -82,6 +83,16 @@ async function handle(req: NextRequest) {
       // path stays exactly as-is for params.kind !== "reference_image".
       if (jobKind(job) === "reference_image") {
         const r = await processReferenceJob(svc, job);
+        results.push(r);
+        continue;
+      }
+
+      // User-video-upload clip-cut (migration 068) — params.kind === "user_clip".
+      // These ARE MPT tasks (so they reuse getTask/downloadVideo/deleteTask) but
+      // each job pulls only ITS OWN `<label>.mp4` out of a possibly-shared task,
+      // so they get a dedicated branch rather than the single-video MPT path.
+      if (jobKind(job) === "user_clip") {
+        const r = await processUserClipJob(svc, job);
         results.push(r);
         continue;
       }
@@ -322,6 +333,132 @@ async function processReferenceJob(
   const postId = await attachDraftPost(svc, job, storagePath);
   await markReady(job.id, storagePath, postId);
   return { id: job.id, status: "ready" };
+}
+
+// User-video-upload clip-cut (migration 068) — poll one clip job and finalise
+// it. Mirrors the MPT single-video branch but pulls THIS job's own
+// `<clip_label>.mp4` out of the (possibly shared) task's videos[]. On COMPLETE:
+// download the clip → upload to post-media-video at <ws>/<job>/<label>.mp4 →
+// attach a draft post → markReady. On FAILED: markFailed. Disk + source cleanup
+// happen only once NO sibling job is still processing the same task.
+async function processUserClipJob(
+  svc: ReturnType<typeof supabaseService>,
+  job: VideoJobRow,
+): Promise<{ id: string; status: "ready" | "processing" | "failed" | "error"; reason?: string }> {
+  if (!job.mpt_task_id) {
+    await markFailed(job.id, "clip job has no mpt_task_id");
+    return { id: job.id, status: "failed", reason: "missing mpt_task_id" };
+  }
+
+  // Same stale-guard as the other branches — fail clips that never terminate.
+  if (Date.now() - new Date(job.created_at).getTime() > MAX_PROCESSING_MS) {
+    await markFailed(job.id, "clip render timed out (no completion from the render worker)");
+    return { id: job.id, status: "failed", reason: "timed out" };
+  }
+
+  const task = await getTask(job.mpt_task_id);
+  const { state, progress, videos } = task.data;
+
+  if (typeof progress === "number") {
+    await updateProgress(job.id, progress).catch(() => {});
+  }
+
+  if (state === MPT_STATE_FAILED) {
+    await markFailed(job.id, "MPT reported clip render failed (state -1)");
+    return { id: job.id, status: "failed", reason: "mpt failed" };
+  }
+
+  if (state !== MPT_STATE_COMPLETE) {
+    return { id: job.id, status: "processing" };
+  }
+
+  // COMPLETE — find THIS clip's output. The label is the filename stem; match a
+  // videos[] entry ending in `<label>.mp4`. Fall back to clip_label from the
+  // dedicated column (params + column are kept in sync by the orchestrator).
+  const label = job.clip_label ?? readParamString(job, "label");
+  if (!label) {
+    await markFailed(job.id, "clip job has no label to locate its output");
+    return { id: job.id, status: "failed", reason: "no label" };
+  }
+  const wantFile = `${label}.mp4`;
+  const match = (videos ?? []).find((v) => fileNameFromVideoPath(v) === wantFile);
+  if (!match) {
+    await markFailed(job.id, `MPT complete but clip "${label}" missing from videos[]`);
+    return { id: job.id, status: "failed", reason: "clip missing" };
+  }
+
+  const storagePath = `${job.workspace_id}/${job.id}/${label}.mp4`;
+  const dl = await downloadVideo(job.mpt_task_id, wantFile);
+  const uploadBody: ReadableStream<Uint8Array> | ArrayBuffer = dl.body
+    ? (dl.body as ReadableStream<Uint8Array>)
+    : await dl.arrayBuffer();
+
+  const { error: upErr } = await svc.storage.from(BUCKET).upload(storagePath, uploadBody, {
+    contentType: "video/mp4",
+    upsert: true,
+    ...({ duplex: "half" } as Record<string, unknown>),
+  });
+  if (upErr) {
+    await markFailed(job.id, `storage upload failed: ${upErr.message}`);
+    return { id: job.id, status: "failed", reason: "upload failed" };
+  }
+
+  const postId = await attachDraftPost(svc, job, storagePath);
+  await markReady(job.id, storagePath, postId);
+
+  // Cleanup is shared across sibling clips of the same task: only free the
+  // worker's disk + delete the source once NO other job is still processing this
+  // mpt_task_id. Best-effort — a cleanup miss never re-fails a ready job.
+  await maybeCleanupClipTask(svc, job).catch(() => {});
+
+  return { id: job.id, status: "ready" };
+}
+
+// Free the MPT task disk + delete the raw source video, but ONLY when this is
+// the last clip of the task to finish — sibling clips still `processing` need
+// the task (and would re-download nothing if the source were gone, but the task
+// download endpoint is what they read). Service-role; all best-effort.
+async function maybeCleanupClipTask(
+  svc: ReturnType<typeof supabaseService>,
+  job: VideoJobRow,
+): Promise<void> {
+  if (!job.mpt_task_id) return;
+  const { count } = await svc
+    .from("video_jobs")
+    .select("id", { count: "exact", head: true })
+    .eq("mpt_task_id", job.mpt_task_id)
+    .eq("status", "processing");
+  // Other siblings still in flight — leave the task + source for them.
+  if ((count ?? 0) > 0) return;
+
+  await deleteTask(job.mpt_task_id).catch(() => {});
+
+  // Delete the raw source object now that every clip has been cut. Look up the
+  // source's storage path; cascade/SET NULL on the FK means uploaded_video_id
+  // may already be detached, so guard.
+  if (job.uploaded_video_id) {
+    const { data: srcRaw } = await svc
+      .from("uploaded_videos")
+      .select("storage_path")
+      .eq("id", job.uploaded_video_id)
+      .maybeSingle();
+    // Cast: uploaded_videos isn't in the generated Database types until they're
+    // regenerated for migration 068.
+    const src = srcRaw as { storage_path: string | null } | null;
+    if (src?.storage_path) {
+      await svc.storage.from(SOURCE_VIDEO_BUCKET).remove([src.storage_path]).catch(() => {});
+    }
+  }
+}
+
+// Read a string field off a job's params jsonb (best-effort).
+function readParamString(job: VideoJobRow, key: string): string | null {
+  const p = job.params;
+  if (p && typeof p === "object" && !Array.isArray(p)) {
+    const v = (p as Record<string, unknown>)[key];
+    if (typeof v === "string") return v;
+  }
+  return null;
 }
 
 // Create or update a DRAFT post carrying the rendered video as a media item.

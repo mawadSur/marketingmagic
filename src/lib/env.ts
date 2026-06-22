@@ -158,6 +158,14 @@ const serverSchema = z.object({
   // ships live. Accepts "1"/"true" (case-insensitive). Read through
   // referenceVideoEnabled() — never touch this field directly.
   REFERENCE_VIDEO_ENABLED: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
+  // User video upload (migration 068) — master kill-switch for the BYO-clip
+  // path: a user uploads their OWN raw video, it's transcribed, they mark up
+  // clip ranges, and MPT cuts (+ optionally burn-captions) each clip. Off by
+  // default: when unset/false the upload UI renders a "not yet enabled" state
+  // and the upload action short-circuits, so nothing ships live until an
+  // operator flips it. Accepts "1"/"true" (case-insensitive). Read through
+  // userVideoUploadEnabled() — never touch this field directly.
+  USER_VIDEO_UPLOAD_ENABLED: z.preprocess(v => (v === "" ? undefined : v), z.string().optional()),
   // Reference-image video (bet ④) — the fal.ai image-to-video model id the
   // adapter submits to. Overridable so the model isn't hardcoded; defaults to a
   // Kling image-to-video STANDARD tier (cheapest, good enough for "animate my
@@ -338,6 +346,16 @@ export function videoPublishEnabled(channel: string): boolean {
 // shape of mptConfigured() / videoPublishEnabled().
 export function referenceVideoEnabled(): boolean {
   const raw = serverEnv().REFERENCE_VIDEO_ENABLED?.trim().toLowerCase();
+  return raw === "1" || raw === "true";
+}
+
+// User video upload (migration 068) — True when the BYO-clip path is enabled on
+// this deployment. Off by default. The upload UI and the upload server action
+// both gate on this so the feature stays dark until an operator flips
+// USER_VIDEO_UPLOAD_ENABLED. Mirrors the graceful-degrade shape of
+// referenceVideoEnabled().
+export function userVideoUploadEnabled(): boolean {
+  const raw = serverEnv().USER_VIDEO_UPLOAD_ENABLED?.trim().toLowerCase();
   return raw === "1" || raw === "true";
 }
 

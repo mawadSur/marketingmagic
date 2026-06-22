@@ -23,6 +23,15 @@ export interface VideoJobRow {
   // Reference-image video (bet ④) — the chosen reference photo's storage path
   // in the `reference-image` bucket. Null for MPT jobs (added in migration 030).
   reference_image_path: string | null;
+  // User-video-upload clip columns (migration 068). Set only on
+  // params.kind === "user_clip" jobs; null on every other video_jobs row. They
+  // duplicate the per-clip spec from params so the cron + cleanup can look them
+  // up cheaply without re-parsing the jsonb.
+  uploaded_video_id: string | null;
+  clip_label: string | null;
+  clip_start_ms: number | null;
+  clip_end_ms: number | null;
+  burn_captions: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -38,21 +47,41 @@ export interface CreateJobInput {
   // poll-video-jobs cron UPDATEs that post's media[] instead of inserting a new
   // draft. Omitted by the ad-hoc /video and reference paths.
   postId?: string | null;
+  // User-video-upload clip columns (migration 068). Set by the clip orchestrator
+  // for params.kind === "user_clip" jobs; omitted by every other path (so the
+  // columns stay null). Persisted alongside params for cheap cron/cleanup lookup.
+  uploadedVideoId?: string | null;
+  clipLabel?: string | null;
+  clipStartMs?: number | null;
+  clipEndMs?: number | null;
+  burnCaptions?: boolean | null;
 }
 
 // Insert a fresh job in `pending` state. Returns the new row.
 export async function createJob(input: CreateJobInput): Promise<VideoJobRow> {
   const svc = supabaseService();
+  // Build the row, then cast on insert: the migration-068 clip columns
+  // (uploaded_video_id / clip_* / burn_captions) aren't in the generated
+  // Database types until they're regenerated, so the typed insert would reject
+  // them. The same `as unknown as never` cast is used elsewhere for additive
+  // columns (see uploads/market-clip.ts). Explicit null-checks (not truthiness)
+  // so a legit clip_start_ms of 0 still writes.
+  const row = {
+    workspace_id: input.workspaceId,
+    social_account_id: input.socialAccountId ?? null,
+    params: input.params,
+    status: "pending",
+    ...(input.referenceImagePath ? { reference_image_path: input.referenceImagePath } : {}),
+    ...(input.postId ? { post_id: input.postId } : {}),
+    ...(input.uploadedVideoId != null ? { uploaded_video_id: input.uploadedVideoId } : {}),
+    ...(input.clipLabel != null ? { clip_label: input.clipLabel } : {}),
+    ...(input.clipStartMs != null ? { clip_start_ms: input.clipStartMs } : {}),
+    ...(input.clipEndMs != null ? { clip_end_ms: input.clipEndMs } : {}),
+    ...(input.burnCaptions != null ? { burn_captions: input.burnCaptions } : {}),
+  };
   const { data, error } = await svc
     .from("video_jobs")
-    .insert({
-      workspace_id: input.workspaceId,
-      social_account_id: input.socialAccountId ?? null,
-      params: input.params,
-      status: "pending",
-      ...(input.referenceImagePath ? { reference_image_path: input.referenceImagePath } : {}),
-      ...(input.postId ? { post_id: input.postId } : {}),
-    })
+    .insert(row as unknown as never)
     .select("*")
     .single();
   if (error || !data) {

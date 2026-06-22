@@ -201,3 +201,75 @@ export function fileNameFromVideoPath(videoPath: string): string {
   const parts = videoPath.split("/");
   return parts[parts.length - 1] || videoPath;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// User-video-upload clip pipeline (migration 068).
+//
+// Two extra MPT endpoints back the BYO-clip feature. Both take a Supabase signed
+// GET url to the raw source object (MPT fetches it itself) and return a task id
+// that drives the SAME tasks/{id}/download/{id}/{file}/tasks/{id} state machine
+// as createRenderJob — so the poll cron reuses getTask/downloadVideo/deleteTask.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// One clip MPT should cut out of the source. `label` is a filesystem-safe slug
+// that becomes the output filename (`<task_id>/<label>.mp4`). `subtitles_srt` is
+// the per-clip SRT (already sliced + re-based to the clip window) sent only when
+// `burn_captions` is true.
+export interface MptClipRequest {
+  label: string;
+  start_ms: number;
+  end_ms: number;
+  burn_captions: boolean;
+  subtitles_srt?: string;
+}
+
+// Request body for POST /api/v1/clip. `aspect` is optional; when omitted MPT
+// keeps the source aspect.
+export interface CreateClipParams {
+  source_url: string;
+  clips: MptClipRequest[];
+  aspect?: VideoAspect;
+}
+
+// POST /api/v1/clip — enqueue a clip-cut (per-clip ffmpeg -ss/-to re-encode,
+// optional burned captions). Returns the task id. Output mp4s surface in the
+// task's videos[] as `<task_id>/<label>.mp4`.
+export async function createClipTask(params: CreateClipParams): Promise<CreateRenderResponse> {
+  const res = await mptFetch("/api/v1/clip", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const body = await readBody(res);
+    throw new MptError(`MPT createClipTask failed (${res.status})`, res.status, body);
+  }
+  const json = (await res.json()) as CreateRenderResponse;
+  if (!json?.data?.task_id) {
+    throw new MptError("MPT createClipTask returned no task_id", res.status, JSON.stringify(json));
+  }
+  return json;
+}
+
+// POST /api/v1/extract-audio — ask MPT to pull a compact mono AAC audio track
+// (`<task_id>/audio.m4a`) out of a long source so it fits under Groq Whisper's
+// ~25MB cap. Returns the task id; the m4a is downloaded via the existing
+// download endpoint once the task completes.
+export async function extractAudioTask(params: {
+  sourceUrl: string;
+}): Promise<CreateRenderResponse> {
+  const res = await mptFetch("/api/v1/extract-audio", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source_url: params.sourceUrl }),
+  });
+  if (!res.ok) {
+    const body = await readBody(res);
+    throw new MptError(`MPT extractAudioTask failed (${res.status})`, res.status, body);
+  }
+  const json = (await res.json()) as CreateRenderResponse;
+  if (!json?.data?.task_id) {
+    throw new MptError("MPT extractAudioTask returned no task_id", res.status, JSON.stringify(json));
+  }
+  return json;
+}

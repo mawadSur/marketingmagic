@@ -2,21 +2,28 @@ import Link from "next/link";
 
 // Switcher between the video generation modes so each is discoverable from the
 // others: the MPT "from a topic" path (/video), the UGC "saved avatar + script"
-// path (/video?mode=ugc, Higgsfield), and the fal.ai "animate a photo" path
-// (/settings/reference-video). The UGC + reference tabs only appear when
-// REFERENCE_VIDEO_ENABLED is on — so when the feature is off this collapses to
-// nothing on /video and never points anywhere dead.
-type VideoMode = "topic" | "ugc" | "reference";
+// path (/video?mode=ugc, Higgsfield), the fal.ai "animate a photo" path
+// (/settings/reference-video), and the "upload your own video → cut clips" path
+// (/video?mode=upload). The UGC + reference tabs only appear when
+// REFERENCE_VIDEO_ENABLED is on and the Upload tab only when
+// USER_VIDEO_UPLOAD_ENABLED is on — so a disabled feature never points anywhere
+// dead and this collapses to nothing when nothing extra is enabled.
+type VideoMode = "topic" | "ugc" | "reference" | "upload";
 
 export function VideoModeTabs({
   active,
   referenceEnabled,
+  uploadEnabled = false,
 }: {
   active: VideoMode;
   referenceEnabled: boolean;
+  uploadEnabled?: boolean;
 }) {
   const tabs: Array<{ key: VideoMode; label: string; href: string }> = [
     { key: "topic", label: "From a topic", href: "/video" },
+    ...(uploadEnabled
+      ? [{ key: "upload" as const, label: "Upload a video", href: "/video?mode=upload" }]
+      : []),
     ...(referenceEnabled
       ? [
           { key: "ugc" as const, label: "UGC avatar", href: "/video?mode=ugc" },

@@ -25,6 +25,8 @@ vi.mock("@/lib/env", () => ({
 
 import {
   createRenderJob,
+  createClipTask,
+  extractAudioTask,
   deleteTask,
   downloadVideo,
   getTask,
@@ -32,6 +34,7 @@ import {
   MptNotConfiguredError,
   fileNameFromVideoPath,
   type CreateRenderParams,
+  type CreateClipParams,
 } from "@/lib/video/mpt-client";
 
 const fetchMock = vi.fn();
@@ -180,5 +183,86 @@ describe("mpt-client: fileNameFromVideoPath", () => {
   it("extracts the file segment from a {task}/file path", () => {
     expect(fileNameFromVideoPath("task-1/final-1.mp4")).toBe("final-1.mp4");
     expect(fileNameFromVideoPath("final.mp4")).toBe("final.mp4");
+  });
+});
+
+const CLIP_PARAMS: CreateClipParams = {
+  source_url: "https://supa.example.com/source.mp4?sig=abc",
+  aspect: "9:16",
+  clips: [
+    { label: "hook", start_ms: 0, end_ms: 5000, burn_captions: true, subtitles_srt: "1\n..." },
+    { label: "cta", start_ms: 12000, end_ms: 20000, burn_captions: false },
+  ],
+};
+
+describe("mpt-client: createClipTask", () => {
+  it("POSTs to {base}/api/v1/clip with x-api-key and the clip batch in the body", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: { task_id: "clip-task-1" } }));
+
+    const res = await createClipTask(CLIP_PARAMS);
+    expect(res.data.task_id).toBe("clip-task-1");
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${MPT_BASE_URL}/api/v1/clip`);
+    expect(init.method).toBe("POST");
+    const headers = init.headers as Record<string, string>;
+    expect(headers["x-api-key"]).toBe(MPT_API_TOKEN);
+    expect(headers["content-type"]).toBe("application/json");
+
+    const sent = JSON.parse(init.body as string);
+    expect(sent).toMatchObject({
+      source_url: CLIP_PARAMS.source_url,
+      aspect: "9:16",
+      clips: [
+        { label: "hook", start_ms: 0, end_ms: 5000, burn_captions: true, subtitles_srt: "1\n..." },
+        { label: "cta", start_ms: 12000, end_ms: 20000, burn_captions: false },
+      ],
+    });
+  });
+
+  it("throws MptError on non-2xx", async () => {
+    fetchMock.mockResolvedValue(new Response("boom", { status: 500 }));
+    await expect(createClipTask(CLIP_PARAMS)).rejects.toMatchObject({
+      name: "MptError",
+      status: 500,
+    });
+  });
+
+  it("throws MptError when a 200 carries no task_id", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: {} }));
+    await expect(createClipTask(CLIP_PARAMS)).rejects.toBeInstanceOf(MptError);
+  });
+
+  it("throws MptNotConfiguredError when MPT env is unset (no fetch)", async () => {
+    envHolder.MPT_API_TOKEN = undefined;
+    await expect(createClipTask(CLIP_PARAMS)).rejects.toBeInstanceOf(MptNotConfiguredError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("mpt-client: extractAudioTask", () => {
+  it("POSTs to {base}/api/v1/extract-audio with the source_url in the body", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: { task_id: "audio-task-7" } }));
+
+    const res = await extractAudioTask({ sourceUrl: "https://supa.example.com/s.mp4?sig=z" });
+    expect(res.data.task_id).toBe("audio-task-7");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${MPT_BASE_URL}/api/v1/extract-audio`);
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["x-api-key"]).toBe(MPT_API_TOKEN);
+    const sent = JSON.parse(init.body as string);
+    expect(sent).toEqual({ source_url: "https://supa.example.com/s.mp4?sig=z" });
+  });
+
+  it("throws MptError on non-2xx", async () => {
+    fetchMock.mockResolvedValue(new Response("nope", { status: 422 }));
+    await expect(extractAudioTask({ sourceUrl: "u" })).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("throws MptError when a 200 carries no task_id", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: {} }));
+    await expect(extractAudioTask({ sourceUrl: "u" })).rejects.toBeInstanceOf(MptError);
   });
 });

@@ -1701,6 +1701,13 @@ export interface Database {
           failure_reason: string | null;
           // Reference-image video (bet ④) — migration 030. Null for MPT jobs.
           reference_image_path: string | null;
+          // User-clip jobs (migration 068, params.kind='user_clip'). Nullable;
+          // null for every non-clip video_jobs row.
+          uploaded_video_id: string | null;
+          clip_label: string | null;
+          clip_start_ms: number | null;
+          clip_end_ms: number | null;
+          burn_captions: boolean | null;
           created_at: string;
           updated_at: string;
         };
@@ -1716,6 +1723,11 @@ export interface Database {
           storage_path?: string | null;
           failure_reason?: string | null;
           reference_image_path?: string | null;
+          uploaded_video_id?: string | null;
+          clip_label?: string | null;
+          clip_start_ms?: number | null;
+          clip_end_ms?: number | null;
+          burn_captions?: boolean | null;
         };
         Update: Partial<{
           social_account_id: string | null;
@@ -1727,6 +1739,102 @@ export interface Database {
           storage_path: string | null;
           failure_reason: string | null;
           reference_image_path: string | null;
+          uploaded_video_id: string | null;
+          clip_label: string | null;
+          clip_start_ms: number | null;
+          clip_end_ms: number | null;
+          burn_captions: boolean | null;
+        }>;
+        Relationships: [];
+      };
+      // User video upload (migration 068). One row per raw source upload; the
+      // bytes live in the private source-video bucket. Workspace-scoped RLS,
+      // service-role bypass for the orchestrator + poll cron.
+      uploaded_videos: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          uploaded_by: string | null;
+          storage_path: string;
+          original_filename: string | null;
+          content_type: string | null;
+          size_bytes: number | null;
+          duration_seconds: number | null;
+          width: number | null;
+          height: number | null;
+          status: "uploading" | "ready" | "failed";
+          failure_reason: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          uploaded_by?: string | null;
+          storage_path: string;
+          original_filename?: string | null;
+          content_type?: string | null;
+          size_bytes?: number | null;
+          duration_seconds?: number | null;
+          width?: number | null;
+          height?: number | null;
+          status?: "uploading" | "ready" | "failed";
+          failure_reason?: string | null;
+        };
+        Update: Partial<{
+          storage_path: string;
+          original_filename: string | null;
+          content_type: string | null;
+          size_bytes: number | null;
+          duration_seconds: number | null;
+          width: number | null;
+          height: number | null;
+          status: "uploading" | "ready" | "failed";
+          failure_reason: string | null;
+        }>;
+        Relationships: [];
+      };
+      // User video upload (migration 068). One transcript per uploaded source
+      // (UNIQUE on uploaded_video_id). Workspace-scoped RLS, service-role bypass
+      // for the transcription worker.
+      video_transcripts: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          uploaded_video_id: string;
+          language: string | null;
+          text: string | null;
+          segments: Json;
+          srt: string | null;
+          vtt: string | null;
+          provider: string | null;
+          model: string | null;
+          edited: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          uploaded_video_id: string;
+          language?: string | null;
+          text?: string | null;
+          segments?: Json;
+          srt?: string | null;
+          vtt?: string | null;
+          provider?: string | null;
+          model?: string | null;
+          edited?: boolean;
+        };
+        Update: Partial<{
+          language: string | null;
+          text: string | null;
+          segments: Json;
+          srt: string | null;
+          vtt: string | null;
+          provider: string | null;
+          model: string | null;
+          edited: boolean;
         }>;
         Relationships: [];
       };

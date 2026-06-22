@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { supabaseServer } from "@/lib/supabase/server";
-import { mptConfigured, byoKeysConfigured, videoPublishEnabled, referenceVideoEnabled } from "@/lib/env";
+import { mptConfigured, byoKeysConfigured, videoPublishEnabled, referenceVideoEnabled, userVideoUploadEnabled } from "@/lib/env";
 import { CHANNELS, type ChannelId } from "@/lib/channels/registry";
 import { getWorkspaceKeyStatus } from "@/lib/video/byo-keys";
 import { tierFor } from "@/lib/billing/tiers";
@@ -152,7 +152,7 @@ export default async function VideoPage({
         </div>
       </header>
 
-      <VideoModeTabs active={mode} referenceEnabled={refEnabled} />
+      <VideoModeTabs active={mode} referenceEnabled={refEnabled} uploadEnabled={userVideoUploadEnabled()} />
 
       {mode === "topic" && !keysReady ? (
         <Notice variant="warning" title="Finish setup to generate videos.">
