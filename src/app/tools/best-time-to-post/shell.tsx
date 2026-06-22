@@ -9,6 +9,7 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
+import { SiteNav } from "@/components/site-nav";
 
 const FOOTER_YEAR = new Date().getFullYear();
 
@@ -16,42 +17,7 @@ export function ToolShell({ children }: { children: React.ReactNode }) {
   return (
     <main className="flex min-h-dvh flex-col">
       {/* ─── Nav ─────────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <nav className="container flex h-16 items-center justify-between gap-2">
-          <Link
-            href="/"
-            aria-label="marketingmagic home"
-            className="shrink-0 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-          >
-            <span className="inline-flex sm:hidden">
-              <Logo variant="icon" size="sm" />
-            </span>
-            <span className="hidden sm:inline-flex">
-              <Logo variant="full" size="sm" />
-            </span>
-          </Link>
-          <div className="flex shrink-0 items-center gap-0.5 sm:gap-2">
-            <Link
-              href="/pricing"
-              className="inline-flex h-9 items-center whitespace-nowrap rounded-md px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:px-3"
-            >
-              Pricing
-            </Link>
-            <Link
-              href="/login"
-              className="inline-flex h-9 items-center whitespace-nowrap rounded-md px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:px-3"
-            >
-              Log in
-            </Link>
-            <Link
-              href="/signup"
-              className="inline-flex h-9 items-center whitespace-nowrap rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:px-4"
-            >
-              Sign up
-            </Link>
-          </div>
-        </nav>
-      </header>
+      <SiteNav />
 
       {children}
 
