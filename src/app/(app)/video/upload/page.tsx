@@ -1,22 +1,24 @@
 // SLICE A — User video upload · page shell.
 //
-// Server component that gates the whole feature on USER_VIDEO_UPLOAD_ENABLED and
-// renders the direct-to-storage upload client. With the flag off this route 404s
-// so the feature stays fully dark (no nav entry points here either until the
-// Upload tab is wired in slice E). Workspace membership is enforced by
-// getActiveWorkspaceOrRedirect (redirects unauthed/non-members).
+// Server component that gates the live uploader on USER_VIDEO_UPLOAD_ENABLED.
+// With the flag OFF the feature ships as "coming soon": this route renders a
+// teaser (UploadComingSoon) instead of 404ing, and the Upload tab links here
+// with a "Soon" badge — discoverable, not functional. With the flag ON it
+// renders the direct-to-storage upload client. Workspace membership is enforced
+// by getActiveWorkspaceOrRedirect (the /video/* prefix is already auth-gated by
+// the middleware, so the teaser is only ever seen by signed-in members).
 
-import { notFound } from "next/navigation";
 import { getActiveWorkspaceOrRedirect } from "@/lib/workspace";
 import { userVideoUploadEnabled } from "@/lib/env";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { UploadClient } from "./upload-client";
+import { UploadComingSoon } from "./coming-soon";
 
 export const dynamic = "force-dynamic";
 
 export default async function VideoUploadPage() {
   if (!userVideoUploadEnabled()) {
-    notFound();
+    return <UploadComingSoon />;
   }
 
   const ws = await getActiveWorkspaceOrRedirect();

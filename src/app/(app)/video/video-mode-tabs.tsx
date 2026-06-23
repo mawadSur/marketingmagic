@@ -4,10 +4,10 @@ import Link from "next/link";
 // others: the MPT "from a topic" path (/video), the UGC "saved avatar + script"
 // path (/video?mode=ugc, Higgsfield), the fal.ai "animate a photo" path
 // (/settings/reference-video), and the "upload your own video → cut clips" path
-// (/video?mode=upload). The UGC + reference tabs only appear when
-// REFERENCE_VIDEO_ENABLED is on and the Upload tab only when
-// USER_VIDEO_UPLOAD_ENABLED is on — so a disabled feature never points anywhere
-// dead and this collapses to nothing when nothing extra is enabled.
+// (/video/upload). The UGC + reference tabs only appear when
+// REFERENCE_VIDEO_ENABLED is on. The Upload tab is ALWAYS shown so the feature
+// is discoverable — when USER_VIDEO_UPLOAD_ENABLED is off it wears a "Soon"
+// badge and lands on a coming-soon teaser instead of the live uploader.
 type VideoMode = "topic" | "ugc" | "reference" | "upload";
 
 export function VideoModeTabs({
@@ -19,11 +19,10 @@ export function VideoModeTabs({
   referenceEnabled: boolean;
   uploadEnabled?: boolean;
 }) {
-  const tabs: Array<{ key: VideoMode; label: string; href: string }> = [
+  const tabs: Array<{ key: VideoMode; label: string; href: string; soon?: boolean }> = [
     { key: "topic", label: "From a topic", href: "/video" },
-    ...(uploadEnabled
-      ? [{ key: "upload" as const, label: "Upload a video", href: "/video?mode=upload" }]
-      : []),
+    // Always discoverable; "Soon" until the flag flips.
+    { key: "upload", label: "Upload a video", href: "/video/upload", soon: !uploadEnabled },
     ...(referenceEnabled
       ? [
           { key: "ugc" as const, label: "UGC avatar", href: "/video?mode=ugc" },
@@ -31,8 +30,6 @@ export function VideoModeTabs({
         ]
       : []),
   ];
-  // Nothing to switch to — hide the control entirely.
-  if (tabs.length < 2) return null;
 
   return (
     <div className="inline-flex rounded-lg border bg-muted/30 p-1 text-sm">
@@ -43,11 +40,16 @@ export function VideoModeTabs({
           aria-current={active === t.key ? "page" : undefined}
           className={
             active === t.key
-              ? "rounded-md bg-background px-3 py-1.5 font-medium shadow-sm"
-              : "rounded-md px-3 py-1.5 text-muted-foreground transition-colors hover:text-foreground"
+              ? "inline-flex items-center gap-1.5 rounded-md bg-background px-3 py-1.5 font-medium shadow-sm"
+              : "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-muted-foreground transition-colors hover:text-foreground"
           }
         >
           {t.label}
+          {t.soon ? (
+            <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+              Soon
+            </span>
+          ) : null}
         </Link>
       ))}
     </div>
