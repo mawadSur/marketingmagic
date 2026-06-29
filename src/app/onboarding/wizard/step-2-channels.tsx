@@ -95,9 +95,12 @@ export function Step2Channels({ connectedChannels, justConnected }: Step2Props) 
   const router = useRouter();
   const connected = new Set(connectedChannels);
   const hasAny = connected.size > 0;
-  // Brand-new user (no connections, didn't just connect one) → lead with the
-  // handle finder, since they likely need accounts before they can connect.
-  const [mode, setMode] = useState<Mode>(hasAny || justConnected ? "connect" : "find");
+  // Lead with the Connect grid for everyone. Connecting an existing account is
+  // the activation-critical action, and our ICP (build-in-public founders) already
+  // have socials — a 0-channel user landing on "Find me handles" (the old default)
+  // was the single biggest connect-step drop in dogfooding. The handle finder is
+  // still one toggle away for the rare account-less user.
+  const [mode, setMode] = useState<Mode>("connect");
 
   // Connectable (non-coming-soon) channels, for the "X of N connected" hint.
   const connectableTotal = CHANNELS.filter((c) => !c.comingSoon).length;
