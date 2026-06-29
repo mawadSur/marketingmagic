@@ -14,7 +14,7 @@ import { mergeAndCap, tagBoundsForChannel } from "@/lib/tags/generate";
 import { generateAndStoreTagsForPost } from "@/lib/tags/persist";
 import { assertWithinImageQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementImagesGenerated } from "@/lib/billing/usage";
-import type { RejectionReason } from "@/lib/db/types";
+import type { Json, RejectionReason } from "@/lib/db/types";
 import { runQuickExperiment } from "@/lib/experiments/run";
 import { MAX_VARIANT_COUNT, MIN_VARIANT_COUNT } from "@/lib/experiments/generate";
 import { dispatchPost, type PostMediaItem } from "@/lib/social/dispatch";
@@ -23,6 +23,8 @@ import { vestReferralOnFirstPost } from "@/lib/growth/referrals";
 import { isRetryableError } from "@/lib/social/errors";
 import { readThreadMeta } from "@/lib/threads/schema";
 import { hashContent } from "@/lib/dedup/similarity";
+import { briefContentFingerprint, isPostStaleForBrief } from "@/lib/brand/fingerprint";
+import { regeneratePostForBrief } from "@/lib/plan/regenerate-post";
 
 type ActionResult = { error: string | null };
 type GenerateImageResult = { error: string | null; publicUrl: string | null };
@@ -176,6 +178,221 @@ export async function approveAllVariationsAction(
 
   revalidatePath("/queue");
   return { error: null, approved: pendingIds.length };
+}
+
+// ─────────────────────────────────────────────────────────────
+// approveAllPendingAction — workspace-wide bulk approve
+// ─────────────────────────────────────────────────────────────
+//
+// The global "Approve all" the queue header offers: green-light EVERY
+// pending_approval draft in the workspace in one click, not just a single
+// idea/variation group. Same per-post mechanic as approvePostAction (flip to
+// scheduled + approved_at, one approvals audit row each), just batched. The
+// cron picks the scheduled rows up from there; nothing auto-publishes that the
+// user couldn't already approve one-by-one. Idempotent: returns approved=0 when
+// the queue is already clear.
+export async function approveAllPendingAction(): Promise<
+  ActionResult & { approved: number }
+> {
+  const ws = await getActiveWorkspaceOrRedirect();
+  const user = await getAuthedUserOrRedirect();
+  const supabase = await supabaseServer();
+
+  const { data: pending, error: loadErr } = await supabase
+    .from("posts")
+    .select("id")
+    .eq("workspace_id", ws.id)
+    .eq("status", "pending_approval");
+  if (loadErr) return { error: loadErr.message, approved: 0 };
+
+  const pendingIds = (pending ?? []).map((p) => p.id);
+  if (pendingIds.length === 0) {
+    return { error: null, approved: 0 };
+  }
+
+  const now = new Date().toISOString();
+  const { error: updateErr } = await supabase
+    .from("posts")
+    .update({ status: "scheduled", approved_at: now })
+    .eq("workspace_id", ws.id)
+    .eq("status", "pending_approval")
+    .in("id", pendingIds);
+  if (updateErr) return { error: updateErr.message, approved: 0 };
+
+  // One audit row per approved post — keeps revoke/history reporting identical
+  // to the single-approve and idea/variation bulk-approve flows.
+  const approvals = pendingIds.map((postId) => ({
+    post_id: postId,
+    user_id: user.id,
+    action: "approved" as const,
+    diff: null,
+  }));
+  await supabase.from("approvals").insert(approvals);
+
+  revalidatePath("/queue");
+  return { error: null, approved: pendingIds.length };
+}
+
+// ─────────────────────────────────────────────────────────────
+// regenerateStalePendingAction — refresh drafts after a brief/voice change
+// ─────────────────────────────────────────────────────────────
+//
+// When the brand brief or voice profile changes, the pending drafts that were
+// written against the OLD brief are "stale" (their stamped
+// generation_metadata.brief_fingerprint no longer matches the current one).
+// This rewrites each stale draft IN PLACE to match the current brief/voice,
+// preserving its channel, theme, schedule, and idea grouping — only the copy
+// changes. Drafts stay in pending_approval; the user still reviews them.
+//
+// Cost/time policy:
+//   - Each rewrite is one Opus call. We bound concurrency and cap the batch so
+//     a single click stays well under the /queue route's maxDuration. When more
+//     stale drafts remain, we report `remaining` and the user clicks again.
+//   - This edits existing drafts (like editPostAction), so it does NOT charge
+//     the post-generation quota — no net-new posts are created.
+//   - Best-effort per post: a rewrite that errors leaves the original draft
+//     untouched and is counted in `failed`; it never aborts the whole batch.
+// Capped low: each rewrite is an Opus call, and the /queue segment caps server
+// actions at maxDuration=60s. 8 drafts at concurrency 4 = 2 waves, which stays
+// comfortably under budget even for slow long-form rewrites; the rest report as
+// `remaining` and the user clicks again.
+const REGEN_BATCH_CAP = 8; // max drafts rewritten per click
+const REGEN_CONCURRENCY = 4; // simultaneous Opus calls
+const VOICE_SCORE_THRESHOLD = 70;
+
+export interface RegenerateStaleResult {
+  error: string | null;
+  regenerated: number;
+  failed: number;
+  remaining: number;
+}
+
+export async function regenerateStalePendingAction(): Promise<RegenerateStaleResult> {
+  const ws = await getActiveWorkspaceOrRedirect();
+  const user = await getAuthedUserOrRedirect();
+  const supabase = await supabaseServer();
+
+  const { data: brief, error: briefErr } = await supabase
+    .from("brand_briefs")
+    .select("*")
+    .eq("workspace_id", ws.id)
+    .maybeSingle();
+  if (briefErr) return { error: briefErr.message, regenerated: 0, failed: 0, remaining: 0 };
+  if (!brief) {
+    return {
+      error: "Save your brand brief before regenerating drafts.",
+      regenerated: 0,
+      failed: 0,
+      remaining: 0,
+    };
+  }
+
+  const currentFp = briefContentFingerprint(brief);
+  const hasVoiceProfile = brief.voice_profile != null;
+
+  const { data: pending, error: loadErr } = await supabase
+    .from("posts")
+    .select("id, text, theme, channel, generation_metadata")
+    .eq("workspace_id", ws.id)
+    .eq("status", "pending_approval");
+  if (loadErr) return { error: loadErr.message, regenerated: 0, failed: 0, remaining: 0 };
+
+  // Skip thread tweets: rewriting one tweet of an X thread in isolation would
+  // break the thread's narrative (the rewrite primitive has no cross-tweet
+  // context). Threads have their own hook-regeneration flow in thread-actions.
+  const stale = (pending ?? []).filter(
+    (p) =>
+      isPostStaleForBrief(p.generation_metadata, currentFp) &&
+      readThreadMeta(p.generation_metadata) === null,
+  );
+  if (stale.length === 0) {
+    return { error: null, regenerated: 0, failed: 0, remaining: 0 };
+  }
+
+  const batch = stale.slice(0, REGEN_BATCH_CAP);
+  const remaining = stale.length - batch.length;
+
+  let regenerated = 0;
+  let failed = 0;
+
+  // Rewrite one stale draft in place.
+  //   "ok"   — rewritten + audit row written.
+  //   "fail" — AI/DB error; original draft left untouched (counts toward retry).
+  //   "skip" — the draft left pending_approval between our SELECT and UPDATE
+  //            (e.g. the user approved it in another tab); we leave it alone.
+  const regenerateOne = async (
+    post: (typeof batch)[number],
+  ): Promise<"ok" | "fail" | "skip"> => {
+    try {
+      const result = await regeneratePostForBrief({
+        brief,
+        channel: post.channel,
+        currentText: post.text,
+        theme: post.theme,
+      });
+      const lowConfidence =
+        hasVoiceProfile && result.voice_score < VOICE_SCORE_THRESHOLD;
+      const prevMeta =
+        post.generation_metadata && typeof post.generation_metadata === "object"
+          ? (post.generation_metadata as Record<string, unknown>)
+          : {};
+      // Status guard (.eq status pending_approval) closes a TOCTOU race: the
+      // pending list was read once up front, and a multi-second Opus call gives
+      // a concurrent "Approve" (in another tab) time to land. Without the guard
+      // this update would silently revert that approval (scheduled → pending)
+      // AND overwrite the body. With it, an already-approved row matches zero
+      // rows → we skip it. .select() tells us whether a row actually changed.
+      const { data: updated, error: updateErr } = await supabase
+        .from("posts")
+        .update({
+          text: result.text,
+          content_hash: hashContent(result.text),
+          voice_score: result.voice_score,
+          low_confidence: lowConfidence,
+          generation_metadata: {
+            ...prevMeta,
+            rationale: result.rationale,
+            brief_fingerprint: currentFp,
+            regenerated_at: new Date().toISOString(),
+            regenerated_reason: "brief_or_voice_changed",
+          } as Json,
+        })
+        .eq("id", post.id)
+        .eq("workspace_id", ws.id)
+        .eq("status", "pending_approval")
+        .select("id");
+      if (updateErr) return "fail";
+      if (!updated || updated.length === 0) return "skip";
+
+      // Audit trail — a regeneration is an automated edit. Mirrors the
+      // approvals-row contract used by editPostAction so history stays uniform.
+      await supabase.from("approvals").insert({
+        post_id: post.id,
+        user_id: user.id,
+        action: "edited" as const,
+        diff: "Regenerated to match updated brief/voice.",
+      });
+      return "ok";
+    } catch {
+      return "fail";
+    }
+  };
+
+  // Bounded-concurrency pool — process the batch REGEN_CONCURRENCY at a time so
+  // we don't fan out the whole batch of Opus calls at once or blow the route's
+  // time budget.
+  for (let i = 0; i < batch.length; i += REGEN_CONCURRENCY) {
+    const slice = batch.slice(i, i + REGEN_CONCURRENCY);
+    const outcomes = await Promise.all(slice.map(regenerateOne));
+    for (const outcome of outcomes) {
+      if (outcome === "ok") regenerated += 1;
+      else if (outcome === "fail") failed += 1;
+      // "skip" → the user already approved it; not our concern, not a failure.
+    }
+  }
+
+  revalidatePath("/queue");
+  return { error: null, regenerated, failed, remaining };
 }
 
 // Rejection reasons mirror the CHECK constraint in migration 006 and the

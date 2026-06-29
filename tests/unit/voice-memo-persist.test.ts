@@ -53,6 +53,7 @@ function build(p: GeneratedPlan, accounts: PersistAccount[], hasVoiceProfile: bo
     sourceId: "src-1",
     hasVoiceProfile,
     cacheReadInputTokens: 7,
+    briefFingerprint: "fp-test",
   });
 }
 

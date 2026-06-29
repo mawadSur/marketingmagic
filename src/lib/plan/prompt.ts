@@ -544,7 +544,7 @@ export function planSystemPrompt(inputs: PlanGenInputs): string {
     .join("\n");
 }
 
-function voiceProfileBlock(v: VoiceProfile): string {
+export function voiceProfileBlock(v: VoiceProfile): string {
   const lines: string[] = [
     "### Voice profile (extracted from the brand's own posts — match this register precisely)",
     "",

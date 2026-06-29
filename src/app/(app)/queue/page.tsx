@@ -5,6 +5,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { QueueIdeaRow, QueueRow, QueueVariationRow, type QueueMediaItem } from "./queue-row";
 import { groupQueueRows, type QueueDisplayRow } from "./queue-grouping";
 import { QueueTabs } from "./queue-tabs";
+import { ApproveAllButton, RegenerateStaleBanner } from "./pending-actions";
+import { briefContentFingerprint, isPostStaleForBrief } from "@/lib/brand/fingerprint";
 import { HashtagPillRow } from "@/components/hashtag-pill-row";
 import { TagChipRow } from "@/components/tag-chip-row";
 import { recommendHashtags } from "@/lib/hashtags/recommend";
@@ -50,6 +52,17 @@ interface PostQueryRow {
 export default async function QueuePage() {
   const ws = await getActiveWorkspaceOrRedirect();
   const supabase = await supabaseServer();
+  // Current brief fingerprint — used to flag pending drafts that were generated
+  // against an older brief/voice (the "Regenerate" banner). No brief → no
+  // fingerprint comparison (nothing is ever flagged stale).
+  const { data: briefForFp } = await supabase
+    .from("brand_briefs")
+    .select(
+      "product_description, voice, target_audience, do_not_say, reference_links, reference_posts, voice_profile",
+    )
+    .eq("workspace_id", ws.id)
+    .maybeSingle();
+  const currentBriefFingerprint = briefForFp ? briefContentFingerprint(briefForFp) : null;
   const { data: posts } = await supabase
     .from("posts")
     .select(
@@ -216,6 +229,27 @@ export default async function QueuePage() {
   const pending = rows.filter((r) => sectionForRow(r) === "pending");
   const scheduled = rows.filter((r) => sectionForRow(r) === "scheduled");
 
+  // Count pending drafts whose stamped brief_fingerprint no longer matches the
+  // workspace's current brief/voice — these are "stale" and the banner offers a
+  // one-click regenerate. Drafts with no fingerprint (legacy / hand-composed)
+  // are never counted (isPostStaleForBrief is conservative).
+  // Thread tweets are excluded — they regenerate via the thread builder, not the
+  // per-post rewrite — so the banner count matches what the action will rewrite.
+  const staleCount = currentBriefFingerprint
+    ? pending.filter(
+        (r) =>
+          isPostStaleForBrief(r.generation_metadata, currentBriefFingerprint) &&
+          readThreadMeta(r.generation_metadata) === null,
+      ).length
+    : 0;
+
+  // The pending SECTION can include posted/failed thread siblings (pulled in so
+  // a thread renders whole). "Approve all" only ever flips status=pending_approval
+  // rows, so the button label must count those — not the whole section.
+  const approvablePendingCount = pending.filter(
+    (r) => r.status === "pending_approval",
+  ).length;
+
   // Phase 6.10: pre-render per-post hashtag chip rows so the client
   // QueueRow component can just slot them in. We only build slots for
   // pending posts (scheduled is read-only).
@@ -306,6 +340,8 @@ export default async function QueuePage() {
       <Section
         title="Pending approval"
         count={pending.length}
+        action={<ApproveAllButton pendingCount={approvablePendingCount} />}
+        banner={<RegenerateStaleBanner staleCount={staleCount} />}
         empty={
           <EmptyState
             icon="inbox"
@@ -452,20 +488,30 @@ function Section({
   count,
   empty,
   children,
+  action,
+  banner,
 }: {
   title: string;
   count: number;
   empty: React.ReactNode;
   children: React.ReactNode;
+  // Optional right-aligned header control (e.g. "Approve all").
+  action?: React.ReactNode;
+  // Optional full-width callout rendered between the header and the list.
+  banner?: React.ReactNode;
 }) {
   return (
     <section className="space-y-3">
-      <h2 className="flex items-center gap-2 text-base font-medium">
-        {title}
-        <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-md border bg-muted/40 px-1.5 text-[10px] font-medium tabular-nums text-muted-foreground">
-          {count}
-        </span>
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-base font-medium">
+          {title}
+          <span className="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-md border bg-muted/40 px-1.5 text-[10px] font-medium tabular-nums text-muted-foreground">
+            {count}
+          </span>
+        </h2>
+        {action ?? null}
+      </div>
+      {banner}
       {count === 0 ? empty : <ul className="divide-y rounded-lg border bg-card">{children}</ul>}
     </section>
   );

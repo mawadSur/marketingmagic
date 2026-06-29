@@ -870,6 +870,9 @@ export interface Database {
           tags: string[];
           // Migration 067: content de-dup hash (see Row).
           content_hash: string | null;
+          // Updatable so an in-place regeneration (queue/actions.ts
+          // regenerateStalePendingAction) can re-stamp brief_fingerprint.
+          generation_metadata: Json | null;
         }>;
         Relationships: [];
       };

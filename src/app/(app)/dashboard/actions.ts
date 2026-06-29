@@ -17,6 +17,7 @@ import { incrementPostsGenerated } from "@/lib/billing/usage";
 import { getOptimalWindows, nextOptimalSlotIso } from "@/lib/timing/analyze";
 import { dedupePosts } from "@/lib/dedup/gate";
 import { hashContent } from "@/lib/dedup/similarity";
+import { briefContentFingerprint } from "@/lib/brand/fingerprint";
 
 // Phase 6.9 — one-click regen action for the Neglected Themes widget.
 //
@@ -270,6 +271,8 @@ export async function regenerateThemeAction(
   }
 
   const hasVoiceProfile = briefRes.data.voice_profile != null;
+  // Stamp the brief fingerprint so the queue can detect a later brief/voice change.
+  const briefFingerprint = briefContentFingerprint(briefRes.data);
   const skipped: string[] = [];
   const postsPayload: Array<{
     workspace_id: string;
@@ -327,6 +330,7 @@ export async function regenerateThemeAction(
         regen_theme: v.theme,
         regen_source: "neglected_themes_widget",
         scheduled_via: snapped === v.suggested_scheduled_at ? "model" : "smart_timing",
+        brief_fingerprint: briefFingerprint,
       },
     });
   }

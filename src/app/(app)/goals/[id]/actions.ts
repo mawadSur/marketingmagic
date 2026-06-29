@@ -16,6 +16,7 @@ import { loadThemeWinners } from "@/lib/analytics/themes";
 import { gatherCompetitorInsights } from "@/lib/plan/competitor-insights-gather";
 import { dedupePosts } from "@/lib/dedup/gate";
 import { hashContent } from "@/lib/dedup/similarity";
+import { briefContentFingerprint } from "@/lib/brand/fingerprint";
 import {
   channelSpec,
   ENABLED_CHANNELS,
@@ -255,6 +256,8 @@ export async function generatePostsAction(
   }
 
   const hasVoiceProfile = briefRes.data.voice_profile != null;
+  // Stamp the brief fingerprint so the queue can detect a later brief/voice change.
+  const briefFingerprint = briefContentFingerprint(briefRes.data);
 
   type FlatVariant = {
     channel: string;
@@ -343,6 +346,7 @@ export async function generatePostsAction(
           image_prompt: p.image_prompt ?? null,
           idea_label: p.idea_label,
           goal_id: goalId,
+          brief_fingerprint: briefFingerprint,
         } as Json,
       },
     ];
