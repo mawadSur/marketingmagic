@@ -1,4 +1,5 @@
 import { supabaseService } from "@/lib/supabase/service";
+import { postPublicUrl } from "@/lib/social/post-url";
 
 // Day bucket = YYYY-MM-DD in UTC.
 export interface DayBucket {
@@ -28,6 +29,11 @@ export interface TopPost {
   shares: number;
   comments: number;
   engagement_rate: number | null;
+  // Public, human-clickable permalink to the live post on the platform, built
+  // from channel + external_id (+ handle). null when we can't form a real link
+  // (e.g. never published, or a channel whose id doesn't map to a web URL) — the
+  // UI then renders plain text instead of a dead link.
+  live_url: string | null;
 }
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -46,6 +52,8 @@ interface MetricsJoinRow {
     channel: string;
     theme: string | null;
     posted_at: string | null;
+    external_id: string | null;
+    social_account_id: string | null;
   } | null;
 }
 
@@ -61,7 +69,7 @@ async function loadRecentMetrics(
   const { data } = await svc
     .from("post_metrics")
     .select(
-      "post_id, impressions, likes, reposts, replies, engagement_rate, fetched_at, posts!inner(id, workspace_id, text, channel, theme, posted_at)",
+      "post_id, impressions, likes, reposts, replies, engagement_rate, fetched_at, posts!inner(id, workspace_id, text, channel, theme, posted_at, external_id, social_account_id)",
     )
     .eq("posts.workspace_id", workspaceId)
     .gte("posts.posted_at", since)
@@ -76,6 +84,24 @@ async function loadRecentMetrics(
     latest.push(row);
   }
   return latest;
+}
+
+// Resolve account handles (needed to build platform permalinks) for a set of
+// social_account_ids, in one trip. Best-effort: a missing/failed lookup just
+// yields no handle, which degrades a permalink to null (plain text), never an
+// error. Reads social_accounts_safe — the handle is non-sensitive.
+async function loadHandlesByAccount(
+  accountIds: Array<string | null>,
+): Promise<Map<string, string>> {
+  const ids = Array.from(new Set(accountIds.filter((id): id is string => Boolean(id))));
+  const map = new Map<string, string>();
+  if (ids.length === 0) return map;
+  const svc = supabaseService();
+  const { data } = await svc.from("social_accounts_safe").select("id, handle").in("id", ids);
+  for (const a of (data ?? []) as Array<{ id: string; handle: string | null }>) {
+    if (a.handle) map.set(a.id, a.handle);
+  }
+  return map;
 }
 
 export async function getEngagementByDay(
@@ -141,7 +167,13 @@ export async function getTopAndBottomPosts(
   n = 5,
 ): Promise<{ top: TopPost[]; bottom: TopPost[] }> {
   const latest = await loadRecentMetrics(workspaceId, windowDays);
-  const rows: TopPost[] = latest
+  // Carry external_id + social_account_id alongside the display fields so we can
+  // build a "view live" permalink AFTER ranking (only for the few posts we show).
+  type RankedRow = Omit<TopPost, "live_url"> & {
+    external_id: string | null;
+    social_account_id: string | null;
+  };
+  const rows: RankedRow[] = latest
     .filter((r) => r.posts !== null)
     .map((r) => ({
       id: r.posts!.id,
@@ -154,10 +186,28 @@ export async function getTopAndBottomPosts(
       shares: r.reposts ?? 0,
       comments: r.replies ?? 0,
       engagement_rate: r.engagement_rate,
+      external_id: r.posts!.external_id,
+      social_account_id: r.posts!.social_account_id,
     }));
-  const sorted = rows.filter((r) => r.engagement_rate !== null).sort((a, b) => (b.engagement_rate ?? 0) - (a.engagement_rate ?? 0));
+  const sorted = rows
+    .filter((r) => r.engagement_rate !== null)
+    .sort((a, b) => (b.engagement_rate ?? 0) - (a.engagement_rate ?? 0));
+  const top = sorted.slice(0, n);
+  const bottom = sorted.slice(-n).reverse();
+
+  // Resolve handles only for the posts we'll actually render, then mint a public
+  // permalink per post (null when one can't be formed → UI shows plain text).
+  const handleByAccount = await loadHandlesByAccount(
+    [...top, ...bottom].map((r) => r.social_account_id),
+  );
+  const withLink = (r: RankedRow): TopPost => {
+    const { external_id, social_account_id, ...rest } = r;
+    const handle = social_account_id ? handleByAccount.get(social_account_id) ?? null : null;
+    return { ...rest, live_url: postPublicUrl(r.channel, external_id, handle) };
+  };
+
   return {
-    top: sorted.slice(0, n),
-    bottom: sorted.slice(-n).reverse(),
+    top: top.map(withLink),
+    bottom: bottom.map(withLink),
   };
 }
