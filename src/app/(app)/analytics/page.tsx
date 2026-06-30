@@ -299,6 +299,7 @@ interface PostLike {
   posted_at: string | null;
   impressions: number;
   engagement_rate: number | null;
+  live_url: string | null;
 }
 
 function PostList({
@@ -327,7 +328,22 @@ function PostList({
               key={p.id}
               className="space-y-1 px-4 py-3 text-sm transition-colors duration-200 hover:bg-muted/30"
             >
-              <p className="line-clamp-2 font-medium">{p.text}</p>
+              {/* Link the post to its live platform permalink when we can build
+                  one (channel + external_id + handle). Never published / no
+                  resolvable URL → plain text, never a dead link. */}
+              {p.live_url ? (
+                <a
+                  href={p.live_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="View this post on the platform (opens in a new tab)"
+                  className="line-clamp-2 rounded-sm font-medium underline decoration-muted-foreground/40 underline-offset-2 transition-colors hover:text-primary hover:decoration-primary focus-visible:text-primary"
+                >
+                  {p.text}
+                </a>
+              ) : (
+                <p className="line-clamp-2 font-medium">{p.text}</p>
+              )}
               {/* div, not p: MarkOutcome renders a <form> (block content), which
                   is invalid inside a <p> and triggers a React hydration error
                   that breaks the form's submit. */}
