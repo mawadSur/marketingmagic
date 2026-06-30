@@ -8,7 +8,7 @@ import { SiteNav } from "@/components/site-nav";
 export const metadata: Metadata = {
   title: "Pricing — marketingmagic",
   description:
-    "Simple plans for solo creators to agencies. Unlimited AI writing on every paid tier, AI images + short-form video, and multi-workspace on Agency. Start free.",
+    "marketingmagic is an operator, not a scheduler: it plans, writes, adapts per channel, learns from results, and makes video — for one flat price with unlimited channels. Buffer-style tools bill you per channel just to schedule. Start free.",
 };
 
 export const dynamic = "force-static";
@@ -42,11 +42,12 @@ export default function PricingPage() {
         <div aria-hidden className="brand-glow pointer-events-none absolute inset-x-0 top-0 -z-10 h-[320px]" />
         <div className="container flex flex-col items-center gap-4 py-16 text-center sm:py-20">
           <h1 className="max-w-3xl text-balance text-4xl font-bold leading-tight tracking-tight sm:text-5xl">
-            Pricing that <span className="brand-gradient-text">scales with you</span>
+            An operator, not <span className="brand-gradient-text">another scheduler</span>
           </h1>
           <p className="max-w-xl text-pretty text-base text-muted-foreground sm:text-lg">
-            Start free. Unlimited AI writing on every paid plan, plus AI images and short-form
-            video. One subscription covers all of your workspaces.
+            Most tools schedule what you write — and bill you per channel. marketingmagic plans
+            the calendar, writes every post, adapts each one per channel, learns from what works,
+            and makes the video. Unlimited channels, one flat price. Start free.
           </p>
         </div>
       </section>
@@ -163,6 +164,12 @@ function Feature({ children }: { children: React.ReactNode }) {
 // bill for every brand. "Typical schedulers" is deliberately generic — an
 // honest stand-in for Buffer/Hootsuite/Later-style tools, no fabricated claims
 // about a named competitor.
+//
+// The per-channel cost callout DOES name Buffer, because the number is specific
+// and sourced: Buffer bills per channel (~$5/channel/mo on Essentials), so 8
+// channels ≈ $40/mo, or ≈ $80/mo on Team with approvals — per Buffer's published
+// pricing, June 2026 (see docs/designs/competitive-buffer-2026-06-30.md). Our
+// flat $29 (Solo) is the contrast. Keep these figures truthful + sourced.
 const COMPARE: ReadonlyArray<{
   feature: string;
   them: { has: boolean; note: string };
@@ -170,8 +177,8 @@ const COMPARE: ReadonlyArray<{
 }> = [
   {
     feature: "Schedule across every channel",
-    them: { has: true, note: "Often billed per channel" },
-    us: { note: "All 8, one queue" },
+    them: { has: true, note: "Billed per channel — ~$5 each" },
+    us: { note: "All 8, one flat price" },
   },
   {
     feature: "Writes the content for you",
@@ -217,9 +224,9 @@ function ComparisonBox() {
             Most tools just <span className="text-muted-foreground">schedule</span> posts.
           </h2>
           <p className="mx-auto mt-3 max-w-xl text-pretty text-sm text-muted-foreground sm:text-base">
-            marketingmagic writes them, ships the video, and learns what works — so your
-            monthly spend buys <span className="font-medium text-foreground">growth</span>,
-            not another calendar.
+            marketingmagic plans them, writes them, adapts each one per channel, ships the video,
+            and learns what works — so your monthly spend buys{" "}
+            <span className="font-medium text-foreground">growth</span>, not another calendar.
           </p>
         </div>
 
@@ -275,10 +282,13 @@ function ComparisonBox() {
             ))}
           </dl>
 
-          {/* Footer CTA */}
+          {/* Footer CTA — lead with the per-channel cost math (sourced; see footnote). */}
           <div className="flex flex-col items-center gap-3 border-t bg-background px-5 py-6 text-center sm:flex-row sm:justify-between sm:text-left">
-            <p className="text-sm text-muted-foreground">
-              Unlimited writing, AI video, and a calendar that gets smarter every week.
+            <p className="text-sm text-muted-foreground sm:max-w-md">
+              <span className="font-medium text-foreground">8 channels on Buffer ≈ $40&ndash;80/mo</span>{" "}
+              just to schedule what you write. marketingmagic is{" "}
+              <span className="font-medium text-foreground">$29 flat</span> &mdash; unlimited
+              channels, and it does the writing.
             </p>
             <Link
               href="/signup"
@@ -291,7 +301,9 @@ function ComparisonBox() {
 
         <p className="mt-4 text-center text-xs text-muted-foreground">
           &ldquo;Typical schedulers&rdquo; reflects common Buffer / Hootsuite / Later-style
-          plans. Features and pricing vary by tool.
+          plans. Buffer bills per channel &mdash; Essentials ≈ $5/channel/mo, so 8 channels ≈
+          $40/mo (≈ $80/mo on Team, with approvals), per Buffer&rsquo;s published pricing
+          (June 2026). Features and pricing vary by tool and change over time.
         </p>
       </div>
     </section>
