@@ -106,9 +106,12 @@ export default async function OnboardingWizardPage({ searchParams }: WizardPageP
           step={3}
           title="Almost — we need a brief first"
           subtitle="The brief teaches the planner what to write. Takes a minute."
-          // Gentle redirect back to the missing step, not a dump on an empty
-          // dashboard: this user is ready to plan, they just skipped the brief.
-          skipHref="/onboarding/wizard?step=1"
+          // "I'll do this later" is a real escape to the dashboard — NOT a loop
+          // back to the brief step (which would contradict the label). The
+          // dashboard's activation card re-surfaces "Write your brand brief" as
+          // the next-best-action, so the user lands somewhere that nudges them
+          // back to it. The primary CTA below still drives them to write it now.
+          skipHref="/dashboard"
           skipLabel="I'll do this later"
         >
           <BackToStepBlock

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Link2, CalendarPlus, Send, ArrowRight } from "lucide-react";
+import { Link2, PenLine, CalendarPlus, Send, ArrowRight } from "lucide-react";
 import { supabaseServer } from "@/lib/supabase/server";
 
 // Slice D — dashboard "next best action" activation card.
@@ -10,8 +10,14 @@ import { supabaseServer } from "@/lib/supabase/server";
 // action based on where the workspace actually is in the activation funnel:
 //
 //   0 connected channels        → "Connect your first channel"  → /settings/channels
-//   ≥1 channel, 0 posting_plans → "Generate your first week"    → /onboarding/wizard?step=3
+//   ≥1 channel, no brand brief  → "Write your brand brief"      → /onboarding/wizard?step=1
+//   ≥1 channel + brief, 0 plans → "Generate your first week"    → /onboarding/wizard?step=3
 //   has a pre-publish draft     → "Publish your first post"     → /onboarding/wizard?step=4
+//
+// The brief step matters: the brand brief is the gate to plan generation, so a
+// user with channels-but-no-brief who's pointed straight at "Generate your
+// first week" dead-ends on the wizard's "we need a brief first" preflight.
+// Surfacing the brief as its own next-best-action keeps the funnel unblocked.
 //
 // The moment the workspace has ≥1 post with status='posted', the card stops
 // rendering and the normal dashboard takes over (matches the dashboard's
@@ -19,7 +25,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 //
 // Self-contained server component (same shape as EngagementDebtWidget /
 // WinningThemesWidget): takes a workspaceId and runs its own RLS-scoped reads
-// via the authed server client, so the page stays a thin composition. All four
+// via the authed server client, so the page stays a thin composition. All five
 // reads are cheap existence/count head-queries batched in one Promise.all.
 
 type Step = {
@@ -38,7 +44,7 @@ const DRAFT_STATUSES = ["draft", "pending_approval", "approved", "scheduled"] as
 export async function ActivationCard({ workspaceId }: { workspaceId: string }) {
   const supabase = await supabaseServer();
 
-  const [postedRes, channelsRes, planRes, draftRes] = await Promise.all([
+  const [postedRes, channelsRes, briefRes, planRes, draftRes] = await Promise.all([
     // All-time published count — the activation gate. Head/count only.
     supabase
       .from("posts")
@@ -52,6 +58,13 @@ export async function ActivationCard({ workspaceId }: { workspaceId: string }) {
       .select("id", { count: "exact", head: true })
       .eq("workspace_id", workspaceId)
       .eq("status", "connected"),
+    // Does a brand brief exist yet? It's the gate to plan generation — same
+    // existence check the onboarding wizard's step-3 preflight uses.
+    supabase
+      .from("brand_briefs")
+      .select("id")
+      .eq("workspace_id", workspaceId)
+      .maybeSingle(),
     // Does any posting plan exist yet?
     supabase
       .from("posting_plans")
@@ -73,10 +86,11 @@ export async function ActivationCard({ workspaceId }: { workspaceId: string }) {
   if ((postedRes.count ?? 0) > 0) return null;
 
   const channelCount = channelsRes.count ?? 0;
+  const hasBrief = Boolean(briefRes.data);
   const hasPlan = Boolean(planRes.data);
   const hasDraft = Boolean(draftRes.data);
 
-  const step = resolveStep({ channelCount, hasPlan, hasDraft });
+  const step = resolveStep({ channelCount, hasBrief, hasPlan, hasDraft });
 
   const Icon = step.icon;
 
@@ -111,16 +125,20 @@ export async function ActivationCard({ workspaceId }: { workspaceId: string }) {
 }
 
 // Pure state → next-best-action resolver. Order matters: each step assumes the
-// prior one is done. A workspace with a draft already has a channel + plan, so
-// "publish" wins; without a plan but with a channel, "generate" wins; with no
-// channel at all (the activation cliff), "connect" wins. Default falls back to
-// connect, the very first step.
+// prior one is done, so we check the most-advanced state first and fall back
+// toward the activation cliff. A workspace with a draft already has a channel +
+// brief + plan, so "publish" wins; a channel + brief but no plan → "generate";
+// a channel but no brief → "write brief" (the brief gates plan generation, so
+// it must come before "generate"); no channel at all → "connect". Default falls
+// back to connect, the very first step.
 function resolveStep({
   channelCount,
+  hasBrief,
   hasPlan,
   hasDraft,
 }: {
   channelCount: number;
+  hasBrief: boolean;
   hasPlan: boolean;
   hasDraft: boolean;
 }): Step {
@@ -137,7 +155,7 @@ function resolveStep({
     };
   }
 
-  if (channelCount > 0 && !hasPlan) {
+  if (channelCount > 0 && hasBrief && !hasPlan) {
     return {
       eyebrow: "Next step",
       title: "Generate your first week",
@@ -145,6 +163,20 @@ function resolveStep({
       cta: "Generate your first week",
       href: "/onboarding/wizard?step=3",
       icon: CalendarPlus,
+    };
+  }
+
+  if (channelCount > 0 && !hasBrief) {
+    return {
+      eyebrow: "Next step",
+      title: "Write your brand brief",
+      body: "Your channel's connected. Now teach the planner your voice — what you do, who you sell to, how you sound. Paste your site and we'll draft it for you.",
+      cta: "Write your brand brief",
+      // The wizard's brief step doubles as the canonical brief entry: it reads
+      // your site to pre-fill the fields, then advances forward through the
+      // funnel on save (→ channels → plan) so the user lands somewhere useful.
+      href: "/onboarding/wizard?step=1",
+      icon: PenLine,
     };
   }
 
