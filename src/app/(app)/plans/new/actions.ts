@@ -14,6 +14,7 @@ import { loadRecentPatterns } from "@/lib/explain/playbook";
 import { loadThemeWinners } from "@/lib/analytics/themes";
 import { dedupePosts, type DedupResult } from "@/lib/dedup/gate";
 import { hashContent } from "@/lib/dedup/similarity";
+import { briefContentFingerprint } from "@/lib/brand/fingerprint";
 import { recommendHashtagsForChannels } from "@/lib/hashtags/recommend";
 import { gatherCompetitorInsights } from "@/lib/plan/competitor-insights-gather";
 import { backfillHashtagsForPosts } from "@/lib/hashtags/backfill";
@@ -210,6 +211,9 @@ export async function generatePlanAction(
   // it Claude has nothing to score against and we'd just burn tokens.
   const startDate = new Date();
   const hasVoiceProfile = briefRes.data.voice_profile != null;
+  // Stamp the brief fingerprint so the queue can later detect that these drafts
+  // were written against THIS brief/voice (and offer to regenerate if it changes).
+  const briefFingerprint = briefContentFingerprint(briefRes.data);
   let result: PlanGenResult;
   let bestAttempt: { result: PlanGenResult; avgVoice: number } | null = null;
   try {
@@ -728,6 +732,7 @@ export async function generatePlanAction(
           idea_label: p.idea_label,
           timing_source: timingSource,
           dedup: dedupMeta,
+          brief_fingerprint: briefFingerprint,
         },
       },
     ];

@@ -19,6 +19,7 @@ import {
 import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementPostsGenerated } from "@/lib/billing/usage";
 import { gateBatchForDedup } from "@/lib/dedup/gate";
+import { briefContentFingerprint } from "@/lib/brand/fingerprint";
 import type { Json } from "@/lib/db/types";
 
 // /sources/[id] — "Generate cluster" server action.
@@ -187,6 +188,8 @@ export async function generateClusterAction(
   const accountByChannel = new Map<string, (typeof accounts)[number]>();
   for (const a of accounts) accountByChannel.set(a.channel, a);
   const hasVoiceProfile = briefRes.data.voice_profile != null;
+  // Stamp the brief fingerprint so the queue can detect a later brief/voice change.
+  const briefFingerprint = briefContentFingerprint(briefRes.data);
 
   type FlatVariant = {
     channel: string;
@@ -271,6 +274,7 @@ export async function generateClusterAction(
           image_prompt: p.image_prompt ?? null,
           idea_label: p.idea_label,
           source_id: sourceId,
+          brief_fingerprint: briefFingerprint,
         },
       },
     ];

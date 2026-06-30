@@ -21,6 +21,7 @@ import { supabaseService } from "@/lib/supabase/service";
 import { channelSpec } from "@/lib/channels/registry";
 import { gateBatchForDedup } from "@/lib/dedup/gate";
 import { incrementPostsGenerated } from "@/lib/billing/usage";
+import { briefContentFingerprint } from "@/lib/brand/fingerprint";
 import type { PlanGenResult } from "@/lib/plan/generate";
 import type { Database, Json } from "@/lib/db/types";
 
@@ -119,6 +120,7 @@ export function buildVoiceMemoPosts(opts: {
   sourceId: string;
   hasVoiceProfile: boolean;
   cacheReadInputTokens: number;
+  briefFingerprint: string;
 }): BuildPostsResult {
   const accountByChannel = new Map<string, PersistAccount>();
   for (const a of opts.accounts) accountByChannel.set(a.channel, a);
@@ -158,6 +160,7 @@ export function buildVoiceMemoPosts(opts: {
           image_prompt: p.image_prompt ?? null,
           idea_label: p.idea_label,
           source_id: opts.sourceId,
+          brief_fingerprint: opts.briefFingerprint,
           // Tag the persistence path so analytics can distinguish voice-memo-
           // anchored posts from URL/paste-anchored ones. `origin` kept for
           // backward-compat with the original inline stamp; `voice_memo` is
@@ -206,6 +209,7 @@ export async function persistVoiceMemoPlan(
     sourceId: args.sourceId,
     hasVoiceProfile: args.brief.voice_profile != null,
     cacheReadInputTokens: args.result.usage.cache_read_input_tokens ?? 0,
+    briefFingerprint: briefContentFingerprint(args.brief),
   });
 
   if (posts.length === 0) {

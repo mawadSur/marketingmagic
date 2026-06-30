@@ -13,6 +13,7 @@ import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits"
 import { incrementPostsGenerated } from "@/lib/billing/usage";
 import { dedupePosts } from "@/lib/dedup/gate";
 import { hashContent } from "@/lib/dedup/similarity";
+import { briefContentFingerprint } from "@/lib/brand/fingerprint";
 import { collectRecentContent } from "@/lib/plan/recent-content";
 
 // /sources/[id] — "Atomize" server action (Bet 2 — Atomization Engine).
@@ -147,6 +148,8 @@ export async function atomizeSourceAction(
   const accountByChannel = new Map<string, (typeof accounts)[number]>();
   for (const a of accounts) accountByChannel.set(a.channel, a);
   const hasVoiceProfile = briefRes.data.voice_profile != null;
+  // Stamp the brief fingerprint so the queue can detect a later brief/voice change.
+  const briefFingerprint = briefContentFingerprint(briefRes.data);
 
   // Flatten atoms → variants. Each atom mints a UUID idea_id so the queue can
   // group an atom's channel variants together (same grouping the planner uses).
@@ -240,6 +243,7 @@ export async function atomizeSourceAction(
           idea_label: p.idea_label,
           source_id: sourceId,
           source: "atomize",
+          brief_fingerprint: briefFingerprint,
         },
       },
     ];

@@ -24,6 +24,7 @@ import {
 import { assertWithinPostQuota, QuotaExceededError } from "@/lib/billing/limits";
 import { incrementPostsGenerated } from "@/lib/billing/usage";
 import { gateBatchForDedup } from "@/lib/dedup/gate";
+import { briefContentFingerprint } from "@/lib/brand/fingerprint";
 import type { Json } from "@/lib/db/types";
 
 // /sources/build-in-public — the wedge's killer feature.
@@ -269,6 +270,8 @@ export async function buildInPublicAction(
   }
 
   const hasVoiceProfile = briefRes.data.voice_profile != null;
+  // Stamp the brief fingerprint so the queue can detect a later brief/voice change.
+  const briefFingerprint = briefContentFingerprint(briefRes.data);
 
   type FlatVariant = {
     channel: string;
@@ -350,6 +353,7 @@ export async function buildInPublicAction(
           image_prompt: p.image_prompt ?? null,
           idea_label: p.idea_label,
           source_id: sourceRow.id,
+          brief_fingerprint: briefFingerprint,
         },
       },
     ];
