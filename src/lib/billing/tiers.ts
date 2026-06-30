@@ -84,16 +84,24 @@ export interface Tier {
 
 export const TIERS: Record<PlanId, Tier> = {
   hobby: {
-    // UNCHANGED. Free forever entry tier: 1 channel, 10 posts, no image/video,
-    // no voice memo. The only tier with a finite post cap.
+    // FATTENED FREE TIER (CEO decision — neutralize Buffer's generous free plan
+    // + fix the activation cliff). Free forever entry tier: 3 channels (matches
+    // Buffer free), 30 AI-planned posts / month (≈ a planned week, every week —
+    // a real "try the operator" allotment), no image/video, no voice memo. The
+    // postsPerMonth cap is a HARD ceiling that bounds our LLM cost — it's the
+    // only tier with a finite post cap.
+    //
+    // TODO(cost): free-tier generation should later route to a CHEAPER model to
+    // bound per-post LLM cost. For now the postsPerMonth: 30 hard cap is what
+    // bounds the spend, so no model-routing change ships here.
     id: "hobby",
     name: "Free",
     priceMonthly: 0,
-    limits: { channels: 1, postsPerMonth: 10, imageGensPerMonth: 0, videosPerMonth: 0, voiceMemoRecorder: false },
+    limits: { channels: 3, postsPerMonth: 30, imageGensPerMonth: 0, videosPerMonth: 0, voiceMemoRecorder: false },
     blurb: "Free forever for solo creators trying it out.",
     features: [
-      "1 connected channel",
-      "10 generated posts / month",
+      "3 connected channels",
+      "~30 AI-planned posts / month — a planned week, every week",
       "Manual approval queue",
       "No AI image or video generation",
     ],

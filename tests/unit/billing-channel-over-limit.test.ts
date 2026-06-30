@@ -162,20 +162,23 @@ describe("selectOverLimitIds: created_at tie broken by id (determinism)", () => 
 // ── Resolver: overLimitAccountIds (effective plan + live accounts) ───────────
 
 describe("overLimitAccountIds: resolves the set from the effective plan", () => {
-  it("hobby (limit 1) over the cap → newest accounts over-limit", async () => {
+  it("hobby (limit 3) over the cap → newest accounts over-limit", async () => {
     planHolder.plan = "hobby";
     dbHolder.rows = rows(
       ["old", "2026-01-01"],
-      ["mid", "2026-02-01"],
-      ["new", "2026-03-01"],
+      ["a", "2026-02-01"],
+      ["b", "2026-03-01"],
+      ["mid", "2026-04-01"],
+      ["new", "2026-05-01"],
     );
     const over = await overLimitAccountIds("ws");
+    // Oldest 3 (old, a, b) kept active; the 2 newest fall over the cap.
     expect([...over].sort()).toEqual(["mid", "new"]);
   });
 
-  it("at exactly the hobby cap (1 account) → empty set", async () => {
+  it("at exactly the hobby cap (3 accounts) → empty set", async () => {
     planHolder.plan = "hobby";
-    dbHolder.rows = rows(["only", "2026-01-01"]);
+    dbHolder.rows = rows(["one", "2026-01-01"], ["two", "2026-02-01"], ["three", "2026-03-01"]);
     expect((await overLimitAccountIds("ws")).size).toBe(0);
   });
 
@@ -191,10 +194,12 @@ describe("overLimitAccountIds: upgrade re-activates for FREE (computed-on-read)"
   it("the same accounts that were over-limit on hobby become empty on an unlimited plan, with no recompute step", async () => {
     dbHolder.rows = rows(
       ["old", "2026-01-01"],
-      ["mid", "2026-02-01"],
-      ["new", "2026-03-01"],
+      ["a", "2026-02-01"],
+      ["b", "2026-03-01"],
+      ["mid", "2026-04-01"],
+      ["new", "2026-05-01"],
     );
-    // Before upgrade: hobby (limit 1) → two accounts over-limit.
+    // Before upgrade: hobby (limit 3) → two accounts over-limit.
     planHolder.plan = "hobby";
     expect((await overLimitAccountIds("ws")).size).toBe(2);
 
@@ -211,7 +216,13 @@ describe("overLimitAccountIds: upgrade re-activates for FREE (computed-on-read)"
 describe("isAccountOverLimit: single-account convenience check", () => {
   it("true for an over-limit account, false for the kept-active oldest", async () => {
     planHolder.plan = "hobby";
-    dbHolder.rows = rows(["old", "2026-01-01"], ["new", "2026-02-01"]);
+    // 4 live accounts on the hobby cap of 3 → only the newest is over-limit.
+    dbHolder.rows = rows(
+      ["old", "2026-01-01"],
+      ["a", "2026-02-01"],
+      ["b", "2026-03-01"],
+      ["new", "2026-04-01"],
+    );
     expect(await isAccountOverLimit("ws", "new")).toBe(true);
     expect(await isAccountOverLimit("ws", "old")).toBe(false);
   });

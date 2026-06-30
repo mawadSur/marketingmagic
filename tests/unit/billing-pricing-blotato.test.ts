@@ -69,10 +69,10 @@ describe("new ladder — display names + prices", () => {
 });
 
 describe("new limits", () => {
-  it("hobby is unchanged: 1 channel, 10 posts, no image/video/voice", () => {
+  it("hobby is the FATTENED free tier: 3 channels, 30 posts, no image/video/voice", () => {
     expect(TIERS.hobby.limits).toEqual({
-      channels: 1,
-      postsPerMonth: 10,
+      channels: 3,
+      postsPerMonth: 30,
       imageGensPerMonth: 0,
       videosPerMonth: 0,
       voiceMemoRecorder: false,
